@@ -1,0 +1,133 @@
+# docker-compose.yml - Local development environment
+version: '3.8'
+
+services:
+  # PostgreSQL database for contract parser
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: forth_contracts
+      POSTGRES_USER: forth_user
+      POSTGRES_PASSWORD: forth_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forth_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # LocalStack for AWS services (SQS, S3)
+  localstack:
+    image: localstack/localstack:latest
+    environment:
+      - SERVICES=sqs,s3
+      - DEBUG=0
+      - DATA_DIR=/tmp/localstack/data
+      - AWS_DEFAULT_REGION=us-west-1
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack_data:/tmp/localstack
+      - ./scripts/init-aws.sh:/docker-entrypoint-initaws.d/init-aws.sh
+    healthcheck:
+      test: ["CMD", "awslocal", "sqs", "list-queues"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Webhook Ingestion Service
+  webhook-ingestion:
+    build:
+      context: ./services/webhook-ingestion
+      dockerfile: Dockerfile
+    environment:
+      - WEBHOOK_ENVIRONMENT=development
+      - WEBHOOK_USE_LOCAL_QUEUE=false
+      - WEBHOOK_AWS_ENDPOINT_URL=http://localstack:4566
+      - WEBHOOK_AWS_REGION=us-west-1
+      - WEBHOOK_OUTPUT_QUEUE_NAME=contract-download-queue
+      - WEBHOOK_LOG_LEVEL=DEBUG
+    ports:
+      - "8001:8000"
+    depends_on:
+      localstack:
+        condition: service_healthy
+    volumes:
+      - ./shared:/app/shared:ro
+    command: python src/main.py
+
+  # Document Downloader Service
+  document-downloader:
+    build:
+      context: ./services/document-downloader
+      dockerfile: Dockerfile
+    environment:
+      - DOCUMENT_ENVIRONMENT=development
+      - DOCUMENT_AWS_ENDPOINT_URL=http://localstack:4566
+      - DOCUMENT_AWS_REGION=us-west-1
+      - DOCUMENT_INPUT_QUEUE_NAME=contract-download-queue
+      - DOCUMENT_OUTPUT_QUEUE_NAME=document-parse-queue
+      - DOCUMENT_S3_BUCKET_NAME=forth-contracts
+      - DOCUMENT_LOG_LEVEL=DEBUG
+      - FORTH_API_BASE_URL=${FORTH_API_BASE_URL}
+      - FORTH_API_KEY=${FORTH_API_KEY}
+    ports:
+      - "8002:8000"
+    depends_on:
+      localstack:
+        condition: service_healthy
+    volumes:
+      - ./shared:/app/shared:ro
+      - document_temp:/app/temp_downloads
+    command: python src/main.py
+
+  # Contract Parser Service
+  contract-parser:
+    build:
+      context: ./services/contract-parser
+      dockerfile: Dockerfile
+    environment:
+      - PARSER_ENVIRONMENT=development
+      - PARSER_AWS_ENDPOINT_URL=http://localstack:4566
+      - PARSER_AWS_REGION=us-west-1
+      - PARSER_INPUT_QUEUE_NAME=document-parse-queue
+      - PARSER_S3_BUCKET_NAME=forth-contracts
+      - PARSER_DATABASE_URL=postgresql://forth_user:forth_password@postgres:5432/forth_contracts
+      - PARSER_LOG_LEVEL=DEBUG
+      - PARSER_LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - PARSER_OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PARSER_GEMINI_API_KEY=${GEMINI_API_KEY}
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    volumes:
+      - ./shared:/app/shared:ro
+    command: python src/main.py
+
+  # Nginx reverse proxy (optional)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./configs/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - webhook-ingestion
+      - document-downloader
+      - contract-parser
+
+volumes:
+  postgres_data:
+  localstack_data:
+  document_temp:
+
+networks:
+  default:
+    name: forth-network
