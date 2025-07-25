@@ -1,86 +1,188 @@
 # services/webhook-ingestion/src/config.py
+import os
+import re
+from enum import Enum
 from typing import List, Union, Literal
-from pydantic import Field, field_validator
-from forth_shared.config.base import BaseServiceConfig
+from pydantic import Field, field_validator, model_validator, SecretStr, AnyHttpUrl
+from pydantic_settings import SettingsConfigDict
+from libs.forth_shared.config.base import BaseServiceConfig
+
+# Compiled regex for CORS validation (avoid recompiling on every init)
+CORS_ORIGIN_PATTERN = re.compile(r'^https?://[A-Za-z0-9\-._]+(:\d+)?$')
+
+
+class Environment(str, Enum):
+    """Environment types for deployment."""
+    DEVELOPMENT = "development"
+    PRODUCTION = "production"
 
 
 class WebhookConfig(BaseServiceConfig):
-    """Webhook ingestion service configuration."""
+    """Webhook ingestion service configuration.""" 
     
+    model_config = SettingsConfigDict(
+        env_prefix="WEBHOOK_",
+        env_file=".env",  
+        env_file_encoding='utf-8'
+    )
+    
+    # Core service configuration
     service_name: Literal["webhook-ingestion"] = Field(default="webhook-ingestion")
     service_version: str = Field(default="1.0.0")
     
+    # Environment configuration
+    environment: Environment = Field(
+        default=Environment.DEVELOPMENT,
+        description="Deployment environment",
+        env="ENVIRONMENT"
+    )
+    
+    # Logging configuration
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
+        default="INFO",
+        description="Log level"
+    )
+    
     # Queue configuration
-    output_queue_name: str = Field(
-        default="uw-contracts-parser-dev-sqs",
+    uw_uploaded_docs_queue: str = Field(
+        ...,
         description="Queue for document download tasks",
-        env="SQS_MAIN_QUEUE"
+        env="UW_UPLOADED_DOCS_QUEUE"
     )
-    
-    # Security
-    cors_origins: List[str] = Field(
-        default=["http://localhost:3000", "http://localhost:8000"],
-        description="CORS allowed origins",
-        env="CORS_ORIGINS"
-    )
-    webhook_secret: str = Field(
-        default="",
-        description="Webhook signature secret",
-        env="SECRET_KEY"
-    )
-    
-    # Rate limiting
-    rate_limit_enabled: bool = Field(default=True, env="WEBHOOK_RATE_LIMIT_ENABLED")
-    rate_limit_requests: int = Field(default=100, env="WEBHOOK_RATE_LIMIT_REQUESTS")
-    rate_limit_period: int = Field(default=60, env="WEBHOOK_RATE_LIMIT_PERIOD")
-    
-    # Forth API (for enrichment)
-    forth_api_base_url: str = Field(
-        default="https://api.forthcrm.com/v1", 
-        description="Forth API URL",
-        env="FORTH_API_BASE_URL"
-    )
-    forth_api_key: str = Field(
-        default="", 
-        description="Forth API key",
-        env="FORTH_API_KEY"
-    )
-    forth_api_key_id: str = Field(
-        default="", 
-        description="Forth API key ID",
-        env="FORTH_API_KEY_ID"
-    )
-    
-    # S3 Configuration
-    s3_bucket_name: str = Field(
-        default="contact-contracts-dev-s3-us-west-1",
-        description="S3 bucket for document storage",
-        env="AWS_S3_BUCKET_NAME"
-    )
-    
+
     # Dead Letter Queue
-    dlq_name: str = Field(
-        default="uw-contracts-parser-dl-dev-sqs",
+    uw_uploaded_docs_dlq: str = Field(
+        ...,
         description="Dead letter queue name",
-        env="SQS_DLQ"
+        env="UW_UPLOADED_DOCS_DLQ" 
+    )
+    
+    # Security Configuration
+    webhook_cors_origins: str = Field(
+        default="http://localhost:3000",
+        description="CORS allowed origins (comma-separated)"
+    )
+    
+    @property
+    def cors_origins(self) -> List[str]:
+        """Get CORS origins as a list."""
+        if not self.webhook_cors_origins:
+            return []
+        return [origin.strip() for origin in self.webhook_cors_origins.split(",") if origin.strip()]
+    
+    webhook_secret: SecretStr = Field(
+        ...,
+        min_length=32,
+        description="Webhook signature secret (≥32 characters)"
+    )
+    
+    # Rate Limiting
+    rate_limit_enabled: bool = Field(
+        default=True,
+        description="Enable rate limiting"
+    )
+    
+    rate_limit_requests: int = Field(
+        default=100,
+        ge=1,
+        le=10000,
+        description="Maximum requests per time window (ignored if rate_limit_enabled=False)"
+    )
+    
+    rate_limit_period: int = Field(
+        default=60,
+        ge=1,
+        le=3600,
+        description="Rate limit time window in seconds (ignored if rate_limit_enabled=False)"
     )
     
     # Webhook endpoint configuration
     webhook_endpoint: str = Field(
         default="/webhook/forth-docs",
-        description="Webhook endpoint path",
-        env="WEBHOOK_ENDPOINT"
-    )
-    webhook_timeout: int = Field(
-        default=30,
-        description="Webhook timeout in seconds",
-        env="WEBHOOK_TIMEOUT"
+        description="Webhook endpoint path"
     )
     
-    @field_validator('cors_origins', mode='before')
+    webhook_timeout: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        description="Webhook timeout in seconds"
+    )
+    
+    # observability
+    enable_metrics: bool = Field(
+        default=True,
+        description="Expose Prometheus metrics"
+    )
+    enable_tracing: bool = Field(
+        default=True,
+        description="Enable OpenTelemetry tracing"
+    )
+    trace_sample_rate: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="OpenTelemetry trace sample rate (ignored if enable_tracing=False)"
+    )
+    
+    # Server configuration for uvicorn
+    host: str = Field(
+        default="0.0.0.0",
+        description="Server host",
+        env="HOST"
+    )
+    
+    port: int = Field(
+        default=8000,
+        description="Server port", 
+        env="PORT"
+    )
+
+    # Validation
+    @field_validator('log_level', mode='before')
     @classmethod
-    def parse_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
-        """Parse CORS origins from environment variable or list."""
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
-        return v or ["http://localhost:3000", "http://localhost:8000"]
+    def normalize_log_level(cls, v: str) -> str:
+        """Normalize log level to uppercase for case-insensitive input."""
+        return v.upper() if isinstance(v, str) else v
+    
+    @field_validator('webhook_cors_origins', mode='before')
+    @classmethod
+    def validate_cors_origins_string(cls, v: str) -> str:
+        """Validate CORS origins string format."""
+        if not v:
+            return v
+            
+        # Parse and validate each origin
+        origins = [origin.strip() for origin in v.split(",") if origin.strip()]
+        for origin in origins:
+            if origin != "*" and not CORS_ORIGIN_PATTERN.match(origin):
+                raise ValueError(f"Invalid CORS origin format: {origin}")
+        
+        return v
+
+
+    # Environment-specific validation
+    @model_validator(mode='after')
+    def validate_production_requirements(self) -> 'WebhookConfig':
+        """Apply production-specific validation."""
+        if self.environment == Environment.PRODUCTION:
+            # Check for wildcard CORS in production
+            if "*" in self.cors_origins:
+                raise ValueError("Wildcard CORS origin not allowed in production")
+            
+            # Ensure reasonable rate limits in production
+            if self.rate_limit_requests < 10:
+                raise ValueError("Production rate limit too low (minimum 10)")
+        
+        return self
+    
+
+    
+    @property
+    def output_queue_name(self) -> str:
+        """Get the output queue name for compatibility with processor."""
+        return self.uw_uploaded_docs_queue
+    
+    def is_development(self) -> bool:
+        """Check if running in development environment."""
+        return self.environment == Environment.DEVELOPMENT

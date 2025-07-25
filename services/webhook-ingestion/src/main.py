@@ -1,5 +1,6 @@
 # services/webhook-ingestion/src/main.py
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
@@ -8,8 +9,8 @@ from config import WebhookConfig
 from api.routes import api_router, webhook_router
 from api.dependencies import get_webhook_processor
 from core.processor import WebhookProcessor
-from forth_shared.utils.logging import setup_logging
-from forth_shared.utils.monitoring import setup_metrics
+from libs.forth_shared.utils.logging import setup_logging
+from libs.forth_shared.utils.monitoring import setup_metrics
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -50,7 +51,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add middleware
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.cors_origins,

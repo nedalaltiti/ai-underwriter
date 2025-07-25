@@ -114,64 +114,78 @@ class WebhookSignatureVerifier:
             logger.error(f"Signature verification error: {e}")
             return False
     
-    def verify_forth_signature(self, payload: bytes, signature: str) -> bool:
-        """Verify Forth CRM webhook signature."""
-        # Forth typically uses sha256 with format "sha256=..."
-        return self.verify_signature(payload, signature, "sha256")
 
 
-def get_request_signature(request: Request) -> Optional[str]:
-    """Extract signature from request headers."""
+
+def get_signature_from_headers(headers: Dict[str, str]) -> Optional[str]:
+    """Extract signature from headers dictionary."""
     # Try common signature header names
     return (
-        request.headers.get("X-Hub-Signature-256") or
-        request.headers.get("X-Hub-Signature") or
-        request.headers.get("X-Forth-Signature") or
-        request.headers.get("X-Signature")
+        headers.get("X-Hub-Signature-256") or
+        headers.get("X-Hub-Signature") or
+        headers.get("X-Forth-Signature") or
+        headers.get("X-Signature") or
+        headers.get("Authorization")
     )
 
 
-async def verify_webhook_security(
-    request: Request,
+def get_request_signature(request: Request) -> Optional[str]:
+    """Extract signature from FastAPI request headers."""
+    return get_signature_from_headers(dict(request.headers))
+
+
+
+def verify_webhook_security_raw(
+    raw_body: Optional[bytes],
+    headers: Optional[Dict[str, str]],
+    client_ip: Optional[str],
     rate_limiter: Optional[RateLimiter] = None,
     signature_verifier: Optional[WebhookSignatureVerifier] = None,
-    require_signature: bool = False
+    correlation_id: Optional[str] = None
 ) -> None:
     """
-    Comprehensive webhook security verification.
+    Comprehensive webhook security verification for raw data.
     
     Args:
-        request: FastAPI request object
+        raw_body: Raw request body bytes
+        headers: Request headers dictionary
+        client_ip: Client IP address
         rate_limiter: Rate limiter instance
         signature_verifier: Signature verifier instance
-        require_signature: Whether signature is required
+        correlation_id: Correlation ID for logging
     
     Raises:
         RateLimitError: If rate limit exceeded
         AuthenticationError: If signature verification fails
     """
-    # Rate limiting
-    if rate_limiter:
-        client_id = rate_limiter.get_client_id(request)
-        is_allowed, retry_after = rate_limiter.is_allowed(client_id)
-        
+    # 1. ENFORCE RATE LIMITING
+    if rate_limiter and client_ip:
+        is_allowed, retry_after = rate_limiter.is_allowed(client_ip)
         if not is_allowed:
-            logger.warning(f"Rate limit exceeded for client: {client_id}")
-            raise RateLimitError(retry_after=retry_after)
+            logger.bind(
+                correlation_id=correlation_id,
+                client_ip=client_ip,
+                retry_after=retry_after
+            ).warning(f"🚫 Rate limit exceeded for {client_ip}")
+            
+            raise RateLimitError(
+                f"Rate limit exceeded. Try again in {retry_after} seconds",
+                retry_after=retry_after
+            )
     
-    # Signature verification
-    if signature_verifier and (require_signature or get_request_signature(request)):
-        signature = get_request_signature(request)
-        
-        if require_signature and not signature:
-            raise AuthenticationError("Webhook signature required but not provided")
+    # 2. ENFORCE SIGNATURE VERIFICATION
+    if signature_verifier and raw_body is not None and headers:
+        signature = get_signature_from_headers(headers)
         
         if signature:
-            # Get raw body for signature verification
-            body = await request.body()
-            
-            if not signature_verifier.verify_signature(body, signature):
-                logger.warning("Invalid webhook signature")
+            if not signature_verifier.verify_signature(raw_body, signature):
+                logger.bind(
+                    correlation_id=correlation_id,
+                    client_ip=client_ip
+                ).warning("🔐 Webhook signature verification failed")
+                
                 raise AuthenticationError("Invalid webhook signature")
             else:
-                logger.debug("Webhook signature verified successfully") 
+                logger.bind(
+                    correlation_id=correlation_id
+                ).debug("🔐 Webhook signature verified successfully") 

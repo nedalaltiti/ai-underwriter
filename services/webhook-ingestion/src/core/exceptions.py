@@ -2,16 +2,17 @@
 """Webhook-specific exception handling."""
 
 from typing import Optional, Dict, Any
-from forth_shared.utils.error_handling import ServiceError, ValidationError as BaseValidationError
+from libs.forth_shared.utils.error_handling import ServiceError, ValidationError as BaseValidationError
 
 
 class WebhookError(ServiceError):
     """Base exception for webhook-related errors."""
     
     def __init__(self, message: str, **kwargs):
+        error_code = kwargs.pop('error_code', 'WEBHOOK_ERROR')
         super().__init__(
             message=message,
-            error_code=kwargs.get('error_code', 'WEBHOOK_ERROR'),
+            error_code=error_code,
             **kwargs
         )
 
@@ -19,9 +20,9 @@ class WebhookError(ServiceError):
 class ValidationError(BaseValidationError):
     """Webhook validation error extending shared validation error."""
     
-    def __init__(self, message: str, field: Optional[str] = None, **kwargs):
+    def __init__(self, message: str, field: Optional[str] = None, error_code: Optional[str] = None, **kwargs):
         super().__init__(message=message, field=field, **kwargs)
-        self.error_code = "WEBHOOK_VALIDATION_ERROR"
+        self.error_code = error_code or "WEBHOOK_VALIDATION_ERROR"
 
 
 class ProcessingError(WebhookError):

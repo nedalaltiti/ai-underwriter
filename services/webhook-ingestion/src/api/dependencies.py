@@ -1,6 +1,6 @@
 # services/webhook-ingestion/src/api/dependencies.py
 from fastapi import Request
-from typing import Optional
+
 
 from core.processor import WebhookProcessor
 
@@ -22,13 +22,3 @@ def get_config(request: Request):
     This allows routes to access configuration if needed.
     """
     return request.app.state.config
-
-
-# Optional: Add more dependencies as needed
-def get_correlation_id(request: Request) -> Optional[str]:
-    """
-    Extract correlation ID from request headers.
-    
-    This can be used to maintain request tracing across services.
-    """
-    return request.headers.get("X-Correlation-ID")
