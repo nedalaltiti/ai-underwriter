@@ -1,25 +1,30 @@
 # services/document-downloader/src/api/routes.py
-import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime, UTC
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
 
 from api.dependencies import get_downloader, get_worker, get_config
 from core.downloader import DocumentDownloader
 from services.worker import DownloadWorker
-from models.download import DownloadTask, DownloadResult
+from models.download import DownloadTask, DownloadResult, DownloadStatus
+from libs.forth_shared.utils.tracing import generate_correlation_id
 
 
-router = APIRouter(prefix="/api/v1", tags=["downloader"])
+# Main API router with versioning
+api_router = APIRouter(prefix="/api/v1", tags=["api"])
 
 
-@router.post("/download/{contact_id}/{doc_id}")
+@api_router.post(
+    "/downloads/manual/{contact_id}/{doc_id}",
+    response_model=DownloadResult,
+    summary="Manual document download",
+    description="Manually trigger a document download (bypasses queue)"
+)
 async def manual_download(
     contact_id: str,
     doc_id: str,
-    doc_name: Optional[str] = Query(None, description="Document filename"),
-    doc_url: Optional[str] = Query(None, description="Direct document URL"),
+    doc_name: str,
     downloader: DocumentDownloader = Depends(get_downloader)
 ) -> DownloadResult:
     """
@@ -28,13 +33,20 @@ async def manual_download(
     This endpoint bypasses the queue and directly downloads a document.
     """
     try:
+        correlation_id = generate_correlation_id("manual")
+        
         task = DownloadTask(
             contact_id=contact_id,
             doc_id=doc_id,
             doc_name=doc_name,
-            doc_url=doc_url,
-            correlation_id=f"manual-{datetime.now(UTC).timestamp()}"
+            correlation_id=correlation_id
         )
+        
+        logger.bind(
+            contact_id=contact_id,
+            doc_id=doc_id,
+            correlation_id=correlation_id
+        ).info("Manual download requested")
         
         result = await downloader.download_document(task)
         
@@ -53,7 +65,11 @@ async def manual_download(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/metrics")
+@api_router.get(
+    "/downloads/metrics",
+    summary="Download metrics",
+    description="Get download performance metrics"
+)
 async def get_metrics(
     downloader: DocumentDownloader = Depends(get_downloader),
     worker: DownloadWorker = Depends(get_worker)
@@ -71,7 +87,11 @@ async def get_metrics(
     }
 
 
-@router.get("/status")
+@api_router.get(
+    "/downloads/status",
+    summary="Download status",
+    description="Get current download worker status"
+)
 async def get_status(
     downloader: DocumentDownloader = Depends(get_downloader),
     config = Depends(get_config)
@@ -91,43 +111,3 @@ async def get_status(
         },
         "timestamp": datetime.now(UTC).isoformat()
     }
-
-
-@router.get("/debug/queue")
-async def debug_queue_messages(
-    worker: DownloadWorker = Depends(get_worker)
-) -> Dict[str, Any]:
-    """Debug endpoint to inspect queue message format."""
-    try:
-        # Peek at messages without deleting them
-        messages = await worker.input_queue.receive_messages(max_messages=3)
-        
-        message_samples = []
-        for msg in messages:
-            try:
-                body = json.loads(msg["Body"])
-                message_samples.append({
-                    "message_id": msg.get("MessageId"),
-                    "body_keys": list(body.keys()),
-                    "body_sample": body if len(str(body)) < 1000 else "Too large to display",
-                    "attributes": msg.get("Attributes", {})
-                })
-            except Exception as e:
-                message_samples.append({
-                    "error": f"Failed to parse: {e}",
-                    "raw_body": msg.get("Body", "")[:500]  # First 500 chars
-                })
-        
-        return {
-            "queue_name": worker.input_queue.queue_name,
-            "message_count": len(messages),
-            "samples": message_samples,
-            "timestamp": datetime.now(UTC).isoformat()
-        }
-        
-    except Exception as e:
-        return {
-            "error": str(e),
-            "queue_name": worker.input_queue.queue_name,
-            "timestamp": datetime.now(UTC).isoformat()
-        }

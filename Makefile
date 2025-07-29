@@ -14,7 +14,7 @@ help:
 setup:
 	@echo "Setting up development environment..."
 	# Install shared library
-	cd shared && pip install -e .
+	cd libs && pip install -e .
 	# Install service dependencies
 	@for service in webhook-ingestion document-downloader contract-parser; do \
 		echo "Installing $$service dependencies..."; \
@@ -38,7 +38,7 @@ dev:
 test:
 	@echo "Running tests..."
 	# Run shared library tests
-	cd shared && pytest tests/
+	cd libs && pytest tests/
 	# Run service tests
 	@for service in webhook-ingestion document-downloader contract-parser; do \
 		echo "Testing $$service..."; \

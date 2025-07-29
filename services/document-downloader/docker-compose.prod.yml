@@ -1,0 +1,118 @@
+# services/document-downloader/docker-compose.prod.yml
+version: '3.8'
+
+services:
+  document-downloader:
+    build:
+      context: ../..  # Build from root directory
+      dockerfile: services/document-downloader/Dockerfile
+      args:
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
+        VERSION: ${VERSION:-latest}
+        SERVICE_NAME: document-downloader
+    image: ai-underwriter/document-downloader:${VERSION:-latest}
+    container_name: document-downloader
+    restart: unless-stopped
+    
+    ports:
+      - "8002:8002"
+    
+    environment:
+      # Core service configuration
+      DOCUMENT_ENVIRONMENT: ${DOCUMENT_ENVIRONMENT:-production}
+      DOCUMENT_LOG_LEVEL: ${DOCUMENT_LOG_LEVEL:-INFO}
+      DOCUMENT_SERVICE_NAME: document-downloader
+      DOCUMENT_SERVICE_VERSION: ${VERSION:-1.0.0}
+      
+      # Server configuration
+      DOCUMENT_HOST: ${DOCUMENT_HOST:-0.0.0.0}
+      DOCUMENT_PORT: ${DOCUMENT_PORT:-8002}
+      DOCUMENT_WORKERS: ${DOCUMENT_WORKERS:-4}
+      
+      # AWS Configuration
+      DOCUMENT_AWS_REGION: ${DOCUMENT_AWS_REGION:-us-west-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${DOCUMENT_AWS_REGION:-us-west-1}
+      
+      # S3 Configuration
+      DOCUMENT_S3_BUCKET_NAME: ${DOCUMENT_S3_BUCKET_NAME:-contact-contracts-dev-s3-us-west-1}
+      DOCUMENT_S3_PREFIX: ${DOCUMENT_S3_PREFIX:-}
+      
+      # SQS Configuration
+      DOCUMENT_UW_UPLOADED_DOCS_QUEUE: ${DOCUMENT_UW_UPLOADED_DOCS_QUEUE:-uw-uploaded-docs-dev-sqs.fifo}
+      DOCUMENT_UW_DOWNLOADED_DOCS_QUEUE: ${DOCUMENT_UW_DOWNLOADED_DOCS_QUEUE:-uw-downloaded-docs-dev-sqs.fifo}
+      
+      # Forth API Configuration
+      DOCUMENT_FORTH_API_BASE_URL: ${DOCUMENT_FORTH_API_BASE_URL:-https://api.forthcrm.com/v1}
+      DOCUMENT_FORTH_API_KEY: ${DOCUMENT_FORTH_API_KEY}
+      DOCUMENT_FORTH_API_TIMEOUT: ${DOCUMENT_FORTH_API_TIMEOUT:-30}
+      
+      # Worker Configuration
+      DOCUMENT_WORKER_CONCURRENCY: ${DOCUMENT_WORKER_CONCURRENCY:-10}
+      DOCUMENT_DOWNLOAD_TIMEOUT: ${DOCUMENT_DOWNLOAD_TIMEOUT:-60}
+      DOCUMENT_MAX_FILE_SIZE_MB: ${DOCUMENT_MAX_FILE_SIZE_MB:-500}
+      DOCUMENT_TEMP_DIR: ${DOCUMENT_TEMP_DIR:-/app/downloads}
+      
+      # Retry Configuration
+      DOCUMENT_MAX_RETRIES: ${DOCUMENT_MAX_RETRIES:-3}
+      DOCUMENT_RETRY_DELAY: ${DOCUMENT_RETRY_DELAY:-60}
+      
+      # Observability
+      DOCUMENT_ENABLE_METRICS: ${DOCUMENT_ENABLE_METRICS:-true}
+      DOCUMENT_ENABLE_TRACING: ${DOCUMENT_ENABLE_TRACING:-true}
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    # Security enhancements
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: false  # Need write access for temp downloads
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    
+    # Health check configuration
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/api/v1/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service,environment,version"
+    
+    # Labels for service discovery and monitoring
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.document-downloader.rule=Host(`document-downloader.local`)"
+      - "traefik.http.routers.document-downloader.entrypoints=web"
+      - "traefik.http.services.document-downloader.loadbalancer.server.port=8002"
+      - "com.docker.compose.service=document-downloader"
+      - "com.docker.compose.project=${COMPOSE_PROJECT_NAME:-ai-underwriter}"
+      - "service.name=document-downloader"
+      - "service.version=${VERSION:-latest}"
+      - "service.environment=${DOCUMENT_ENVIRONMENT:-production}"
+
+networks:
+  default:
+    name: ai-underwriter-network
+    external: true 

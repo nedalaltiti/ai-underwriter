@@ -14,7 +14,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 var/
@@ -219,3 +218,4 @@ embeddings/
 output/
 *.generated
 scripts/
+.env.production

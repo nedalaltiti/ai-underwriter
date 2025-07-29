@@ -7,8 +7,8 @@ from unittest.mock import Mock, AsyncMock
 import tempfile
 from pathlib import Path
 
-from forth_shared.models.queue import QueueMessage, MessageType
-from forth_shared.adapters.queue import QueueAdapter
+from libs.forth_shared.models.queue import QueueMessage, MessageType
+from libs.forth_shared.adapters.queue import QueueAdapter
 
 
 @pytest.fixture(scope="session")

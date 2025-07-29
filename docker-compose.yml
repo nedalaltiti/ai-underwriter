@@ -56,7 +56,7 @@ services:
       localstack:
         condition: service_healthy
     volumes:
-      - ./shared:/app/shared:ro
+      - ./libs:/app/libs:ro
     command: python src/main.py
 
   # Document Downloader Service
@@ -80,7 +80,7 @@ services:
       localstack:
         condition: service_healthy
     volumes:
-      - ./shared:/app/shared:ro
+      - ./libs:/app/libs:ro
       - document_temp:/app/temp_downloads
     command: python src/main.py
 
@@ -108,7 +108,7 @@ services:
       localstack:
         condition: service_healthy
     volumes:
-      - ./shared:/app/shared:ro
+      - ./libs:/app/libs:ro
     command: python src/main.py
 
   # Nginx reverse proxy (optional)

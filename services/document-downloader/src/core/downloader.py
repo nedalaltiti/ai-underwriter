@@ -2,17 +2,26 @@
 import os
 import asyncio
 import tempfile
+import stat
 from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime, UTC
 import aiofiles
+import aiofiles.os
 import httpx
 from loguru import logger
 
 from config import DocumentConfig
-from models.download import DownloadTask, DownloadResult
+from models.download import DownloadTask, DownloadResult, DownloadStatus
 from integrations.forth_api import ForthAPIClient
-from forth_shared.adapters.storage import S3Adapter
+from libs.forth_shared.adapters.storage import S3Adapter
+from utils.metadata import prepare_s3_metadata
+from utils.file_operations import generate_s3_key, get_file_extension_from_filename
+from core.exceptions import (
+    FileSizeExceededError, 
+    DownloadTimeoutError, 
+    TempFileError
+)
 
 
 class DocumentDownloader:
@@ -35,7 +44,11 @@ class DocumentDownloader:
             "successful_downloads": 0,
             "failed_downloads": 0,
             "total_bytes": 0,
-            "average_download_time_ms": 0
+            "average_download_time_ms": 0,
+            "retry_count": 0,
+            "forth_api_errors": 0,
+            "s3_upload_errors": 0,
+            "download_errors": 0
         }
     
     async def download_document(self, task: DownloadTask) -> DownloadResult:
@@ -44,45 +57,43 @@ class DocumentDownloader:
         temp_file_path = None
         
         try:
+            # Use semaphore to limit concurrent downloads
             async with self.download_semaphore:
                 # Get document URL
-                document_url = await self._resolve_document_url(task)
+                document_url = await self.get_document_url(task)
                 if not document_url:
                     return DownloadResult(
                         success=False,
+                        status=DownloadStatus.FAILED,
                         error_message="Could not resolve document URL"
                     )
-                
-                # Download to temp file
+                    
+                # Download to temp file with streaming
                 temp_file_path = await self._download_to_temp(
                     url=document_url,
                     filename=task.doc_name or f"{task.doc_id}.pdf"
                 )
                 
-                if not temp_file_path:
-                    return DownloadResult(
-                        success=False,
-                        error_message="Download failed"
-                    )
+                # Get file info using async operations
+                file_size = await aiofiles.os.path.getsize(temp_file_path)
                 
-                # Get file info
-                file_size = os.path.getsize(temp_file_path)
+                # Generate S3 key with new structure: date/contact_id/doc_id/filename
+                s3_key = generate_s3_key(task, s3_prefix="")
                 
-                # Generate S3 key
-                s3_key = self._generate_s3_key(task)
+                # Upload to S3 with sanitized metadata
+                raw_metadata = {
+                    "contact_id": task.contact_id,
+                    "doc_id": task.doc_id,
+                    "doc_type": task.doc_type or "",
+                    "doc_name": task.doc_name or "",
+                    "correlation_id": task.correlation_id or "",
+                    "download_timestamp": datetime.now(UTC).isoformat()
+                }
                 
-                # Upload to S3
                 upload_result = await self.s3_adapter.upload_file(
                     file_path=temp_file_path,
                     s3_key=s3_key,
-                    metadata={
-                        "contact_id": task.contact_id,
-                        "doc_id": task.doc_id,
-                        "doc_type": task.doc_type,
-                        "doc_name": task.doc_name or "",
-                        "correlation_id": task.correlation_id or "",
-                        "download_timestamp": datetime.now(UTC).isoformat()
-                    }
+                    metadata=prepare_s3_metadata(raw_metadata)
                 )
                 
                 # Update metrics
@@ -101,6 +112,7 @@ class DocumentDownloader:
                 
                 return DownloadResult(
                     success=True,
+                    status=DownloadStatus.COMPLETED,
                     s3_key=s3_key,
                     s3_url=upload_result["url"],
                     file_size=file_size,
@@ -108,6 +120,42 @@ class DocumentDownloader:
                     content_type=upload_result.get("content_type", "application/pdf")
                 )
                 
+        except FileSizeExceededError as e:
+            processing_time_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
+            self._update_metrics(False, 0, processing_time_ms)
+            self.metrics["download_errors"] += 1
+            
+            logger.error(f"File size exceeded: {e}")
+            return DownloadResult(
+                success=False,
+                status=DownloadStatus.FAILED,
+                error_message=f"File too large: {e}",
+                processing_time_ms=processing_time_ms
+            )
+        except DownloadTimeoutError as e:
+            processing_time_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
+            self._update_metrics(False, 0, processing_time_ms)
+            self.metrics["download_errors"] += 1
+            
+            logger.error(f"Download timeout: {e}")
+            return DownloadResult(
+                success=False,
+                status=DownloadStatus.FAILED,
+                error_message=str(e),
+                processing_time_ms=processing_time_ms
+            )
+        except TempFileError as e:
+            processing_time_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
+            self._update_metrics(False, 0, processing_time_ms)
+            self.metrics["download_errors"] += 1
+            
+            logger.error(f"Temp file error: {e}")
+            return DownloadResult(
+                success=False,
+                status=DownloadStatus.FAILED,
+                error_message=str(e),
+                processing_time_ms=processing_time_ms
+            )
         except Exception as e:
             processing_time_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
             self._update_metrics(False, 0, processing_time_ms)
@@ -115,26 +163,24 @@ class DocumentDownloader:
             logger.error(f"Document download failed: {e}")
             return DownloadResult(
                 success=False,
+                status=DownloadStatus.FAILED,
                 error_message=str(e),
                 processing_time_ms=processing_time_ms
             )
             
         finally:
-            # Cleanup temp file
-            if temp_file_path and os.path.exists(temp_file_path):
+            # Cleanup temp file using async operations
+            if temp_file_path:
                 try:
-                    os.unlink(temp_file_path)
+                    if await aiofiles.os.path.exists(temp_file_path):
+                        await aiofiles.os.unlink(temp_file_path)
+                        logger.debug(f"Cleaned up temp file: {temp_file_path}")
                 except Exception as e:
                     logger.warning(f"Failed to cleanup temp file: {e}")
     
-    async def _resolve_document_url(self, task: DownloadTask) -> Optional[str]:
+    async def get_document_url(self, task: DownloadTask) -> Optional[str]:
         """Resolve document URL from task or Forth API."""
-        # If URL is provided in task, use it
-        if task.doc_url:
-            logger.debug(f"🔗 Using provided URL: {task.doc_url}")
-            return task.doc_url
-        
-        # Otherwise, fetch from Forth API
+        # fetch from Forth API
         if not self.forth_client:
             logger.error("❌ No document URL provided and Forth API not configured")
             return None
@@ -155,54 +201,66 @@ class DocumentDownloader:
             logger.error(f"Failed to get document URL from Forth API: {e}")
             return None
     
-    async def _download_to_temp(self, url: str, filename: str) -> Optional[str]:
+    async def _download_to_temp(self, url: str, filename: str) -> str:
         """Download file to temporary location."""
+        temp_file_path = None
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    url,
-                    follow_redirects=True,
-                    timeout=self.config.download_timeout
-                )
+            # Create secure temp file
+            suffix = get_file_extension_from_filename(filename)
+            temp_fd, temp_file_path = tempfile.mkstemp(
+                dir=self.config.temp_dir,
+                suffix=suffix,
+                prefix="download_"
+            )
+            
+            # Set secure permissions (owner read/write only)
+            os.chmod(temp_file_path, stat.S_IRUSR | stat.S_IWUSR)
+            os.close(temp_fd)  # Close the file descriptor, we'll use aiofiles
+            
+            max_size = self.config.get_max_file_size_bytes()
+            
+            timeout = httpx.Timeout(self.config.download_timeout)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(url, follow_redirects=True)
                 
                 if response.status_code != 200:
                     logger.error(f"Download failed with status {response.status_code}")
-                    return None
+                    raise TempFileError(f"HTTP {response.status_code}: {response.text}")
                 
-                # Create temp file
-                suffix = Path(filename).suffix or ".pdf"
-                temp_file = tempfile.NamedTemporaryFile(
-                    dir=self.config.temp_dir,
-                    suffix=suffix,
-                    delete=False
-                )
+                # Check file size before processing
+                content_size = len(response.content)
+                if content_size > max_size:
+                    raise FileSizeExceededError(content_size, max_size)
                 
-                # Write content
-                async with aiofiles.open(temp_file.name, 'wb') as f:
+                # Write entire content to temp file
+                async with aiofiles.open(temp_file_path, 'wb') as f:
                     await f.write(response.content)
-                
-                logger.debug(f"Downloaded {len(response.content)} bytes to {temp_file.name}")
-                return temp_file.name
-                
-        except asyncio.TimeoutError:
+            
+            logger.debug(f"Downloaded {content_size} bytes to {temp_file_path}")
+            return temp_file_path
+            
+        except httpx.TimeoutException:
             logger.error(f"Download timeout after {self.config.download_timeout}s")
-            return None
+            raise DownloadTimeoutError(f"Download timeout after {self.config.download_timeout}s")
+        except (FileSizeExceededError, DownloadTimeoutError, TempFileError):
+            # Re-raise our custom exceptions
+            raise
         except Exception as e:
             logger.error(f"Download error: {e}")
-            return None
+            raise TempFileError(f"Download failed: {e}")
+        finally:
+            # Clean up temp file on error
+            if temp_file_path and os.path.exists(temp_file_path):
+                # Only clean up if we're raising an exception
+                import sys
+                if sys.exc_info()[0] is not None:
+                    try:
+                        os.unlink(temp_file_path)
+                        logger.debug(f"Cleaned up temp file on error: {temp_file_path}")
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to cleanup temp file on error: {cleanup_error}")
     
-    def _generate_s3_key(self, task: DownloadTask) -> str:
-        """Generate S3 key for document."""
-        # Use date partitioning for better organization
-        date_prefix = datetime.now(UTC).strftime("%Y/%m/%d")
-        
-        # Clean filename
-        filename = task.doc_name or f"{task.doc_id}.pdf"
-        safe_filename = Path(filename).name
-        
-        # Generate key
-        return f"{self.config.s3_prefix}/{date_prefix}/{task.contact_id}/{task.doc_id}/{safe_filename}"
-    
+
     def _update_metrics(self, success: bool, file_size: int, processing_time_ms: int):
         """Update download metrics."""
         self.metrics["total_downloads"] += 1
@@ -255,3 +313,7 @@ class DocumentDownloader:
             "checks": checks,
             "metrics": self.metrics
         }
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get current metrics."""
+        return self.metrics.copy()

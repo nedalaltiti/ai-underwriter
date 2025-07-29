@@ -1,19 +1,22 @@
 # services/document-downloader/src/main.py
 import asyncio
-import signal
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from config import DocumentConfig
-from api.routes import router as routes
-from api.health import router as health
+from api.routes import api_router
+from api.health import router as health_router
 from core.downloader import DocumentDownloader
 from services.worker import DownloadWorker
 from integrations.forth_api import ForthAPIClient
-from forth_shared.utils.logging import setup_logging
-from forth_shared.adapters.storage import S3Adapter
+from libs.forth_shared.utils.logging import setup_logging
+from libs.forth_shared.utils.monitoring import setup_metrics
+from libs.forth_shared.adapters.storage import S3Adapter
 
 
 # Global shutdown event
@@ -26,24 +29,32 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info(f"🚀 Starting {config.service_name} v{config.service_version}")
     
+    # Store start time for health checks
+    app.state.start_time = time.time()
+    
     # Create temp directory
     Path(config.temp_dir).mkdir(parents=True, exist_ok=True)
     
     # Initialize Forth API client
     forth_client = None
-    if config.forth_api_base_url and config.forth_api_key:
+    if config.has_forth_api_credentials():
         forth_client = ForthAPIClient(
             base_url=config.forth_api_base_url,
-            api_key=config.forth_api_key,
+            api_key=config.get_forth_api_key(),
             timeout=config.forth_api_timeout
         )
         await forth_client.initialize()
+        logger.info("Forth API client initialized successfully")
     
     # Initialize S3 adapter
+    endpoint_url = None
+    if hasattr(config, 'get_aws_endpoint_url') and callable(getattr(config, 'get_aws_endpoint_url')):
+        endpoint_url = config.get_aws_endpoint_url()
+    
     s3_adapter = S3Adapter(
         bucket_name=config.s3_bucket_name,
         region=config.aws_region,
-        endpoint_url=config.get_aws_endpoint_url() if hasattr(config, 'get_aws_endpoint_url') else None
+        endpoint_url=endpoint_url
     )
     
     # Initialize downloader
@@ -101,9 +112,23 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Add CORS middleware
+if hasattr(config, 'cors_origins') and config.cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+# Setup metrics if enabled
+if config.enable_metrics:
+    setup_metrics(app, service_name=config.service_name)
+
 # Include routers
-app.include_router(routes)
-app.include_router(health)
+app.include_router(api_router)       # /api/v1/* endpoints
+app.include_router(health_router, prefix="/api/v1")  # /api/v1/health/* endpoints
 
 
 if __name__ == "__main__":

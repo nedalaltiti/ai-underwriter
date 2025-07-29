@@ -13,9 +13,9 @@ class ForthAPIClient:
         self.timeout = timeout
         self.client: Optional[httpx.AsyncClient] = None
         
-        # Headers for all requests
+        # Headers for all requests - Using Api-Key format as per Forth API docs
         self.headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Api-Key": api_key,
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
@@ -50,8 +50,8 @@ class ForthAPIClient:
             raise RuntimeError("Client not initialized. Call initialize() first.")
         
         try:
-            # Construct endpoint
-            endpoint = f"/contacts/{contact_id}/documents/{doc_id}"
+            # Construct endpoint - API requires file_type parameter (using 'uploaded' as default)
+            endpoint = f"/contacts/{contact_id}/documents/{doc_id}/uploaded"
             
             logger.info(f"Fetching document from Forth API: {endpoint}")
             

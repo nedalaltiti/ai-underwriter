@@ -8,8 +8,8 @@ from loguru import logger
 from config import DocumentConfig
 from core.downloader import DocumentDownloader
 from models.download import DownloadTask, DownloadResult
-from forth_shared.models.queue import QueueMessage, MessageType
-from forth_shared.adapters.queue import SQSAdapter
+from libs.forth_shared.models.queue import QueueMessage, MessageType
+from libs.forth_shared.adapters.queue import SQSAdapter
 
 
 class DownloadWorker:
@@ -20,11 +20,18 @@ class DownloadWorker:
         self.downloader = downloader
         self.running = False
         self.shutdown_event = asyncio.Event()
+        self._active_tasks: Dict[str, asyncio.Task] = {}
+        self._semaphore = asyncio.Semaphore(config.worker_concurrency)
         
         # Initialize queue adapters
+        endpoint_url = None
+        if hasattr(config, 'get_aws_endpoint_url') and callable(getattr(config, 'get_aws_endpoint_url')):
+            endpoint_url = config.get_aws_endpoint_url()
+            
         self.input_queue = SQSAdapter(
             queue_name=config.input_queue_name,
-            region=config.aws_region
+            region=config.aws_region,
+            endpoint_url=endpoint_url
         )
         
         # Only initialize output queue if configured
@@ -32,8 +39,14 @@ class DownloadWorker:
         if config.output_queue_name:
             self.output_queue = SQSAdapter(
                 queue_name=config.output_queue_name,
-                region=config.aws_region
+                region=config.aws_region,
+                endpoint_url=endpoint_url
             )
+    
+    @property
+    def active_downloads(self) -> int:
+        """Get number of active downloads."""
+        return len([t for t in self._active_tasks.values() if not t.done()])
     
     async def run(self):
         """Main worker loop."""
@@ -63,7 +76,10 @@ class DownloadWorker:
     async def _process_batch(self):
         """Process a batch of messages."""
         try:
-            # Receive messages
+            # Attempt to receive messages (this will lazily initialize the SQS client
+            # and resolve the queue URL on the first run). Any connectivity issues
+            # will be caught and retried with back-off below.
+
             messages = await self.input_queue.receive_messages(
                 max_messages=self.config.worker_concurrency
             )
@@ -90,9 +106,19 @@ class DownloadWorker:
             
             if failures > 0:
                 logger.warning(f"Batch completed: {successes} success, {failures} failed")
+            else:
+                # Reset error count on successful batch
+                self._error_count = 0
             
         except Exception as e:
             logger.error(f"Batch processing error: {e}")
+
+            # If the queue hasn't been created yet or credentials/region are wrong,
+            # the first connection attempt will raise here. We back-off and retry
+            # instead of exiting the worker loop.
+
+            await asyncio.sleep(min(30, 2 ** getattr(self, '_error_count', 0)))
+            self._error_count = getattr(self, '_error_count', 0) + 1
     
     async def _process_message(self, message: Dict[str, Any]) -> bool:
         """Process a single message."""
@@ -198,8 +224,6 @@ class DownloadWorker:
                         "doc_id": str(body["doc_id"]),
                         "doc_type": body.get("doc_type", "agreement"),
                         "doc_name": body.get("doc_name"),
-                        "doc_url": body.get("doc_url"),
-                        "hardship_description": body.get("hardship_description"),
                         "webhook_source": body.get("source", "unknown"),
                         "raw_data": body
                     }
