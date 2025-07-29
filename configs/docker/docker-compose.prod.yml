@@ -1,0 +1,37 @@
+ # configs/.env.example - Environment variables template
+# Core Settings
+ENVIRONMENT=development
+LOG_LEVEL=INFO
+
+# AWS Configuration
+AWS_REGION=us-west-1
+AWS_ACCESS_KEY_ID=your-access-keyq
+AWS_SECRET_ACCESS_KEY=your-secret-key
+
+# For local development
+AWS_ENDPOINT_URL=http://localhost:4566
+
+# Queue Names
+CONTRACT_DOWNLOAD_QUEUE=contract-download-queue
+DOCUMENT_PARSE_QUEUE=document-parse-queue
+VALIDATION_COMPLETE_QUEUE=validation-complete-queue
+
+# S3 Configuration
+S3_BUCKET_NAME=forth-contracts
+
+# Database
+DATABASE_URL=postgresql://forth_user:forth_password@localhost:5432/forth_contracts
+
+# Forth API
+FORTH_API_BASE_URL=https://api.forth.com/v1
+FORTH_API_KEY=your-forth-api-key
+
+# LLM Configuration
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your-openai-key
+GEMINI_API_KEY=your-gemini-key
+
+# Service URLs (for inter-service communication)
+WEBHOOK_SERVICE_URL=http://webhook-ingestion:8000
+DOCUMENT_SERVICE_URL=http://document-downloader:8000
+PARSER_SERVICE_URL=http://contract-parser:8000

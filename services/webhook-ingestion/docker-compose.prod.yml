@@ -1,0 +1,204 @@
+# services/webhook-ingestion/docker-compose.prod.yml
+# Production Docker Compose configuration for webhook-ingestion service
+version: '3.8'
+
+services:
+  webhook-ingestion:
+    build:
+      context: ../..  # Build from root directory
+      dockerfile: services/webhook-ingestion/Dockerfile
+      args:
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
+        VERSION: ${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ai-underwriter}/webhook-ingestion:${VERSION:-latest}
+    container_name: webhook-ingestion-prod
+    restart: unless-stopped
+    ports:
+      - "${WEBHOOK_PORT:-8001}:8000"
+    environment:
+      # Core service configuration
+      - WEBHOOK_ENVIRONMENT=production
+      - WEBHOOK_LOG_LEVEL=${WEBHOOK_LOG_LEVEL:-INFO}
+      - WEBHOOK_HOST=0.0.0.0
+      - WEBHOOK_PORT=8000
+      
+      # Worker configuration
+      - WEBHOOK_WORKERS=${WEBHOOK_WORKERS:-4}
+      - WEBHOOK_MAX_REQUESTS=${WEBHOOK_MAX_REQUESTS:-1000}
+      - WEBHOOK_MAX_REQUESTS_JITTER=${WEBHOOK_MAX_REQUESTS_JITTER:-100}
+      - WEBHOOK_TIMEOUT=${WEBHOOK_TIMEOUT:-30}
+      - WEBHOOK_KEEPALIVE=${WEBHOOK_KEEPALIVE:-5}
+      
+      # AWS Configuration
+      - WEBHOOK_AWS_REGION=${AWS_REGION:-us-west-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      
+      # Queue Configuration
+      - WEBHOOK_UW_UPLOADED_DOCS_QUEUE=${UW_UPLOADED_DOCS_QUEUE:-uw-uploaded-docs-prod-sqs.fifo}
+      - WEBHOOK_UW_UPLOADED_DOCS_DLQ=${UW_UPLOADED_DOCS_DLQ:-uw-uploaded-docs-prod-dlq.fifo}
+      
+      # Security Configuration
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - WEBHOOK_CORS_ORIGINS=${WEBHOOK_CORS_ORIGINS:-https://app.yourcompany.com}
+      
+      # Rate Limiting
+      - WEBHOOK_RATE_LIMIT_ENABLED=${WEBHOOK_RATE_LIMIT_ENABLED:-true}
+      - WEBHOOK_RATE_LIMIT_REQUESTS=${WEBHOOK_RATE_LIMIT_REQUESTS:-1000}
+      - WEBHOOK_RATE_LIMIT_PERIOD=${WEBHOOK_RATE_LIMIT_PERIOD:-60}
+      
+      # Observability
+      - WEBHOOK_ENABLE_METRICS=${WEBHOOK_ENABLE_METRICS:-true}
+      - WEBHOOK_ENABLE_TRACING=${WEBHOOK_ENABLE_TRACING:-true}
+      - WEBHOOK_TRACE_SAMPLE_RATE=${WEBHOOK_TRACE_SAMPLE_RATE:-0.1}
+    
+    # Resource limits for production
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /app/tmp:noexec,nosuid,size=100m
+    
+    # Health checks
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service,version"
+    
+    # Labels for monitoring and management
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.webhook-ingestion.rule=Host(`webhooks.yourcompany.com`)"
+      - "traefik.http.routers.webhook-ingestion.tls=true"
+      - "traefik.http.routers.webhook-ingestion.tls.certresolver=letsencrypt"
+      - "traefik.http.services.webhook-ingestion.loadbalancer.server.port=8000"
+      - "com.docker.compose.service=webhook-ingestion"
+      - "com.docker.compose.version=${VERSION:-latest}"
+    
+    networks:
+      - ai-underwriter-prod
+      - monitoring
+    
+    depends_on:
+      - redis
+      - prometheus
+
+  # Redis for rate limiting and caching
+  redis:
+    image: redis:7-alpine
+    container_name: webhook-redis-prod
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai-underwriter-prod
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: webhook-prometheus-prod
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Grafana for monitoring dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: webhook-grafana-prod
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin123}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+volumes:
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  ai-underwriter-prod:
+    driver: bridge
+    name: ai-underwriter-prod
+  monitoring:
+    driver: bridge
+    name: webhook-monitoring 

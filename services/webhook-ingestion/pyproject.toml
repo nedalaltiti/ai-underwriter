@@ -1,0 +1,48 @@
+[project]
+name = "webhook-ingestion"
+version = "1.0.0"
+description = "Webhook ingestion service for AI underwriting platform"
+authors = [{ name = "Nedal Altiti", email = "nedal.a@usclarity.com" }]
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi~=0.116.1",
+    "uvicorn[standard]~=0.35.0",
+    "pydantic~=2.11.7",
+    "pydantic-settings~=2.10.1",
+    "httpx[http2]~=0.28.1",
+    "aiofiles~=24.1.0",
+    "loguru~=0.7.3",
+    "python-dotenv~=1.1.1",
+    "python-multipart~=0.0.9",
+    "requests~=2.32.3"  # For Docker healthcheck
+]
+
+[build-system]
+requires = ["setuptools>=69.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+select = ["E", "W", "F", "I", "B", "C4", "UP"]
+ignore = ["E501", "B008", "C901"]
+
+[tool.mypy]
+python_version = "3.11"
+disallow_untyped_defs = true
+disallow_any_generics = true
+ignore_missing_imports = true
+show_error_codes = true 

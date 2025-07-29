@@ -1,0 +1,27 @@
+[project]
+name = "forth-shared"
+version = "1.0.0"
+description = "Shared utilities and components for AI underwriting"
+authors = [{ name = "Nedal Altiti", email = "nedal.a@usclarity.com" }]
+requires-python = ">=3.11"
+
+dependencies = [
+    "pydantic~=2.11.7",
+    "pydantic-settings~=2.10.1",
+    "loguru~=0.7.3",
+    "aioboto3~=15.0.0",
+    "httpx[http2]~=0.28.1",
+    "python-json-logger~=3.3.0",
+    "prometheus-client~=0.22.1",
+    "opentelemetry-api~=1.35.0",
+    "opentelemetry-sdk~=1.35.0",
+    "opentelemetry-instrumentation-fastapi~=0.56b0",
+    "opentelemetry-exporter-otlp~=1.35.0"
+]
+
+[build-system]
+requires = ["setuptools>=69.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]

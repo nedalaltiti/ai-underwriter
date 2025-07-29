@@ -1,0 +1,127 @@
+# services/webhook-ingestion/k8s-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-ingestion
+  labels:
+    app: webhook-ingestion
+    component: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webhook-ingestion
+  template:
+    metadata:
+      labels:
+        app: webhook-ingestion
+    spec:
+      containers:
+      - name: webhook-ingestion
+        image: ai-underwriter/webhook-ingestion:latest
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: WEBHOOK_ENVIRONMENT
+          value: "production"
+        - name: WEBHOOK_LOG_LEVEL
+          value: "INFO"
+        - name: WEBHOOK_AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: region
+        - name: WEBHOOK_UW_UPLOADED_DOCS_QUEUE
+          valueFrom:
+            configMapKeyRef:
+              name: queue-config
+              key: uploaded-docs-queue
+        - name: WEBHOOK_UW_UPLOADED_DOCS_DLQ
+          valueFrom:
+            configMapKeyRef:
+              name: queue-config
+              key: uploaded-docs-dlq
+        - name: WEBHOOK_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: webhook-secrets
+              key: webhook-secret
+        - name: WEBHOOK_RATE_LIMIT_ENABLED
+          value: "true"
+        - name: WEBHOOK_RATE_LIMIT_REQUESTS
+          value: "100"
+        - name: WEBHOOK_CORS_ORIGINS
+          value: "https://app.example.com,https://api.example.com"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: aws-credentials
+              key: access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-credentials
+              key: secret-access-key
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /api/v1/health/live
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/v1/health/ready
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-ingestion
+spec:
+  selector:
+    app: webhook-ingestion
+  ports:
+  - port: 80
+    targetPort: 8000
+    protocol: TCP
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: webhook-ingestion-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: webhook-ingestion
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80 
