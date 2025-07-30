@@ -123,7 +123,7 @@ pipelines:
             - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-dev -f services/webhook-ingestion/Dockerfile .
             - echo "Pushing docker image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-dev 
-            - ddocker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-dev -f services/document-downloader/Dockerfile .
+            - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-dev -f services/document-downloader/Dockerfile .
             - echo "Pushing docker image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-dev
       - step:
