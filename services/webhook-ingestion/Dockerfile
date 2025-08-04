@@ -86,7 +86,7 @@ CMD gunicorn \
     --max-requests ${WEBHOOK_MAX_REQUESTS} \
     --max-requests-jitter ${WEBHOOK_MAX_REQUESTS_JITTER} \
     --timeout ${WEBHOOK_TIMEOUT} \
-    --keepalive ${WEBHOOK_KEEPALIVE} \
+    --keep-alive ${WEBHOOK_KEEPALIVE} \
     --access-logfile - \
     --error-logfile - \
     --log-level info \
