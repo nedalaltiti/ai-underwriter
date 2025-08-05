@@ -24,7 +24,7 @@ api_router = APIRouter(prefix="/api/v1", tags=["api"])
 async def manual_download(
     contact_id: str,
     doc_id: str,
-    doc_name: str,
+    doc_name: str = Query(..., description="Document filename"),
     downloader: DocumentDownloader = Depends(get_downloader)
 ) -> DownloadResult:
     """

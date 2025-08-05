@@ -1,0 +1,207 @@
+# services/document-parser/src/core/processor.py
+"""Core document processing logic."""
+
+import json
+import re
+import time
+from datetime import datetime
+from typing import Any, Dict
+
+import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+from integrations.gemini import GeminiClient
+from models.extraction import ExtractedDocument, ProcessingResult, ProcessingStatus, ProcessingTask
+from utils.logging import get_logger
+from utils.json_parser import extract_json_from_response
+from config import config
+
+from .exceptions import DocumentProcessingError, ExtractionError, NonRetryableError
+
+logger = get_logger(__name__)
+
+
+class DocumentProcessor:
+    """Main document processing class with retry logic and validation."""
+    
+    def __init__(self, gemini_client: GeminiClient):
+        """Initialize processor with Gemini client."""
+        self.gemini_client = gemini_client
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        reraise=True
+    )
+    def process_document(self, task: ProcessingTask) -> ProcessingResult:
+        """
+        Main method to process a document.
+        
+        Args:
+            task: Processing task containing document information
+            
+        Returns:
+            ProcessingResult with extracted document and metadata
+        """
+        logger.info(f"Processing document: {task.doc_id}")
+        start_time = time.time()
+        
+        try:
+            # Update task status
+            task.status = ProcessingStatus.PROCESSING
+            task.processing_started_at = datetime.now()
+            
+            # Download and prepare document
+            pdf_data = self._prepare_document(task)
+            
+            # Extract data using Gemini
+            extracted_data = self.gemini_client.extract_document_data(pdf_data)
+            
+            # Add metadata
+            extracted_data['extraction_metadata'] = {
+                'timestamp': datetime.now().isoformat(),
+                'task_id': str(task.task_id),
+                'model': self.gemini_client.model_name,
+                'processing_time_ms': int((time.time() - start_time) * 1000)
+            }
+            
+            # Validate with Pydantic
+            try:
+                document = ExtractedDocument(**extracted_data)
+                logger.info(f"Document {task.doc_id} successfully validated")
+                
+                # Create successful result
+                result = ProcessingResult(
+                    task_id=task.task_id,
+                    status=ProcessingStatus.COMPLETED,
+                    extracted_document=document,
+                    processing_time_ms=int((time.time() - start_time) * 1000),
+                    token_usage=self.gemini_client.get_last_token_usage()
+                )
+                
+                task.status = ProcessingStatus.COMPLETED
+                task.processing_completed_at = datetime.now()
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Validation error for {task.doc_id}: {e}")
+                raise ExtractionError(f"Document validation failed: {e}")
+                
+        except Exception as e:
+            logger.error(f"Processing failed for {task.doc_id}: {e}")
+            
+            # Create failed result
+            result = ProcessingResult(
+                task_id=task.task_id,
+                status=ProcessingStatus.FAILED,
+                processing_time_ms=int((time.time() - start_time) * 1000),
+                error_details={
+                    'error_type': type(e).__name__,
+                    'error_message': str(e),
+                    'task_id': str(task.task_id)
+                }
+            )
+            
+            task.status = ProcessingStatus.FAILED
+            task.error_message = str(e)
+            
+            # Determine if error is retryable
+            if isinstance(e, NonRetryableError):
+                raise
+            
+            return result
+    
+    def _prepare_document(self, task: ProcessingTask) -> Dict[str, str]:
+        """
+        Download and prepare PDF for Gemini.
+        Tries S3 direct access first, then falls back to URL download.
+        
+        Args:
+            task: Processing task containing document information
+            
+        Returns:
+            Dictionary with base64 encoded PDF data
+        """
+        logger.info(f"Preparing document {task.doc_id} - S3 key: {bool(task.s3_key)}, URL: {bool(task.document_url)}")
+        
+        # Strategy 1: Try S3 direct access first (most efficient)
+        if task.s3_key:
+            try:
+                from integrations.s3 import S3Client
+                s3_client = S3Client()
+                logger.info(f"📥 Attempting S3 direct download: {task.s3_key}")
+                
+                start_time = time.time()
+                result = s3_client.download_document_from_s3(task.s3_key)
+                download_time = int((time.time() - start_time) * 1000)
+                
+                logger.info(f"✅ S3 direct download successful in {download_time}ms")
+                return result
+                
+            except Exception as e:
+                logger.warning(f"❌ S3 direct download failed, falling back to URL: {e}")
+        
+        # Strategy 2: Fall back to URL download
+        if task.document_url:
+            try:
+                logger.info(f"📥 Attempting URL download: {task.document_url}")
+                
+                start_time = time.time()
+                result = self._download_from_url(task.document_url)
+                download_time = int((time.time() - start_time) * 1000)
+                
+                logger.info(f"✅ URL download successful in {download_time}ms")
+                return result
+                
+            except Exception as e:
+                logger.error(f"❌ URL download failed: {e}")
+                raise DocumentProcessingError(f"Failed to download document from URL: {e}")
+        
+        # No valid source available
+        error_msg = f"No valid document source available. S3 key: {task.s3_key}, URL: {task.document_url}"
+        logger.error(error_msg)
+        raise DocumentProcessingError(error_msg)
+    
+    def _download_from_url(self, document_url: str) -> Dict[str, str]:
+        """
+        Download document from URL.
+        
+        Args:
+            document_url: URL of the PDF document
+            
+        Returns:
+            Dictionary with base64 encoded PDF data
+        """
+        try:
+            timeout = config.processing_timeout if config.processing_timeout < 300 else 30.0
+            with httpx.Client(follow_redirects=True, timeout=timeout) as client:
+                response = client.get(document_url)
+                response.raise_for_status()
+                
+                # Validate content type
+                content_type = response.headers.get('content-type', '')
+                if 'pdf' not in content_type.lower():
+                    logger.warning(f"Unexpected content type: {content_type}")
+                
+                # Check file size
+                content_length = len(response.content)
+                max_size = config.max_file_size_mb * 1024 * 1024
+                if content_length > max_size:
+                    raise DocumentProcessingError(
+                        f"Document too large: {content_length} bytes (max: {max_size})"
+                    )
+                
+                import base64
+                content_encoded = base64.b64encode(response.content).decode("utf-8")
+                
+                logger.info(f"Document downloaded from URL: {content_length} bytes")
+                return {
+                    "mimeType": "application/pdf",
+                    "data": content_encoded
+                }
+                
+        except httpx.RequestError as e:
+            raise DocumentProcessingError(f"Failed to download document from URL: {e}")
+        except Exception as e:
+            raise DocumentProcessingError(f"Failed to prepare document from URL: {e}")

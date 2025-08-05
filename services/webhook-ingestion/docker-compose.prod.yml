@@ -76,7 +76,7 @@ services:
     
     # Health checks
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/v1/health/live"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -20,7 +20,7 @@ spec:
       - name: webhook-ingestion
         image: ai-underwriter/webhook-ingestion:latest
         ports:
-        - containerPort: 8000
+        - containerPort: 8001
           name: http
         env:
         - name: WEBHOOK_ENVIRONMENT
@@ -73,13 +73,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /api/v1/health/live
-            port: 8000
+            port: 8001
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /api/v1/health/ready
-            port: 8000
+            port: 8001
           initialDelaySeconds: 10
           periodSeconds: 5
         securityContext:
@@ -97,7 +97,7 @@ spec:
     app: webhook-ingestion
   ports:
   - port: 80
-    targetPort: 8000
+    targetPort: 8001
     protocol: TCP
   type: ClusterIP
 ---
