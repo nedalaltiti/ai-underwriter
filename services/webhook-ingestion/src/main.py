@@ -68,6 +68,18 @@ if config.enable_metrics:
 app.include_router(api_router)      # /api/v1/* endpoints
 app.include_router(webhook_router)  # /webhook/* endpoints
 
+# Root endpoint to prevent 404s from load balancer/monitoring
+@app.get("/")
+async def root():
+    """Root endpoint for basic service identification."""
+    return {
+        "service": config.service_name,
+        "version": config.service_version,
+        "status": "running",
+        "health_check": "/api/v1/health/",
+        "webhook_endpoint": "/webhook/forth"
+    }
+
 
 if __name__ == "__main__":
     import uvicorn
