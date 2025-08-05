@@ -301,7 +301,7 @@ class HealthChecker:
             # Check critical configuration
             issues = []
             
-            if not self.config.webhook_ or len(self.config.webhook_secret.get_secret_value()) < 32:
+            if not self.config.webhook_secret or len(self.config.webhook_secret.get_secret_value()) < 32:
                 issues.append("webhook secret too short")
             
             if not self.config.uw_uploaded_docs_queue:
