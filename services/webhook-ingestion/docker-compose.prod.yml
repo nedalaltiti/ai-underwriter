@@ -14,13 +14,13 @@ services:
     container_name: webhook-ingestion-prod
     restart: unless-stopped
     ports:
-      - "${WEBHOOK_PORT:-8001}:8000"
+      - "${WEBHOOK_PORT:-8001}:8001"
     environment:
       # Core service configuration
       - WEBHOOK_ENVIRONMENT=production
       - WEBHOOK_LOG_LEVEL=${WEBHOOK_LOG_LEVEL:-INFO}
       - WEBHOOK_HOST=0.0.0.0
-      - WEBHOOK_PORT=8000
+      - WEBHOOK_PORT=8001
       
       # Worker configuration
       - WEBHOOK_WORKERS=${WEBHOOK_WORKERS:-4}
