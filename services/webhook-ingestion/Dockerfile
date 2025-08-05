@@ -62,8 +62,8 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV WEBHOOK_ENVIRONMENT=production
 ENV WEBHOOK_LOG_LEVEL=INFO
 ENV WEBHOOK_HOST=0.0.0.0
-ENV WEBHOOK_PORT=8000
-ENV WEBHOOK_WORKERS=4
+ENV WEBHOOK_PORT=8001
+ENV WEBHOOK_WORKERS=1
 ENV WEBHOOK_MAX_REQUESTS=1000
 ENV WEBHOOK_MAX_REQUESTS_JITTER=100
 ENV WEBHOOK_TIMEOUT=30
@@ -74,19 +74,19 @@ RUN mkdir -p /app/tmp
 
 # Health check with retry logic
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/health/live || exit 1
+    CMD curl -f http://localhost:8001/api/v1/health/live || exit 1
 
-EXPOSE 8000
+EXPOSE 8001
 
 # Use Gunicorn for production with proper worker management
 CMD gunicorn \
-    --bind 0.0.0.0:8000 \
+    --bind 0.0.0.0:8001 \
     --workers ${WEBHOOK_WORKERS} \
     --worker-class uvicorn.workers.UvicornWorker \
     --max-requests ${WEBHOOK_MAX_REQUESTS} \
     --max-requests-jitter ${WEBHOOK_MAX_REQUESTS_JITTER} \
     --timeout ${WEBHOOK_TIMEOUT} \
-    --keepalive ${WEBHOOK_KEEPALIVE} \
+    --keep-alive ${WEBHOOK_KEEPALIVE} \
     --access-logfile - \
     --error-logfile - \
     --log-level info \

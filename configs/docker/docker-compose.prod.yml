@@ -32,6 +32,6 @@ OPENAI_API_KEY=your-openai-key
 GEMINI_API_KEY=your-gemini-key
 
 # Service URLs (for inter-service communication)
-WEBHOOK_SERVICE_URL=http://webhook-ingestion:8000
-DOCUMENT_SERVICE_URL=http://document-downloader:8000
-PARSER_SERVICE_URL=http://contract-parser:8000
+WEBHOOK_SERVICE_URL=http://webhook-ingestion:8001
+DOCUMENT_SERVICE_URL=http://document-downloader:8002
+PARSER_SERVICE_URL=http://contract-parser:8003
