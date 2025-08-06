@@ -77,7 +77,7 @@ async def root():
         "version": config.service_version,
         "status": "running",
         "health_check": "/api/v1/health/",
-        "webhook_endpoint": "/webhook/forth"
+        "webhook_endpoint": config.webhook_endpoint
     }
 
 
