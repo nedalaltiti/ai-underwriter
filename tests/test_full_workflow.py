@@ -81,7 +81,7 @@ class TestFullWorkflow:
         try:
             # List objects with prefix
             response = s3_client.list_objects_v2(
-                Bucket="forth-contracts",
+                Bucket="contact-contracts-dev-s3-us-west-1",
                 Prefix=f"contracts/"
             )
             

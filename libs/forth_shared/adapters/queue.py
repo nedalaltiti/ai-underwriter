@@ -6,6 +6,8 @@ import asyncio
 from datetime import datetime, UTC
 from loguru import logger
 from ..models.queue import QueueMessage
+import time
+import uuid
 
 
 class QueueAdapter(ABC):
@@ -13,7 +15,21 @@ class QueueAdapter(ABC):
     
     def __init__(self, queue_name: str):
         self.queue_name = queue_name
-        self.dlq_name = f"{queue_name}-dlq"
+        
+        # Handle DLQ naming based on your actual queue naming convention
+        if queue_name.endswith('.fifo'):
+            # For FIFO queues: uw-uploaded-docs-dev-sqs.fifo -> uw-uploaded-docs-dl-dev-sqs.fifo
+            base_name = queue_name.replace('.fifo', '')
+            if '-dev-sqs' in base_name:
+                self.dlq_name = base_name.replace('-dev-sqs', '-dl-dev-sqs') + '.fifo'
+            elif '-prod-sqs' in base_name:
+                self.dlq_name = base_name.replace('-prod-sqs', '-dl-prod-sqs') + '.fifo'
+            else:
+                # Fallback to standard naming
+                self.dlq_name = f"{queue_name}-dlq"
+        else:
+            # Standard queues
+            self.dlq_name = f"{queue_name}-dlq"
         
     @abstractmethod
     async def send_message(
@@ -154,15 +170,48 @@ class SQSAdapter(QueueAdapter):
         
         # Add FIFO queue parameters if the queue name ends with .fifo
         if self.queue_name.endswith('.fifo'):
-            # Use correlation_id as MessageGroupId for logical grouping
-            # This groups related messages together for FIFO processing
-            message_group_id = getattr(message, 'correlation_id', None) or message.contact_id
-            params['MessageGroupId'] = str(message_group_id)
+            # Extract doc_id for grouping
+            doc_id = None
+            try:
+                doc_id = str(message.data.get('doc_id')) if isinstance(message.data, dict) else None
+            except Exception:
+                doc_id = None
             
-            # MessageDeduplicationId prevents duplicate messages within 5 minutes
-            # Use a combination of correlation_id and message_type for uniqueness
-            dedup_id = f"{message_group_id}-{message.message_type.value}-{message.contact_id}"
+            # Group by document ID to allow parallel processing of different documents
+            # Fall back to contact_id if no doc_id available
+            if doc_id:
+                message_group_id = f"{message.contact_id}-{doc_id}"
+            else:
+                message_group_id = str(message.contact_id)
+            
+            params['MessageGroupId'] = message_group_id
+
+            # Create a UNIQUE deduplication id per document/message
+            # Always include doc_id if available to ensure uniqueness
+            if doc_id:
+                # Use doc_id + timestamp + random for guaranteed uniqueness
+                ts_ms = int(time.time() * 1000)
+                rand = uuid.uuid4().hex[:8]
+                dedup_id = f"doc-{doc_id}-{ts_ms}-{rand}"
+            else:
+                # Fallback for messages without doc_id
+                correlation_id = getattr(message, 'correlation_id', None)
+                base_id = correlation_id or message_group_id
+                ts_ms = int(time.time() * 1000)
+                rand = uuid.uuid4().hex[:8]
+                dedup_id = f"msg-{base_id}-{ts_ms}-{rand}"
+            
             params['MessageDeduplicationId'] = dedup_id[:128]  # AWS limit is 128 chars
+
+            # Enrich attributes for observability
+            params['MessageAttributes'].update({
+                'message_group_id': {'StringValue': message_group_id, 'DataType': 'String'},
+                'message_dedup_id': {'StringValue': params['MessageDeduplicationId'], 'DataType': 'String'},
+            })
+
+            logger.info(
+                f"📤 SQS FIFO send: queue={self.queue_name}, group_id={message_group_id}, dedup_id={params['MessageDeduplicationId']}, doc_id={doc_id}, contact_id={message.contact_id}"
+            )
             
         response = await self._client.send_message(**params)
         return response['MessageId']

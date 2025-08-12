@@ -70,7 +70,7 @@ services:
       - DOCUMENT_AWS_REGION=us-west-1
       - DOCUMENT_INPUT_QUEUE_NAME=contract-download-queue
       - DOCUMENT_OUTPUT_QUEUE_NAME=document-parse-queue
-      - DOCUMENT_S3_BUCKET_NAME=forth-contracts
+      - DOCUMENT_S3_BUCKET_NAME=contact-contracts-dev-s3-us-west-1
       - DOCUMENT_LOG_LEVEL=DEBUG
       - FORTH_API_BASE_URL=${FORTH_API_BASE_URL}
       - FORTH_API_KEY=${FORTH_API_KEY}
@@ -94,7 +94,7 @@ services:
       - PARSER_AWS_ENDPOINT_URL=http://localstack:4566
       - PARSER_AWS_REGION=us-west-1
       - PARSER_INPUT_QUEUE_NAME=document-parse-queue
-      - PARSER_S3_BUCKET_NAME=forth-contracts
+      - PARSER_S3_BUCKET_NAME=contact-contracts-dev-s3-us-west-1
       - PARSER_DATABASE_URL=postgresql://forth_user:forth_password@postgres:5432/forth_contracts
       - PARSER_LOG_LEVEL=DEBUG
       - PARSER_LLM_PROVIDER=${LLM_PROVIDER:-openai}

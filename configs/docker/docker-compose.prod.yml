@@ -17,19 +17,16 @@ DOCUMENT_PARSE_QUEUE=document-parse-queue
 VALIDATION_COMPLETE_QUEUE=validation-complete-queue
 
 # S3 Configuration
-S3_BUCKET_NAME=forth-contracts
+S3_BUCKET_NAME=contact-contracts-dev-s3-us-west-1
 
 # Database
-DATABASE_URL=postgresql://forth_user:forth_password@localhost:5432/forth_contracts
 
 # Forth API
 FORTH_API_BASE_URL=https://api.forth.com/v1
 FORTH_API_KEY=your-forth-api-key
 
 # LLM Configuration
-LLM_PROVIDER=openai
-OPENAI_API_KEY=your-openai-key
-GEMINI_API_KEY=your-gemini-key
+GEMINI_API_KEY=gemini-key
 
 # Service URLs (for inter-service communication)
 WEBHOOK_SERVICE_URL=http://webhook-ingestion:8001
