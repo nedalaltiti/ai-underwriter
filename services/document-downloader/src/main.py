@@ -1,6 +1,9 @@
 # services/document-downloader/src/main.py
 import asyncio
 import time
+import gc
+import multiprocessing
+import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -14,10 +17,13 @@ from api.health import router as health_router
 from core.downloader import DocumentDownloader
 from services.worker import DownloadWorker
 from integrations.forth_api import ForthAPIClient
+from integrations.forth_auth import ForthAuthManager
 from libs.forth_shared.utils.logging import setup_logging
 from libs.forth_shared.utils.monitoring import setup_metrics
 from libs.forth_shared.adapters.storage import S3Adapter
 
+# Suppress multiprocessing semaphore leak warnings
+warnings.filterwarnings("ignore", message=".*leaked semaphore objects.*", category=UserWarning)
 
 # Global shutdown event
 shutdown_event = asyncio.Event()
@@ -35,16 +41,20 @@ async def lifespan(app: FastAPI):
     # Create temp directory
     Path(config.temp_dir).mkdir(parents=True, exist_ok=True)
     
-    # Initialize Forth API client
+    # Initialize Forth auth manager and API client
     forth_client = None
+    auth_manager = None
     if config.has_forth_api_credentials():
+        auth_manager = ForthAuthManager(config)
+        await auth_manager.initialize()
+        
         forth_client = ForthAPIClient(
             base_url=config.forth_api_base_url,
-            api_key=config.get_forth_api_key(),
+            auth_manager=auth_manager,
             timeout=config.forth_api_timeout
         )
         await forth_client.initialize()
-        logger.info("Forth API client initialized successfully")
+        logger.info("Forth API client and auth manager initialized successfully")
     
     # Initialize S3 adapter
     endpoint_url = None
@@ -67,6 +77,7 @@ async def lifespan(app: FastAPI):
     app.state.downloader = downloader
     app.state.worker = worker
     app.state.config = config
+    app.state.auth_manager = auth_manager
     
     # Start worker in background
     worker_task = asyncio.create_task(worker.run())
@@ -79,11 +90,33 @@ async def lifespan(app: FastAPI):
     
     # Stop worker
     await worker.stop()
-    worker_task.cancel()
     
-    # Cleanup
+    # Cancel and wait for worker task to complete
+    worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
+    
+    # Cleanup clients
     if forth_client:
         await forth_client.close()
+    if auth_manager:
+        await auth_manager.close()
+    
+    # Give a moment for all async tasks to complete
+    await asyncio.sleep(0.1)
+    
+    # Force garbage collection to clean up any remaining references
+    gc.collect()
+    
+    # Additional cleanup for multiprocessing resources
+    try:
+        # Force cleanup of any remaining multiprocessing resources
+        multiprocessing.active_children()  # This forces cleanup of zombie processes
+        await asyncio.sleep(0.05)  # Brief pause for cleanup
+    except Exception:
+        pass
     
     # Clean temp directory
     temp_dir = Path(config.temp_dir)

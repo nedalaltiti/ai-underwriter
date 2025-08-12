@@ -72,6 +72,17 @@ class DownloadWorker:
         logger.info("🛑 Stopping download worker...")
         self.running = False
         self.shutdown_event.set()
+        
+        # Wait for any active downloads to complete (with timeout)
+        if hasattr(self, 'active_downloads') and self.active_downloads > 0:
+            logger.info(f"Waiting for {self.active_downloads} active downloads to complete...")
+            for _ in range(30):  # Wait up to 30 seconds
+                if self.active_downloads == 0:
+                    break
+                await asyncio.sleep(1)
+        
+        # Clean up any remaining async resources
+        await asyncio.sleep(0.1)
     
     async def _process_batch(self):
         """Process a batch of messages."""
@@ -120,6 +131,38 @@ class DownloadWorker:
             await asyncio.sleep(min(30, 2 ** getattr(self, '_error_count', 0)))
             self._error_count = getattr(self, '_error_count', 0) + 1
     
+    def _is_test_message(self, task: DownloadTask) -> bool:
+        """Check if this is a test message that should be skipped."""
+        # Common test patterns
+        test_patterns = [
+            # Postman/curl test data
+            ("12345", "678"),
+            ("12345", "67890"), 
+            # Generic test data
+            ("test_contact", "test_doc"),
+            ("dev_contact", "dev_doc"),
+            # Numeric test patterns
+            ("123", "456"),
+            ("1", "1"),
+        ]
+        
+        current_pair = (task.contact_id, task.doc_id)
+        
+        # Check for exact matches
+        if current_pair in test_patterns:
+            return True
+            
+        # Check for test-like correlation IDs
+        if task.correlation_id and any(test_word in task.correlation_id.lower() 
+                                     for test_word in ["test", "dev", "mock", "sample"]):
+            return True
+            
+        # Check for very short IDs (likely test data)
+        if len(task.contact_id) <= 3 and len(task.doc_id) <= 3:
+            return True
+            
+        return False
+    
     async def _process_message(self, message: Dict[str, Any]) -> bool:
         """Process a single message."""
         receipt_handle = message.get("ReceiptHandle")
@@ -144,6 +187,19 @@ class DownloadWorker:
             
             # Create download task
             task = DownloadTask.from_queue_message(queue_message)
+            
+            # Check for test messages and handle gracefully
+            if self._is_test_message(task):
+                logger.bind(
+                    contact_id=task.contact_id,
+                    doc_id=task.doc_id,
+                    correlation_id=task.correlation_id
+                ).info(
+                    f"🧪 Test message detected - skipping processing: contact_id={task.contact_id}, doc_id={task.doc_id}"
+                )
+                # Delete test message to prevent retries
+                await self.input_queue.delete_message(receipt_handle)
+                return True
             
             logger.bind(
                 contact_id=task.contact_id,

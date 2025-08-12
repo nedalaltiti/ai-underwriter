@@ -67,17 +67,32 @@ class DocumentConfig(BaseServiceConfig):
         default="https://api.forthcrm.com/v1",
         description="Forth API base URL"
     )
+    
+    # Permanent credentials for token refresh
+    forth_client_secret: Optional[SecretStr] = Field(
+        default=None,
+        description="Forth API client_secret (permanent credential for token refresh)"
+    )
+    forth_client_id: Optional[SecretStr] = Field(
+        default=None,
+        description="Forth API client_id (permanent credential for token refresh)"
+    )
+    
+    # Current working API key (will be auto-refreshed)
     forth_api_key: Optional[SecretStr] = Field(
         default=None,
-        description="Forth API key (sensitive)"
+        description="Current Forth API key (temporary, auto-refreshed every 8 days)"
     )
-    forth_api_key_id: Optional[SecretStr] = Field(
-        default=None,
-        description="Forth API key ID (sensitive)"
-    )
+    
     forth_api_timeout: int = Field(
         default=30,
         description="API timeout in seconds"
+    )
+    
+    # Token refresh configuration  
+    forth_token_refresh_days: int = Field(
+        default=2,
+        description="Days before expiration to refresh token (uses expires_in from API response)"
     )
     
     # Worker configuration
@@ -170,13 +185,13 @@ class DocumentConfig(BaseServiceConfig):
         """Safely get the Forth API key value."""
         return self.forth_api_key.get_secret_value() if self.forth_api_key else None
     
-    def get_forth_api_key_id(self) -> Optional[str]:
-        """Safely get the Forth API key ID value."""
-        return self.forth_api_key_id.get_secret_value() if self.forth_api_key_id else None
-    
     def has_forth_api_credentials(self) -> bool:
         """Check if Forth API credentials are configured (without exposing values)."""
-        return self.forth_api_key is not None and self.forth_api_base_url is not None
+        has_api_key = self.forth_api_key is not None
+        has_client_creds = self.forth_client_id is not None and self.forth_client_secret is not None
+        has_base_url = self.forth_api_base_url is not None
+        
+        return has_base_url and (has_api_key or has_client_creds)
     
     def get_max_file_size_bytes(self) -> int:
         """Get maximum file size in bytes."""

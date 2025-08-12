@@ -4,9 +4,10 @@ from datetime import datetime, UTC
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
 
-from api.dependencies import get_downloader, get_worker, get_config
+from api.dependencies import get_downloader, get_worker, get_config, get_auth_manager
 from core.downloader import DocumentDownloader
 from services.worker import DownloadWorker
+from integrations.forth_auth import ForthAuthManager
 from models.download import DownloadTask, DownloadResult, DownloadStatus
 from libs.forth_shared.utils.tracing import generate_correlation_id
 
@@ -109,5 +110,31 @@ async def get_status(
             "s3_bucket": config.s3_bucket_name,
             "forth_api_configured": bool(config.forth_api_base_url)
         },
+        "timestamp": datetime.now(UTC).isoformat()
+    }
+
+
+@api_router.get(
+    "/auth/token-status",
+    summary="Token status",
+    description="Get current Forth API token status and refresh information"
+)
+async def get_token_status(
+    auth_manager: Optional[ForthAuthManager] = Depends(get_auth_manager)
+) -> Dict[str, Any]:
+    """Get current token status and refresh information."""
+    if not auth_manager:
+        return {
+            "service": "document-downloader",
+            "auth": {
+                "error": "Auth manager not available",
+                "status": "not_configured"
+            },
+            "timestamp": datetime.now(UTC).isoformat()
+        }
+    
+    return {
+        "service": "document-downloader",
+        "auth": auth_manager.get_token_status(),
         "timestamp": datetime.now(UTC).isoformat()
     }

@@ -194,7 +194,7 @@ class DocumentDownloader:
             if document_info and document_info.get("download_url"):
                 return document_info["download_url"]
             
-            logger.error(f"No download URL in Forth API response: {document_info}")
+            logger.error("No download URL found in Forth API response")
             return None
             
         except Exception as e:
@@ -225,7 +225,7 @@ class DocumentDownloader:
                 
                 if response.status_code != 200:
                     logger.error(f"Download failed with status {response.status_code}")
-                    raise TempFileError(f"HTTP {response.status_code}: {response.text}")
+                    raise TempFileError(f"HTTP {response.status_code}: Download failed")
                 
                 # Check file size before processing
                 content_size = len(response.content)

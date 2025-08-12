@@ -3,31 +3,37 @@ import httpx
 from typing import Optional, Dict, Any
 from loguru import logger
 
+from integrations.forth_auth import ForthAuthManager
+
 
 class ForthAPIClient:
     """Client for interacting with Forth CRM API."""
     
-    def __init__(self, base_url: str, api_key: str, timeout: int = 30):
+    def __init__(self, base_url: str, auth_manager: ForthAuthManager, timeout: int = 30):
         self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
+        self.auth_manager = auth_manager
         self.timeout = timeout
         self.client: Optional[httpx.AsyncClient] = None
-        
-        # Headers for all requests - Using Api-Key format as per Forth API docs
-        self.headers = {
-            "Api-Key": api_key,
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
     
     async def initialize(self):
         """Initialize the HTTP client."""
         self.client = httpx.AsyncClient(
             base_url=self.base_url,
-            headers=self.headers,
             timeout=httpx.Timeout(self.timeout)
         )
         logger.info(f"Forth API client initialized: {self.base_url}")
+    
+    async def _get_headers(self) -> Dict[str, str]:
+        """Get headers with current API key."""
+        api_key = await self.auth_manager.get_current_api_key()
+        if not api_key:
+            raise RuntimeError("No valid API key available")
+        
+        return {
+            "Api-Key": api_key,
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
     
     async def close(self):
         """Close the HTTP client."""
@@ -55,7 +61,8 @@ class ForthAPIClient:
             
             logger.info(f"Fetching document from Forth API: {endpoint}")
             
-            response = await self.client.get(endpoint)
+            headers = await self._get_headers()
+            response = await self.client.get(endpoint, headers=headers)
             
             if response.status_code == 200:
                 data = response.json()
@@ -113,7 +120,8 @@ class ForthAPIClient:
             raise RuntimeError("Client not initialized")
         
         try:
-            response = await self.client.get(f"/contacts/{contact_id}")
+            headers = await self._get_headers()
+            response = await self.client.get(f"/contacts/{contact_id}", headers=headers)
             
             if response.status_code == 200:
                 return response.json()
@@ -130,6 +138,7 @@ class ForthAPIClient:
             return False
         
         try:
+            # Health check doesn't need authentication
             response = await self.client.get("/health", timeout=5.0)
             return response.status_code == 200
         except Exception:
