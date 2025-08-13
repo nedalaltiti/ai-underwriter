@@ -93,6 +93,7 @@ class ForthAPIClient:
                     "download_url": download_url,
                     "filename": document_data.get("filename"),
                     "file_type": document_data.get("file_type"),
+                    "doc_type": document_data.get("doc_type"),  # Add doc_type from same response
                     "created_at": document_data.get("created_at"),
                     "raw_response": document_data
                 }
@@ -132,6 +133,7 @@ class ForthAPIClient:
             logger.error(f"Failed to get contact {contact_id}: {e}")
             return None
     
+
     async def health_check(self) -> bool:
         """Check if Forth API is accessible."""
         if not self.client:

@@ -59,14 +59,34 @@ class DocumentDownloader:
         try:
             # Use semaphore to limit concurrent downloads
             async with self.download_semaphore:
-                # Get document URL
-                document_url = await self.get_document_url(task)
+                # Get document URL and details (including doc_type)
+                document_url, doc_type = await self.get_document_url_and_details(task)
                 if not document_url:
-                    return DownloadResult(
-                        success=False,
-                        status=DownloadStatus.FAILED,
-                        error_message="Could not resolve document URL"
-                    )
+                    # Check if this was due to excluded doc_type
+                    if doc_type is None:
+                        return DownloadResult(
+                            success=False,
+                            status=DownloadStatus.FAILED,
+                            error_message="Could not resolve document URL or document excluded"
+                        )
+                    else:
+                        # Document was excluded due to doc_type
+                        return DownloadResult(
+                            success=True,
+                            status=DownloadStatus.SKIPPED,
+                            error_message=f"Document skipped - excluded doc_type: {doc_type}"
+                        )
+                
+                # Update task with retrieved doc_type if available
+                if doc_type and hasattr(task, 'doc_type'):
+                    original_doc_type = task.doc_type
+                    task.doc_type = doc_type
+                    logger.bind(
+                        contact_id=task.contact_id,
+                        doc_id=task.doc_id,
+                        original_doc_type=original_doc_type,
+                        retrieved_doc_type=doc_type
+                    ).info("🔄 Updated task with document type from Forth API")
                     
                 # Download to temp file with streaming
                 temp_file_path = await self._download_to_temp(
@@ -178,28 +198,57 @@ class DocumentDownloader:
                 except Exception as e:
                     logger.warning(f"Failed to cleanup temp file: {e}")
     
-    async def get_document_url(self, task: DownloadTask) -> Optional[str]:
-        """Resolve document URL from task or Forth API."""
-        # fetch from Forth API
+    async def get_document_url_and_details(self, task: DownloadTask) -> tuple[Optional[str], Optional[str]]:
+        """
+        Resolve document URL and get document type from Forth API using single call.
+        
+        Returns:
+            tuple: (download_url, doc_type)
+        """
         if not self.forth_client:
             logger.error("❌ No document URL provided and Forth API not configured")
-            return None
+            return None, None
         
         try:
+            # Get both document info and doc_type in single API call
             document_info = await self.forth_client.get_document(
                 contact_id=task.contact_id,
                 doc_id=task.doc_id
             )
             
-            if document_info and document_info.get("download_url"):
-                return document_info["download_url"]
+            if not document_info:
+                logger.error("No document information found in Forth API response")
+                return None, None
             
-            logger.error("No download URL found in Forth API response")
-            return None
+            download_url = document_info.get("download_url")
+            doc_type = document_info.get("doc_type")
+            
+            # Check for excluded document types
+            excluded_doc_types = ["5", "3"]  # Document types to skip
+            if doc_type and str(doc_type) in excluded_doc_types:
+                logger.bind(
+                    contact_id=task.contact_id,
+                    doc_id=task.doc_id,
+                    doc_type=doc_type
+                ).info("🚫 Skipping document - excluded doc_type")
+                return None, None
+            
+            logger.bind(
+                contact_id=task.contact_id,
+                doc_id=task.doc_id,
+                doc_type=doc_type
+            ).info("📋 Retrieved document URL and type from Forth API")
+            
+            return download_url, doc_type
             
         except Exception as e:
-            logger.error(f"Failed to get document URL from Forth API: {e}")
-            return None
+            logger.error(f"Failed to get document info from Forth API: {e}")
+            return None, None
+    
+    async def get_document_url(self, task: DownloadTask) -> Optional[str]:
+        """Resolve document URL from task or Forth API (legacy method)."""
+        url, _ = await self.get_document_url_and_details(task)
+        return url
     
     async def _download_to_temp(self, url: str, filename: str) -> str:
         """Download file to temporary location."""
