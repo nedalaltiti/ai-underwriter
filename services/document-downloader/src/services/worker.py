@@ -7,9 +7,10 @@ from loguru import logger
 
 from config import DocumentConfig
 from core.downloader import DocumentDownloader
-from models.download import DownloadTask, DownloadResult
+from models.download import DownloadTask, DownloadStatus, DownloadResult
 from libs.forth_shared.models.queue import QueueMessage, MessageType
 from libs.forth_shared.adapters.queue import SQSAdapter
+from utils.error_classification import is_permanent_failure, is_successful_completion
 
 
 class DownloadWorker:
@@ -230,22 +231,57 @@ class DownloadWorker:
                 )
                 return True
             else:
-                # Check retry count
-                if queue_message.retry_count >= self.config.max_retries:
-                    # Send to DLQ
+                # Use utility function to check if this is a permanent failure
+                if is_permanent_failure(result):
+                    # Don't retry permanent failures - send directly to DLQ or delete
+                    if is_successful_completion(result):
+                        # Skipped documents are successful, just delete the message
+                        await self.input_queue.delete_message(receipt_handle)
+                        logger.bind(
+                            contact_id=task.contact_id,
+                            doc_id=task.doc_id,
+                            error_code=result.error_code
+                        ).info(f"✅ Document skipped: {result.error_message}")
+                        return True
+                    else:
+                        # Send permanent failures to DLQ without retrying
+                        await self.input_queue.send_to_dlq(
+                            message=queue_message,
+                            error=result.error_message
+                        )
+                        await self.input_queue.delete_message(receipt_handle)
+                        logger.bind(
+                            contact_id=task.contact_id,
+                            doc_id=task.doc_id,
+                            error_code=result.error_code
+                        ).warning(f"❌ Permanent failure - sent to DLQ: {result.error_message}")
+                        return False
+                
+                # Handle retryable failures
+                elif queue_message.retry_count >= self.config.max_retries:
+                    # Send to DLQ after max retries
                     await self.input_queue.send_to_dlq(
                         message=queue_message,
                         error=result.error_message
                     )
                     await self.input_queue.delete_message(receipt_handle)
-                    logger.error(f"Download failed after {queue_message.retry_count} retries: {result.error_message}")
+                    logger.bind(
+                        contact_id=task.contact_id,
+                        doc_id=task.doc_id,
+                        retry_count=queue_message.retry_count
+                    ).error(f"❌ Download failed after {queue_message.retry_count} retries: {result.error_message}")
                 else:
                     # Extend visibility timeout for retry
                     await self.input_queue.change_message_visibility(
                         receipt_handle=receipt_handle,
                         visibility_timeout=self.config.retry_delay
                     )
-                    logger.warning(f"Download failed, will retry: {result.error_message}")
+                    logger.bind(
+                        contact_id=task.contact_id,
+                        doc_id=task.doc_id,
+                        retry_count=queue_message.retry_count,
+                        max_retries=self.config.max_retries
+                    ).warning(f"⚠️ Download failed, will retry ({queue_message.retry_count + 1}/{self.config.max_retries}): {result.error_message}")
                 
                 return False
                 

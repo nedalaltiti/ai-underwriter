@@ -3,6 +3,7 @@
 
 from pathlib import Path
 from datetime import datetime, UTC
+from typing import Optional
 from models.download import DownloadTask
 
 
@@ -86,6 +87,7 @@ def sanitize_filename(filename: str) -> str:
         name = "document"
     
     return f"{name}{extension}"
+
 
 
 def get_content_type_from_extension(extension: str) -> str:

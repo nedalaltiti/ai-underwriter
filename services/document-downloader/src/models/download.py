@@ -1,8 +1,11 @@
 # services/document-downloader/src/models/download.py
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, TYPE_CHECKING
 from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel, Field, field_validator, ConfigDict
+
+if TYPE_CHECKING:
+    from libs.forth_shared.models.queue import QueueMessage
 
 
 class DownloadStatus(str, Enum):
@@ -13,6 +16,7 @@ class DownloadStatus(str, Enum):
     FAILED = "failed"
     RETRYING = "retrying"
     SKIPPED = "skipped"
+    NOT_FOUND = "not_found"
 
 
 class DownloadTask(BaseModel):

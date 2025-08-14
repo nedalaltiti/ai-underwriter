@@ -37,6 +37,16 @@ class S3UploadError(DocumentDownloadError):
     pass
 
 
+class DocumentNotFoundError(DocumentDownloadError):
+    """Raised when document is not found in Forth API."""
+    pass
+
+
+class DocumentExcludedError(DocumentDownloadError):
+    """Raised when document is excluded based on doc_type."""
+    pass
+
+
 class TempFileError(DocumentDownloadError):
     """Raised when temporary file operations fail."""
     pass 

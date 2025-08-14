@@ -91,9 +91,9 @@ class ForthAPIClient:
                     "doc_id": doc_id,
                     "contact_id": contact_id,
                     "download_url": download_url,
-                    "filename": document_data.get("filename"),
+                    "file_name": document_data.get("file_name"),  
                     "file_type": document_data.get("file_type"),
-                    "doc_type": document_data.get("doc_type"),  # Add doc_type from same response
+                    "doc_type": document_data.get("doc_type"),
                     "created_at": document_data.get("created_at"),
                     "raw_response": document_data
                 }
