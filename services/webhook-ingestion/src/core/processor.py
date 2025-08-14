@@ -1,6 +1,6 @@
 # services/webhook-ingestion/src/core/processor.py
 import time
-from typing import Dict, Any, Optional, Mapping
+from typing import Dict, Any, Optional, Mapping, List
 from datetime import datetime, UTC
 from loguru import logger
 
@@ -10,6 +10,7 @@ from core.validators import WebhookValidator
 from core.exceptions import ValidationError, ProcessingError, QueueError, RateLimitError, AuthenticationError
 from core.security import RateLimiter, WebhookSignatureVerifier, verify_webhook_security_raw
 from libs.forth_shared.models.queue import QueueMessage, MessageType
+from models.requests import WebhookType
 from libs.forth_shared.adapters.queue import QueueAdapter, SQSAdapter
 from libs.forth_shared.utils.error_handling import handle_errors
 from libs.forth_shared.utils.tracing import generate_webhook_correlation_id
@@ -70,7 +71,7 @@ class WebhookProcessor:
             
             logger.info("✅ Webhook processor ready!")
         except Exception as e:
-            logger.error(f"Failed to initialize processor: {e}")
+            logger.error("Failed to initialize processor: %s", e)
             raise ProcessingError(
                 f"Processor initialization failed: {str(e)}",
                 stage="initialization"
@@ -85,7 +86,7 @@ class WebhookProcessor:
             try:
                 await self.queue_adapter.close()
             except Exception as e:
-                logger.error(f"Error closing queue adapter: {e}")
+                logger.error("Error closing queue adapter: %s", e)
         
         logger.info("Webhook processor shutdown completed")
         
@@ -125,29 +126,12 @@ class WebhookProcessor:
             
             webhook_logger.info("📨 Processing webhook")
             
-            # Create queue message for document download
-            message = QueueMessage(
-                message_type=MessageType.CONTRACT_DOWNLOAD,
-                contact_id=payload.contact_id,
-                correlation_id=correlation_id,
-                data={
-                    "doc_id": payload.doc_id,
-                    "doc_type": payload.doc_type,
-                    "doc_name": payload.doc_name,
-                    "doc_title": payload.doc_title,
-                    "file_type": payload.file_type,
-                    "timestamp": payload.timestamp,
-                    "webhook_version": payload.webhook_version,
-                    "webhook_source": payload.source.value,
-                    "raw_data": payload.raw_data,
-                }
-            )
-            
-            # Send to queue
+            # Create and send queue messages based on webhook type
             try:
-                message_id = await self.queue_adapter.send_message(message)
+                message_ids = await self._create_and_send_messages(payload, correlation_id, webhook_logger)
+                message_id = message_ids[0] if message_ids else None  # For compatibility
             except Exception as e:
-                logger.error(f"Failed to send message to queue: {e}")
+                logger.error("Failed to send message to queue: %s", e)
                 raise QueueError(
                     f"Failed to send message to queue: {str(e)}",
                     queue_name=self.config.uw_uploaded_docs_queue
@@ -178,7 +162,7 @@ class WebhookProcessor:
                 correlation_id=correlation_id,
                 processing_time_ms=processing_time_ms
             ).warning(
-                f"❌ Webhook validation failed: {str(e)}"
+                "❌ Webhook validation failed: %s", str(e)
             )
             
             return ProcessingResult(
@@ -199,7 +183,7 @@ class WebhookProcessor:
                 processing_time_ms=processing_time_ms,
                 queue_name=self.config.uw_uploaded_docs_queue
             ).error(
-                f"🚫 Queue error during webhook processing: {str(e)}"
+                "🚫 Queue error during webhook processing: %s", str(e)
             )
             
             return ProcessingResult(
@@ -220,7 +204,7 @@ class WebhookProcessor:
                 processing_time_ms=processing_time_ms,
                 error_type=type(e).__name__
             ).error(
-                f"💥 Unexpected webhook processing error: {str(e)}"
+                "💥 Unexpected webhook processing error: %s", str(e)
             )
             
             return ProcessingResult(
@@ -300,3 +284,86 @@ class WebhookProcessor:
                 processing_time_ms=processing_time_ms,
                 error_code=ErrorCode.AUTHENTICATION_ERROR
             )
+    
+    async def _create_and_send_messages(self, payload: WebhookPayload, correlation_id: str, webhook_logger) -> List[str]:
+        """Create and send queue messages based on webhook type."""
+        message_ids = []
+        
+        if payload.webhook_type == WebhookType.CLIENT_SUBMITTED:
+            # For CLIENT_SUBMITTED: process all documents
+            doc_ids = self._extract_all_doc_ids(payload.doc_id)
+            
+            webhook_logger.bind(
+                webhook_type=payload.webhook_type.value,
+                total_documents=len(doc_ids)
+            ).info("📋 Client submitted webhook: processing {} documents".format(len(doc_ids)))
+            
+            for i, doc_id in enumerate(doc_ids):
+                # Get specific doc_type for this document, fallback to general doc_type
+                specific_doc_type = None
+                if payload.doc_types and doc_id in payload.doc_types:
+                    specific_doc_type = payload.doc_types[doc_id]
+                
+                message = QueueMessage(
+                    message_type=MessageType.CONTRACT_DOWNLOAD,
+                    contact_id=payload.contact_id,
+                    correlation_id=f"{correlation_id}-doc{i+1}",
+                    data={
+                        "doc_id": doc_id,
+                        "doc_type": specific_doc_type or payload.doc_type,
+                        "doc_name": payload.doc_name,
+                        "doc_title": payload.doc_title,
+                        "file_type": payload.file_type,
+                        "timestamp": payload.timestamp,
+                        "webhook_version": payload.webhook_version,
+                        "webhook_source": payload.source.value,
+                        "webhook_type": payload.webhook_type.value,
+                        "raw_data": payload.raw_data,
+                    }
+                )
+                
+                message_id = await self.queue_adapter.send_message(message)
+                message_ids.append(message_id)
+                
+                webhook_logger.bind(
+                    doc_id=doc_id,
+                    doc_type=specific_doc_type or payload.doc_type,
+                    message_id=message_id,
+                    document_index=i+1
+                ).debug("📤 Queued document {}/{}: {} (type: {})".format(i+1, len(doc_ids), doc_id, specific_doc_type or payload.doc_type or 'unknown'))
+        
+        else:
+            # For DOCUMENT_UPLOADED: process single document (existing behavior)
+            message = QueueMessage(
+                message_type=MessageType.CONTRACT_DOWNLOAD,
+                contact_id=payload.contact_id,
+                correlation_id=correlation_id,
+                data={
+                    "doc_id": payload.doc_id,
+                    "doc_type": payload.doc_type,
+                    "doc_name": payload.doc_name,
+                    "doc_title": payload.doc_title,
+                    "file_type": payload.file_type,
+                    "timestamp": payload.timestamp,
+                    "webhook_version": payload.webhook_version,
+                    "webhook_source": payload.source.value,
+                    "webhook_type": payload.webhook_type.value,
+                    "raw_data": payload.raw_data,
+                }
+            )
+            
+            message_id = await self.queue_adapter.send_message(message)
+            message_ids.append(message_id)
+            
+            webhook_logger.bind(
+                webhook_type=payload.webhook_type.value,
+                message_id=message_id
+            ).debug("📤 Queued single document")
+        
+        return message_ids
+    
+    def _extract_all_doc_ids(self, doc_id_string: str) -> List[str]:
+        """Extract all document IDs from comma-separated string."""
+        if "," in doc_id_string:
+            return [doc_id.strip() for doc_id in doc_id_string.split(",") if doc_id.strip()]
+        return [doc_id_string]

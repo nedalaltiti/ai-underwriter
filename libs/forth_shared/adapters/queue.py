@@ -210,7 +210,9 @@ class SQSAdapter(QueueAdapter):
             })
 
             logger.info(
-                f"📤 SQS FIFO send: queue={self.queue_name}, group_id={message_group_id}, dedup_id={params['MessageDeduplicationId']}, doc_id={doc_id}, contact_id={message.contact_id}"
+                "📤 SQS FIFO send: queue={}, group_id={}, dedup_id={}, doc_id={}, contact_id={}".format(
+                    self.queue_name, message_group_id, params['MessageDeduplicationId'], doc_id, message.contact_id
+                )
             )
             
         response = await self._client.send_message(**params)

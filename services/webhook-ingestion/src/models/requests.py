@@ -19,6 +19,12 @@ class WebhookSource(str, Enum):
     TEST = "test"
 
 
+class WebhookType(str, Enum):
+    """Types of webhook events."""
+    DOCUMENT_UPLOADED = "document_uploaded"
+    CLIENT_SUBMITTED = "client_submitted"
+
+
 class WebhookStatus(str, Enum):
     """Webhook processing status."""
     SUCCESS = "success"
@@ -59,7 +65,22 @@ class WebhookRequest(BaseSchema):
                     "doc_name": "contract.pdf",
                     "doc_type": "agreement",
                     "correlation_id": "webhook-c3d4e5f6-1752860755",
-                    "source": "forth_crm"
+                    "source": "forth_crm",
+                    "webhook_type": "document_uploaded"
+                },
+                {
+                    "contact_id": "123456",
+                    "doc_id": "789012,789013,789014",
+                    "doc_name": "client_documents.pdf",
+                    "doc_type": "agreement",
+                    "correlation_id": "webhook-d7e8f9g0-1752860756",
+                    "source": "forth_crm",
+                    "webhook_type": "client_submitted",
+                    "doc_types": {
+                        "789012": "contract",
+                        "789013": "addendum", 
+                        "789014": "disclosure"
+                    }
                 }
             ]
         }
@@ -75,7 +96,7 @@ class WebhookRequest(BaseSchema):
         ..., 
         description="Document identifier", 
         min_length=1,
-        pattern=r'^\d+(,\d+)*$',  # Allow comma-separated IDs
+        pattern=r'^(\d+(,\d+)*|\{[A-Z_0-9_]+\})$', 
         alias="docId" 
     )
     doc_name: Optional[str] = Field(
@@ -116,39 +137,63 @@ class WebhookRequest(BaseSchema):
         default=WebhookSource.FORTH_CRM, 
         description="Webhook source"
     )
+    webhook_type: Optional[WebhookType] = Field(
+        default=WebhookType.DOCUMENT_UPLOADED,
+        description="Type of webhook event",
+        alias="webhookType"
+    )
+    doc_types: Optional[Dict[str, str]] = Field(
+        None,
+        description="Mapping of document IDs to their types (e.g., {'475837940': 'contract', '475837941': 'addendum'})",
+        alias="docTypes"
+    )
         
     @field_validator('contact_id')
     @classmethod
     def validate_contact_id(cls, v: str) -> str:
         """Validate contact ID format using regex."""
         v = v.strip()
+        
+        # Skip validation for Forth template variables
+        if v.startswith('{') and v.endswith('}'):
+            logger.bind(
+                event="forth_template_contact_id",
+                template_value=v
+            ).debug("Forth template variable received for contact_id")
+            return v
+            
         if not DIGIT_PATTERN.match(v):
             raise ValueError("Contact ID must be numeric")
         return v
     
     @field_validator('doc_id')
     @classmethod
-    def extract_doc_id(cls, v: str) -> str:
-        """Extract document ID from comma-separated list (takes the last one)."""
+    def validate_doc_id_format(cls, v: str) -> str:
+        """Validate document ID format but preserve original value for webhook type processing."""
         v = v.strip()
         
-        # Handle comma-separated document IDs (common in Forth CRM)
+        # Skip validation for Forth template variables
+        if v.startswith('{') and v.endswith('}'):
+            logger.bind(
+                event="forth_template_doc_id",
+                template_value=v
+            ).debug("Forth template variable received for doc_id")
+            return v
+        
         if "," in v:
             doc_ids = [id_str.strip() for id_str in v.split(",") if id_str.strip()]
-            # Take the last valid ID (all are guaranteed to be numeric by field pattern)
-            selected_id = doc_ids[-1]
+            # Validate all IDs are numeric (pattern validation handles this too)
+            for doc_id in doc_ids:
+                if not DIGIT_PATTERN.match(doc_id):
+                    raise ValueError(f"All document IDs must be numeric, got: {doc_id}")
             
-            # Use structured logging with debug level
             logger.bind(
-                event="multi_doc_id",
-                selected_doc_id=selected_id,
+                event="multi_doc_id_received",
                 all_doc_ids=v,
                 total_count=len(doc_ids)
-            ).debug("Multiple doc_ids received, using last one")
-            
-            return selected_id
+            ).debug("Multiple doc_ids received, will process based on webhook_type")
         
-        return v
+        return v  # Return original value
     
     @model_validator(mode='before')
     @classmethod
@@ -168,6 +213,10 @@ class WebhookRequest(BaseSchema):
                 values['docType'] = values.pop('doc_type')
             if 'correlation_id' in values:
                 values['correlationId'] = values.pop('correlation_id')
+            if 'webhook_type' in values:
+                values['webhookType'] = values.pop('webhook_type')
+            if 'doc_types' in values:
+                values['docTypes'] = values.pop('doc_types')
             
             # Handle alternative doc_id field names (map to alias: docId)
             if 'docId' not in values:
@@ -197,6 +246,44 @@ class WebhookRequest(BaseSchema):
                         values.pop(key, None)
         
         return values
+    
+    @model_validator(mode='after')
+    def handle_webhook_type_logic(self) -> 'WebhookRequest':
+        """Handle webhook type specific logic for document IDs."""
+        # Store original doc_id for reference
+        original_doc_id = self.doc_id
+        
+        # Extract doc_id based on webhook_type
+        if "," in original_doc_id:
+            doc_ids = [id_str.strip() for id_str in original_doc_id.split(",") if id_str.strip()]
+            
+            if self.webhook_type == WebhookType.CLIENT_SUBMITTED:
+                # For CLIENT_SUBMITTED: keep all doc_ids (comma-separated)
+                # The processor will handle splitting them
+                logger.bind(
+                    event="client_submitted_multi_docs",
+                    webhook_type=self.webhook_type.value,
+                    all_doc_ids=original_doc_id,
+                    total_documents=len(doc_ids),
+                    contact_id=self.contact_id
+                ).info(f"Client submitted webhook with {len(doc_ids)} documents - will process all docs")
+                   
+            else:
+                # For DOCUMENT_UPLOADED: take only the last doc_id 
+                selected_id = doc_ids[-1]
+                
+                logger.bind(
+                    event="document_uploaded_multi_docs",
+                    webhook_type=self.webhook_type.value,
+                    selected_doc_id=selected_id,
+                    all_doc_ids=original_doc_id,
+                    total_count=len(doc_ids)
+                ).debug("Multiple doc_ids received, using last one for document_uploaded")
+                
+                # Update doc_id to only the selected one
+                object.__setattr__(self, 'doc_id', selected_id)
+        
+        return self
 
 
 class WebhookResponse(BaseSchema):
@@ -262,6 +349,8 @@ class WebhookPayload(BaseSchema):
     webhook_version: Optional[str] = None
     correlation_id: Optional[str] = None
     source: WebhookSource
+    webhook_type: WebhookType = WebhookType.DOCUMENT_UPLOADED
+    doc_types: Optional[Dict[str, str]] = None
     raw_data: Optional[Mapping[str, Any]] = None
     
     @classmethod
@@ -283,6 +372,8 @@ class WebhookPayload(BaseSchema):
             webhook_version=request.webhook_version,
             correlation_id=correlation_id or request.correlation_id,
             source=request.source,
+            webhook_type=request.webhook_type or WebhookType.DOCUMENT_UPLOADED,
+            doc_types=request.doc_types,
             raw_data=raw_data
         )
 
