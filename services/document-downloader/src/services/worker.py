@@ -11,6 +11,7 @@ from models.download import DownloadTask, DownloadStatus, DownloadResult
 from libs.forth_shared.models.queue import QueueMessage, MessageType
 from libs.forth_shared.adapters.queue import SQSAdapter
 from utils.error_classification import is_permanent_failure, is_successful_completion
+from utils.processing_monitor import processing_monitor
 
 
 class DownloadWorker:
@@ -122,6 +123,12 @@ class DownloadWorker:
                 # Reset error count on successful batch
                 self._error_count = 0
             
+            # Log periodic processing summary
+            processing_monitor.log_periodic_summary()
+            
+            # Clean up old monitoring entries
+            processing_monitor.cleanup_old_entries()
+            
         except Exception as e:
             logger.error(f"Batch processing error: {e}")
 
@@ -216,6 +223,13 @@ class DownloadWorker:
                 await self.input_queue.delete_message(receipt_handle)
                 return True
             
+            # Record processing start for monitoring
+            processing_monitor.record_processing_start(
+                contact_id=task.contact_id,
+                doc_id=task.doc_id,
+                correlation_id=task.correlation_id
+            )
+            
             logger.bind(
                 contact_id=task.contact_id,
                 doc_id=task.doc_id,
@@ -229,6 +243,13 @@ class DownloadWorker:
             result = await self.downloader.download_document(task)
             
             if result.success:
+                # Record successful processing
+                processing_monitor.record_processing_result(
+                    contact_id=task.contact_id,
+                    doc_id=task.doc_id,
+                    success=True
+                )
+                
                 # Queue for parsing
                 await self._queue_for_parsing(task, result)
                 
@@ -258,6 +279,13 @@ class DownloadWorker:
                         ).info(f"✅ Document skipped: {result.error_message}")
                         return True
                     else:
+                        # Record permanent failure
+                        processing_monitor.record_permanent_failure(
+                            contact_id=task.contact_id,
+                            doc_id=task.doc_id,
+                            error_message=result.error_message or "Unknown permanent failure"
+                        )
+                        
                         # Send permanent failures to DLQ without retrying
                         await self.input_queue.send_to_dlq(
                             message=queue_message,

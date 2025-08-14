@@ -41,7 +41,6 @@ class WebhookValidator:
             logger.bind(
                 contact_id=payload.contact_id,
                 doc_id=payload.doc_id,
-                doc_type=payload.doc_type,
                 correlation_id=str(payload.correlation_id) if payload.correlation_id else None
             ).debug("Webhook validation successful")
             
@@ -60,7 +59,7 @@ class WebhookValidator:
             logger.bind(
                 validation_errors=error_details,
                 raw_data_keys=list(data.keys()) if hasattr(data, 'keys') else None
-            ).debug("Webhook validation failed")
+            ).warning(f"🔍 WEBHOOK VALIDATION FAILED: {error_message}")
             
             raise ValidationError(
                 error_message,
@@ -71,8 +70,9 @@ class WebhookValidator:
         except Exception as e:
             logger.bind(
                 error_type=type(e).__name__,
-                error_message=str(e)
-            ).error("Unexpected validation error")
+                error_message=str(e),
+                raw_data_keys=list(data.keys()) if hasattr(data, 'keys') else None
+            ).error(f"🔍 UNEXPECTED VALIDATION ERROR: {e}", exc_info=True)
             
             raise ValidationError(
                 f"Validation failed: {str(e)}",

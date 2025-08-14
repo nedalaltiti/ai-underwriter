@@ -62,8 +62,6 @@ class WebhookRequest(BaseSchema):
                 {
                     "contact_id": "123456",
                     "doc_id": "789012",
-                    "doc_name": "contract.pdf",
-                    "doc_type": "agreement",
                     "correlation_id": "webhook-c3d4e5f6-1752860755",
                     "source": "forth_crm",
                     "webhook_type": "document_uploaded"
@@ -71,16 +69,9 @@ class WebhookRequest(BaseSchema):
                 {
                     "contact_id": "123456",
                     "doc_id": "789012,789013,789014",
-                    "doc_name": "client_documents.pdf",
-                    "doc_type": "agreement",
                     "correlation_id": "webhook-d7e8f9g0-1752860756",
                     "source": "forth_crm",
-                    "webhook_type": "client_submitted",
-                    "doc_types": {
-                        "789012": "contract",
-                        "789013": "addendum", 
-                        "789014": "disclosure"
-                    }
+                    "webhook_type": "client_submitted"
                 }
             ]
         }
@@ -99,16 +90,7 @@ class WebhookRequest(BaseSchema):
         pattern=r'^(\d+(,\d+)*|\{[A-Z_0-9_]+\})$', 
         alias="docId" 
     )
-    doc_name: Optional[str] = Field(
-        None, 
-        description="Document name/filename",
-        alias="docName" 
-    )
-    doc_type: Optional[str] = Field(
-        None,
-        description="Document type (e.g., contract, addendum)",
-        alias="docType"
-    )
+
     doc_title: Optional[str] = Field(
         None,
         description="Document title",
@@ -221,6 +203,8 @@ class WebhookRequest(BaseSchema):
             # Handle alternative doc_id field names (map to alias: docId)
             if 'docId' not in values:
                 doc_id = (
+                    values.get('upload_doc') or      # Forth CRM uses this field
+                    values.get('uploaded_docs') or   # Alternative field
                     values.get('document_id') or 
                     values.get('id') or 
                     values.get('docId', '')
@@ -228,23 +212,9 @@ class WebhookRequest(BaseSchema):
                 if doc_id:
                     values['docId'] = doc_id
                     # Remove alternative field names to avoid conflicts
-                    for key in ['document_id', 'id']:
+                    for key in ['upload_doc', 'uploaded_docs', 'document_id', 'id']:
                         values.pop(key, None)
             
-            # Handle alternative doc_name field names (map to alias: docName)
-            if 'docName' not in values:
-                doc_name = (
-                    values.get('document_name') or
-                    values.get('filename') or
-                    values.get('file_name') or
-                    values.get('docName')
-                )
-                if doc_name:
-                    values['docName'] = doc_name
-                    # Remove alternative field names to avoid conflicts
-                    for key in ['document_name', 'filename', 'file_name']:
-                        values.pop(key, None)
-        
         return values
     
     @model_validator(mode='after')
@@ -329,8 +299,6 @@ class WebhookPayload(BaseSchema):
                 {
                     "contact_id": "123456",
                     "doc_id": "789012",
-                    "doc_name": "contract.pdf",
-                    "doc_type": "contract",
                     "correlation_id": "webhook-d4e5f6g7-1752860760",
                     "source": "forth_crm",
                     "raw_data": {"original_payload": "data"}
@@ -341,8 +309,7 @@ class WebhookPayload(BaseSchema):
     
     contact_id: str
     doc_id: str
-    doc_name: Optional[str] = None
-    doc_type: Optional[str] = None
+
     doc_title: Optional[str] = None
     file_type: Optional[str] = None
     timestamp: Optional[str] = None
@@ -364,8 +331,6 @@ class WebhookPayload(BaseSchema):
         return cls(
             contact_id=request.contact_id,
             doc_id=request.doc_id,
-            doc_name=request.doc_name,
-            doc_type=request.doc_type,
             doc_title=request.doc_title,
             file_type=request.file_type,
             timestamp=request.timestamp,

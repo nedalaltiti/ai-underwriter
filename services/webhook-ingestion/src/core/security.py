@@ -95,12 +95,23 @@ class WebhookSignatureVerifier:
             raise AuthenticationError("Missing webhook signature")
         
         try:
-            # Parse signature format: "sha256=..."
+            # Parse signature format: "sha256=..." or just hex value
             if "=" in signature:
                 sig_algorithm, sig_value = signature.split("=", 1)
             else:
+                # Forth CRM HMAC sends just the hex value without prefix
                 sig_algorithm = algorithm
                 sig_value = signature
+            
+            # Auto-detect algorithm based on signature length if not specified
+            if sig_algorithm == algorithm and "=" not in signature:
+                if len(sig_value) == 40:
+                    sig_algorithm = "sha1"
+                elif len(sig_value) == 64:
+                    sig_algorithm = "sha256"
+            
+            logger.debug(f"🔐 Verifying signature - algorithm: {sig_algorithm}")
+            logger.debug(f"🔐 Payload length: {len(payload)}")
             
             # Calculate expected signature
             if sig_algorithm == "sha1":
@@ -133,10 +144,15 @@ def get_signature_from_headers(headers: Dict[str, str]) -> Optional[str]:
     """Extract signature from headers dictionary."""
     # Try common signature header names
     return (
+        headers.get("x-hub-signature-256") or
         headers.get("X-Hub-Signature-256") or
+        headers.get("x-hub-signature") or
         headers.get("X-Hub-Signature") or
+        headers.get("x-forth-signature") or
         headers.get("X-Forth-Signature") or
+        headers.get("x-signature") or
         headers.get("X-Signature") or
+        headers.get("authorization") or
         headers.get("Authorization")
     )
 

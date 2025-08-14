@@ -125,7 +125,6 @@ class WebhookProcessor:
             webhook_logger = logger.bind(
                 contact_id=payload.contact_id,
                 doc_id=payload.doc_id,
-                doc_type=payload.doc_type,
                 correlation_id=correlation_id,
                 source=payload.source.value
             )
@@ -305,19 +304,12 @@ class WebhookProcessor:
             ).info("📋 Client submitted webhook: processing {} documents".format(len(doc_ids)))
             
             for i, doc_id in enumerate(doc_ids):
-                # Get specific doc_type for this document, fallback to general doc_type
-                specific_doc_type = None
-                if payload.doc_types and doc_id in payload.doc_types:
-                    specific_doc_type = payload.doc_types[doc_id]
-                
                 message = QueueMessage(
                     message_type=MessageType.CONTRACT_DOWNLOAD,
                     contact_id=payload.contact_id,
                     correlation_id=f"{correlation_id}-doc{i+1}",
                     data={
                         "doc_id": doc_id,
-                        "doc_type": specific_doc_type or payload.doc_type,
-                        "doc_name": payload.doc_name,
                         "doc_title": payload.doc_title,
                         "file_type": payload.file_type,
                         "timestamp": payload.timestamp,
@@ -333,10 +325,9 @@ class WebhookProcessor:
                 
                 webhook_logger.bind(
                     doc_id=doc_id,
-                    doc_type=specific_doc_type or payload.doc_type,
                     message_id=message_id,
                     document_index=i+1
-                ).debug("📤 Queued document {}/{}: {} (type: {})".format(i+1, len(doc_ids), doc_id, specific_doc_type or payload.doc_type or 'unknown'))
+                ).debug("📤 Queued document {}/{}: {}".format(i+1, len(doc_ids), doc_id))
         
         else:
             # For DOCUMENT_UPLOADED: process single document (existing behavior)
@@ -346,8 +337,6 @@ class WebhookProcessor:
                 correlation_id=correlation_id,
                 data={
                     "doc_id": payload.doc_id,
-                    "doc_type": payload.doc_type,
-                    "doc_name": payload.doc_name,
                     "doc_title": payload.doc_title,
                     "file_type": payload.file_type,
                     "timestamp": payload.timestamp,

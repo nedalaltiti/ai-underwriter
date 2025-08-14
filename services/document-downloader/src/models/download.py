@@ -95,8 +95,8 @@ class DownloadTask(BaseModel):
         return cls(
             contact_id=message.contact_id,
             doc_id=data.get("doc_id", ""),
-            doc_name=data.get("doc_name"),
-            doc_type=data.get("doc_type"),
+            doc_name=None,  
+            doc_type=None, 
             correlation_id=message.correlation_id,
             doc_title=data.get("doc_title"),
             file_type=data.get("file_type"),
