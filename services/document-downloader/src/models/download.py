@@ -42,6 +42,51 @@ class DownloadTask(BaseModel):
     # Status tracking
     status: DownloadStatus = Field(default=DownloadStatus.PENDING, description="Current status")
     
+    @field_validator('doc_id')
+    @classmethod
+    def validate_doc_id(cls, v):
+        """Ensure doc_id is provided and valid."""
+        if not v or not str(v).strip():
+            raise ValueError("doc_id is required")
+        
+        # Check for placeholder values that should be rejected
+        doc_id_str = str(v).strip()
+        invalid_patterns = [
+            '{UPLOADED_DOCS}',
+            '{DOC_ID}',
+            '{',
+            '}',
+            'UPLOADED_DOCS',
+            'DOC_ID'
+        ]
+        
+        for pattern in invalid_patterns:
+            if pattern in doc_id_str:
+                raise ValueError(f"Invalid doc_id contains placeholder: {doc_id_str}")
+        
+        # Ensure doc_id is numeric or valid format (allow alphanumeric)
+        if not doc_id_str.replace('_', '').replace('-', '').isalnum():
+            raise ValueError(f"doc_id must be alphanumeric: {doc_id_str}")
+            
+        return doc_id_str
+    
+    @field_validator('contact_id')
+    @classmethod
+    def validate_contact_id(cls, v):
+        """Ensure contact_id is provided and valid."""
+        if not v or not str(v).strip():
+            raise ValueError("contact_id is required")
+        
+        contact_id_str = str(v).strip()
+        
+        # Check for placeholder values
+        invalid_patterns = ['{CONTACT_ID}', '{', '}', 'CONTACT_ID']
+        for pattern in invalid_patterns:
+            if pattern in contact_id_str:
+                raise ValueError(f"Invalid contact_id contains placeholder: {contact_id_str}")
+                
+        return contact_id_str
+    
     @classmethod
     def from_queue_message(cls, message: 'QueueMessage') -> 'DownloadTask':
         """Create DownloadTask from queue message."""

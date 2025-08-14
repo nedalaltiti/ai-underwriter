@@ -47,32 +47,46 @@ class ServiceConfig(BaseSettings):
     sqs_max_messages: int = Field(default=1, ge=1, le=10, env="PARSER_SQS_MAX_MESSAGES")
     
     # S3 Configuration
-    s3_bucket_name: str = Field(default="forth-contracts", env="PARSER_S3_BUCKET_NAME")
+    s3_bucket_name: str = Field(default="contact-contracts-dev-s3-us-west-1", env="PARSER_S3_BUCKET_NAME")
     s3_prefix: str = Field(default="", env="PARSER_S3_PREFIX")
     
     # Database Configuration (PostgreSQL)
     database_url: str = Field(..., env="PARSER_DATABASE_URL")
-    database_pool_size: int = Field(default=10, ge=1, env="PARSER_DATABASE_POOL_SIZE")
-    database_max_overflow: int = Field(default=20, ge=0, env="PARSER_DATABASE_MAX_OVERFLOW")
+    database_pool_size: int = Field(default=10, ge=1, le=50, env="PARSER_DATABASE_POOL_SIZE")
+    database_max_overflow: int = Field(default=20, ge=0, le=100, env="PARSER_DATABASE_MAX_OVERFLOW")
+    database_timeout: int = Field(default=30, ge=5, le=300, env="PARSER_DATABASE_TIMEOUT")
+    database_retry_attempts: int = Field(default=3, ge=1, le=10, env="PARSER_DATABASE_RETRY_ATTEMPTS")
     
     # Gemini Configuration
     gemini_service_account_json: SecretStr = Field(..., env="PARSER_GEMINI_SERVICE_ACCOUNT")
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     
     # Processing Configuration
-    max_retries: int = Field(default=3, ge=1, env="PARSER_MAX_RETRIES")
-    retry_delay: int = Field(default=60, ge=1, env="PARSER_RETRY_DELAY")
-    processing_timeout: int = Field(default=600, gt=0, env="PARSER_PROCESSING_TIMEOUT")
-    max_file_size_mb: int = Field(default=100, ge=1, env="PARSER_MAX_FILE_SIZE_MB")
+    max_retries: int = Field(default=3, ge=1, le=10, env="PARSER_MAX_RETRIES")
+    retry_delay: int = Field(default=60, ge=1, le=300, env="PARSER_RETRY_DELAY")
+    processing_timeout: int = Field(default=600, gt=0, le=1800, env="PARSER_PROCESSING_TIMEOUT")
+    max_file_size_mb: int = Field(default=100, ge=1, le=500, env="PARSER_MAX_FILE_SIZE_MB")
+    
+    # Security Configuration
+    enable_request_validation: bool = Field(default=True, env="PARSER_ENABLE_REQUEST_VALIDATION")
+    enable_response_validation: bool = Field(default=True, env="PARSER_ENABLE_RESPONSE_VALIDATION")
+    max_concurrent_requests: int = Field(default=100, ge=1, le=1000, env="PARSER_MAX_CONCURRENT_REQUESTS")
     
     # Worker Configuration  
-    worker_concurrency: int = Field(default=5, ge=1, env="PARSER_WORKER_CONCURRENCY")
-    worker_prefetch_count: int = Field(default=1, ge=1, env="PARSER_WORKER_PREFETCH_COUNT")
+    worker_concurrency: int = Field(default=5, ge=1, le=50, env="PARSER_WORKER_CONCURRENCY")
+    worker_prefetch_count: int = Field(default=1, ge=1, le=10, env="PARSER_WORKER_PREFETCH_COUNT")
+    worker_health_check_interval: int = Field(default=30, ge=10, le=300, env="PARSER_WORKER_HEALTH_CHECK_INTERVAL")
     
     # Observability
     enable_metrics: bool = Field(default=True, env="PARSER_ENABLE_METRICS")
     enable_tracing: bool = Field(default=True, env="PARSER_ENABLE_TRACING")
     trace_sample_rate: float = Field(default=0.1, ge=0.0, le=1.0, env="PARSER_TRACE_SAMPLE_RATE")
+    metrics_port: int = Field(default=9090, ge=1024, le=65535, env="PARSER_METRICS_PORT")
+    
+    # Production Configuration
+    graceful_shutdown_timeout: int = Field(default=30, ge=5, le=120, env="PARSER_GRACEFUL_SHUTDOWN_TIMEOUT")
+    health_check_timeout: int = Field(default=10, ge=1, le=60, env="PARSER_HEALTH_CHECK_TIMEOUT")
+    rate_limit_per_minute: int = Field(default=1000, ge=1, le=10000, env="PARSER_RATE_LIMIT_PER_MINUTE")
     
     @field_validator('log_level')
     def validate_log_level(cls, v):
@@ -122,10 +136,23 @@ except ImportError:
 import os
 
 def create_config() -> ServiceConfig:
-    """Create configuration from environment variables."""
+    """Create configuration from environment variables with validation."""
+    database_url = os.getenv('PARSER_DATABASE_URL')
+    gemini_service_account = os.getenv('PARSER_GEMINI_SERVICE_ACCOUNT')
+    worker_concurrency = int(os.getenv('PARSER_WORKER_CONCURRENCY', '1'))
+    processing_timeout = int(os.getenv('PARSER_PROCESSING_TIMEOUT', '600'))
+    
+    if not database_url:
+        raise ValueError("PARSER_DATABASE_URL environment variable is required")
+    
+    if not gemini_service_account:
+        raise ValueError("PARSER_GEMINI_SERVICE_ACCOUNT environment variable is required")
+    
     return ServiceConfig(
-        database_url=os.getenv('PARSER_DATABASE_URL', 'postgresql://localhost/parser'),
-        gemini_service_account_json=os.getenv('PARSER_GEMINI_SERVICE_ACCOUNT', '{}')
+        database_url=database_url,
+        gemini_service_account_json=gemini_service_account,
+        worker_concurrency=worker_concurrency,
+        processing_timeout=processing_timeout
     )
 
 # Global configuration instance

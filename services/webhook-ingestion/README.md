@@ -4,7 +4,7 @@
 FastAPI-based microservice that receives webhooks from Forth CRM and routes them to the document processing pipeline via AWS SQS.
 
 ## Features
-- 🔐 **Security**: Rate limiting and HMAC signature verification
+- 🔐 **Security**: Mandatory HMAC signature verification and rate limiting
 - 📊 **Observability**: Structured logging, metrics, and health checks
 - 🚀 **Performance**: Async processing with connection pooling
 - 🏗️ **Production-Ready**: Docker, Kubernetes, and auto-scaling support

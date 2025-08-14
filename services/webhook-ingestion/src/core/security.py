@@ -82,13 +82,17 @@ class WebhookSignatureVerifier:
         
         Returns:
             True if signature is valid
+        
+        Raises:
+            AuthenticationError: If signature is missing or invalid
         """
         if not self.secret:
-            logger.warning("No webhook secret configured, skipping signature verification")
-            return True
+            logger.error("🔐 Webhook secret not configured - authentication required")
+            raise AuthenticationError("Webhook secret not configured")
         
         if not signature:
-            return False
+            logger.warning("🔐 Missing webhook signature header")
+            raise AuthenticationError("Missing webhook signature")
         
         try:
             # Parse signature format: "sha256=..."
@@ -104,15 +108,23 @@ class WebhookSignatureVerifier:
             elif sig_algorithm == "sha256":
                 expected = hmac.new(self.secret, payload, hashlib.sha256).hexdigest()
             else:
-                logger.warning(f"Unsupported signature algorithm: {sig_algorithm}")
-                return False
+                logger.warning(f"🔐 Unsupported signature algorithm: {sig_algorithm}")
+                raise AuthenticationError(f"Unsupported signature algorithm: {sig_algorithm}")
             
             # Compare signatures securely
-            return hmac.compare_digest(expected, sig_value)
+            is_valid = hmac.compare_digest(expected, sig_value)
+            if not is_valid:
+                logger.warning("🔐 Webhook signature verification failed")
+                raise AuthenticationError("Invalid webhook signature")
             
+            return True
+            
+        except AuthenticationError:
+            # Re-raise authentication errors
+            raise
         except Exception as e:
-            logger.error(f"Signature verification error: {e}")
-            return False
+            logger.error(f"🔐 Signature verification error: {e}")
+            raise AuthenticationError("Signature verification failed")
     
 
 
@@ -173,19 +185,29 @@ def verify_webhook_security_raw(
                 retry_after=retry_after
             )
     
-    # 2. ENFORCE SIGNATURE VERIFICATION
-    if signature_verifier and raw_body is not None and headers:
-        signature = get_signature_from_headers(headers)
+    # 2. ENFORCE MANDATORY SIGNATURE VERIFICATION
+    if not signature_verifier:
+        logger.error("🔐 Webhook signature verifier not configured - authentication required")
+        raise AuthenticationError("Webhook authentication not configured")
+    
+    if raw_body is None:
+        logger.warning("🔐 Empty request body - signature verification failed")
+        raise AuthenticationError("Empty request body")
         
-        if signature:
-            if not signature_verifier.verify_signature(raw_body, signature):
-                logger.bind(
-                    correlation_id=correlation_id,
-                    client_ip=client_ip
-                ).warning("🔐 Webhook signature verification failed")
-                
-                raise AuthenticationError("Invalid webhook signature")
-            else:
-                logger.bind(
-                    correlation_id=correlation_id
-                ).debug("🔐 Webhook signature verified successfully") 
+    if not headers:
+        logger.warning("🔐 Missing request headers - signature verification failed")
+        raise AuthenticationError("Missing request headers")
+    
+    signature = get_signature_from_headers(headers)
+    if not signature:
+        logger.bind(
+            correlation_id=correlation_id,
+            client_ip=client_ip
+        ).warning("🔐 Missing webhook signature header")
+        raise AuthenticationError("Missing webhook signature header")
+    
+    # Verify signature (will raise AuthenticationError if invalid)
+    signature_verifier.verify_signature(raw_body, signature)
+    logger.bind(
+        correlation_id=correlation_id
+    ).debug("🔐 Webhook signature verified successfully") 

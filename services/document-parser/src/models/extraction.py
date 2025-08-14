@@ -3,12 +3,15 @@
 
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Union, Optional, TYPE_CHECKING
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, FieldValidationInfo
+from pydantic import BaseModel, Field, field_validator, ValidationInfo
 
 from .base import BankDetails, ClientInformation, Creditor, FinancialAnalysis
+
+if TYPE_CHECKING:
+    from models.underwriting_entities import ExtractedDocumentPackage
 from .validation import ValidationResult
 
 
@@ -30,23 +33,35 @@ class DocumentSection(BaseModel):
 
 
 class ExtractedDocument(BaseModel):
-    """Main model for the entire extracted document."""
-    client_info: ClientInformation
-    financial_analysis: FinancialAnalysis
-    creditors: List[Creditor]
-    bank_details: BankDetails
-    document_sections: List[DocumentSection]
+    """Main model for the entire extracted document - simplified for Gemini extraction."""
+    
+    # Basic client information (maps to multiple tables)
+    name: Optional[str] = None
+    ssn: Optional[str] = None
+    dob: Optional[str] = None  # Will be parsed to date later
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[Dict[str, Any]] = None
+    
+    # Optional fields that may be extracted
+    client_info: Optional[ClientInformation] = None
+    financial_analysis: Optional[FinancialAnalysis] = None
+    creditors: Optional[List[Creditor]] = []
+    bank_details: Optional[BankDetails] = None
+    document_sections: Optional[List[DocumentSection]] = []
     vlp_enrolled: bool = False
-    contract_date: date
-    first_payment_date: date
-    sender_ip: str = Field(..., pattern="^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$")
-    signer_ip: str = Field(..., pattern="^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$")
+    contract_date: Optional[date] = None
+    first_payment_date: Optional[date] = None
+    sender_ip: Optional[str] = None
+    signer_ip: Optional[str] = None
     validation_results: List[ValidationResult] = []
     extraction_metadata: Dict[str, Any] = {}
     
     @field_validator('first_payment_date')
-    def validate_first_payment(cls, v, info: FieldValidationInfo):
+    def validate_first_payment(cls, v, info: ValidationInfo):
         """Validate first payment date is within acceptable range."""
+        if v is None:
+            return v
         contract_date = info.data.get('contract_date')
         if contract_date:
             days = (v - contract_date).days
@@ -57,7 +72,7 @@ class ExtractedDocument(BaseModel):
         return v
     
     @field_validator('signer_ip')
-    def validate_different_ips(cls, v, info: FieldValidationInfo):
+    def validate_different_ips(cls, v, info: ValidationInfo):
         """Validate sender and signer IPs are different."""
         sender_ip = info.data.get('sender_ip')
         if sender_ip and v == sender_ip:
@@ -92,9 +107,9 @@ class ProcessingResult(BaseModel):
     """Model for processing results."""
     task_id: UUID
     status: ProcessingStatus
-    extracted_document: Optional[ExtractedDocument] = None
+    extracted_document: Optional[Union[ExtractedDocument, "ExtractedDocumentPackage"]] = None
     processing_time_ms: int
-    token_usage: Dict[str, int] = {}
+    token_usage: Dict[str, Any] = {}
     validation_summary: Dict[str, Any] = {}
     error_details: Optional[Dict[str, Any]] = None
     created_at: datetime = Field(default_factory=datetime.now)
@@ -121,3 +136,16 @@ class ProcessingResult(BaseModel):
                 ]
             ]
         }
+
+
+# Rebuild models after all imports are complete to resolve forward references
+def _rebuild_models():
+    """Rebuild models to resolve forward references after all imports."""
+    try:
+        from models.underwriting_entities import ExtractedDocumentPackage
+        ProcessingResult.model_rebuild()
+    except ImportError:
+        # If ExtractedDocumentPackage isn't available, that's fine
+        pass
+
+_rebuild_models()

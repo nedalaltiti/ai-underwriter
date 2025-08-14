@@ -33,6 +33,7 @@ class DocumentWorker:
         self.s3_client = None
         self.processor = None
         self.validator = None
+        self.sqs_adapter = None  # Add SQS adapter for DLQ support
         self._setup_aws_clients()
         self._setup_processors()
         
@@ -52,6 +53,14 @@ class DocumentWorker:
                 self.s3_client = session.client('s3', endpoint_url=config.aws_endpoint_url)
             else:
                 self.s3_client = session.client('s3')
+            
+            # Setup SQS adapter for DLQ support
+            from libs.forth_shared.adapters.queue import SQSAdapter
+            self.sqs_adapter = SQSAdapter(
+                queue_name=config.input_queue_name,
+                region=config.aws_region,
+                endpoint_url=config.aws_endpoint_url if config.aws_endpoint_url else None
+            )
                 
             logger.info("AWS clients initialized successfully")
             
@@ -157,7 +166,8 @@ class DocumentWorker:
                 QueueUrl=queue_url,
                 MaxNumberOfMessages=config.sqs_max_messages,
                 WaitTimeSeconds=config.sqs_wait_time,
-                VisibilityTimeoutSeconds=config.processing_timeout
+                VisibilityTimeout=config.processing_timeout,
+                AttributeNames=['All']  # Include message attributes for retry count
             )
             return response.get('Messages', [])
         except Exception as e:
@@ -211,15 +221,15 @@ class DocumentWorker:
                 logger.info(f"Worker {worker_id} processing direct message: {doc_id}")
             
             # Process document
-            result = self.processor.process_document(task)
+            result = await self.processor.process_document(task)
             
             # Validate if successful
             if result.extracted_document:
                 validation_results = self.validator.validate_document(result.extracted_document)
                 logger.info(f"Document {task.doc_id} validated with {len(validation_results)} checks")
             
-            # TODO: Store results in database
-            # TODO: Send results to output queue if configured
+            # Store results in database
+            await self._store_processing_result(task, result, worker_id)
             
             # Delete message from queue
             await self._delete_message(queue_url, receipt_handle)
@@ -232,7 +242,85 @@ class DocumentWorker:
             
         except Exception as e:
             logger.error(f"Worker {worker_id} processing error: {e}")
-            # Don't delete message - let it be retried or go to DLQ
+            
+            # Get message attributes for retry count
+            attributes = message.get('Attributes', {})
+            receive_count = int(attributes.get('ApproximateReceiveCount', '1'))
+            max_retries = 3  # Configure max retries
+            
+            # Check if we should retry or send to DLQ
+            if receive_count >= max_retries:
+                # Send to DLQ
+                logger.warning(f"Worker {worker_id}: Processing failed after {receive_count} attempts for {doc_id or 'unknown'}, sending to DLQ")
+                
+                # Create QueueMessage for DLQ
+                from libs.forth_shared.models.queue import QueueMessage, MessageType
+                
+                # Try to extract identifiers from the message context
+                failed_contact_id = 'unknown'
+                failed_data = {}
+                failed_correlation_id = None
+                
+                try:
+                    if 'body' in locals():
+                        failed_data = body
+                        failed_contact_id = body.get('contact_id', 'unknown')
+                        failed_correlation_id = body.get('correlation_id')
+                except:
+                    pass
+                
+                failed_message = QueueMessage(
+                    message_type=MessageType.DOCUMENT_PROCESSING,
+                    contact_id=failed_contact_id,
+                    data=failed_data,
+                    correlation_id=failed_correlation_id,
+                    retry_count=receive_count
+                )
+                
+                # Send to DLQ with error details
+                await self.sqs_adapter.send_to_dlq(
+                    message=failed_message,
+                    error=f"Processing failed after {receive_count} attempts: {str(e)}"
+                )
+                
+                # Delete from main queue to prevent blocking
+                await self._delete_message(queue_url, receipt_handle)
+            else:
+                # Let message return to queue for retry (visibility timeout will expire)
+                logger.info(f"Worker {worker_id}: Processing failed for {doc_id or 'unknown'}, attempt {receive_count}/{max_retries}, will retry")
+                # Don't delete message - let it be retried when visibility timeout expires
+    
+    async def _store_processing_result(self, task: ProcessingTask, result, worker_id: str):
+        """Store processing result to database."""
+        try:
+            from integrations.database import UnderwritingDatabaseAdapter
+            
+            # Initialize database adapter with config
+            db_adapter = UnderwritingDatabaseAdapter(config)
+            await db_adapter.initialize()
+            
+            try:
+                # Check if processing was successful and we have extracted data
+                if result.status.value == "completed" and hasattr(result, 'extracted_document') and result.extracted_document:
+                    # If we have an ExtractedDocumentPackage, store it directly
+                    if hasattr(result.extracted_document, 'file_id'):
+                        success = await db_adapter.store_document_package(result.extracted_document)
+                        
+                        if success:
+                            logger.info(f"Worker {worker_id}: Successfully stored document package for {task.doc_id}")
+                        else:
+                            logger.error(f"Worker {worker_id}: Failed to store document package for {task.doc_id}")
+                    else:
+                        logger.warning(f"Worker {worker_id}: Extracted document for {task.doc_id} is not a valid package")
+                else:
+                    logger.warning(f"Worker {worker_id}: Processing failed or no data extracted for {task.doc_id}, status: {result.status.value}")
+                    
+            finally:
+                await db_adapter.close()
+                
+        except Exception as e:
+            logger.error(f"Worker {worker_id}: Database storage error for {task.doc_id}: {e}")
+            # Don't raise - we don't want to fail message processing due to storage issues
     
     async def _delete_message(self, queue_url: str, receipt_handle: str):
         """Delete processed message from queue."""

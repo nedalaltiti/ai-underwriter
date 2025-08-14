@@ -68,6 +68,9 @@ class ProcessingResponse(BaseModel):
         }
 
 
+
+
+
 @router.post("/parse", response_model=ProcessingResponse)
 async def parse_document(
     request: ProcessingRequest,
@@ -95,8 +98,7 @@ async def parse_document(
             metadata=request.metadata
         )
         
-        # Process document
-        result = processor.process_document(task)
+        result = await processor.process_document(task)
         
         # Validate if extraction was successful
         if result.extracted_document:
@@ -142,6 +144,8 @@ async def parse_document(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             detail=f"Document processing failed: {str(e)}"
         )
+
+
 
 
 @router.get("/tasks/{task_id}", response_model=ProcessingResponse)

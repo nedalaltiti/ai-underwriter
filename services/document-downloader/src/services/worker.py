@@ -186,8 +186,22 @@ class DownloadWorker:
                 await self.input_queue.delete_message(receipt_handle)
                 return False
             
-            # Create download task
-            task = DownloadTask.from_queue_message(queue_message)
+            # Create download task with validation
+            try:
+                task = DownloadTask.from_queue_message(queue_message)
+            except ValueError as e:
+                # Invalid message format - send to DLQ immediately
+                logger.bind(
+                    correlation_id=queue_message.correlation_id,
+                    contact_id=queue_message.contact_id
+                ).error("❌ Invalid message format - sending to DLQ: {}", str(e))
+                
+                await self.input_queue.send_to_dlq(
+                    message=queue_message,
+                    error=f"Invalid message format: {str(e)}"
+                )
+                await self.input_queue.delete_message(receipt_handle)
+                return False
             
             # Check for test messages and handle gracefully
             if self._is_test_message(task):

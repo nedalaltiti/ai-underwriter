@@ -59,6 +59,11 @@ class UnderwritingValidator:
         Returns:
             List of validation results
         """
+        # Guard: this validator only supports ExtractedDocument, not packages
+        if not isinstance(doc, ExtractedDocument):
+            logger.info("Skipping validation: input is not an ExtractedDocument")
+            return []
+
         logger.info(f"Starting validation for client: {doc.client_info.name}")
         results = []
         

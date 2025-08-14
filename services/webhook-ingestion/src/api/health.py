@@ -302,7 +302,7 @@ class HealthChecker:
             issues = []
             
             if not self.config.webhook_secret or len(self.config.webhook_secret.get_secret_value()) < 32:
-                issues.append("webhook secret too short")
+                issues.append("webhook secret missing or too short (required for authentication)")
             
             if not self.config.uw_uploaded_docs_queue:
                 issues.append("upload queue not configured")

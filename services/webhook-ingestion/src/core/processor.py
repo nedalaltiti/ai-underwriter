@@ -63,11 +63,17 @@ class WebhookProcessor:
                     f"🛡️  Rate limiting: {self.config.rate_limit_requests} requests/{self.config.rate_limit_period}s"
                 )
             
-            if self.config.webhook_secret:
-                self.signature_verifier = WebhookSignatureVerifier(
-                    secret=self.config.webhook_secret
+            # Webhook secret is now mandatory
+            if not self.config.webhook_secret or not self.config.webhook_secret.get_secret_value():
+                raise ProcessingError(
+                    "Webhook secret is required for authentication",
+                    stage="initialization"
                 )
-                logger.info("🔐 Webhook signature verification enabled")
+            
+            self.signature_verifier = WebhookSignatureVerifier(
+                secret=self.config.webhook_secret.get_secret_value()
+            )
+            logger.info("🔐 Webhook signature verification enabled (mandatory)")
             
             logger.info("✅ Webhook processor ready!")
         except Exception as e:

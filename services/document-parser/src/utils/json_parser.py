@@ -1,65 +1,181 @@
 # services/document-parser/src/utils/json_parser.py
-"""JSON parsing utilities for document processing."""
+"""JSON parsing utilities for extracting structured data from Gemini responses."""
 
 import json
 import re
-from typing import Any, Dict
-
-from .logging import get_logger
+from typing import Any, Dict, Optional
+from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-def extract_json_from_response(response_text: str) -> Dict[str, Any]:
+def extract_json_from_response(text: str) -> Optional[Dict[str, Any]]:
     """
-    Extract and parse JSON from text response.
+    Extract JSON from text response that may contain markdown formatting or other text.
     
     Args:
-        response_text: Raw text response potentially containing JSON
+        text: Text response that may contain JSON
         
     Returns:
-        Parsed JSON data
+        Parsed JSON dictionary or None if no valid JSON found
     """
-    # Try direct parsing first
+    if not text:
+        return None
+    
+    # Strategy 1: Try to parse the entire text as JSON
     try:
-        return json.loads(response_text)
+        return json.loads(text)
     except json.JSONDecodeError:
         pass
     
-    # Extract first balanced JSON object
-    json_obj = _extract_first_json_object(response_text)
-    if json_obj:
-        try:
-            return json.loads(json_obj)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse extracted JSON: {e}")
+    # Strategy 2: Look for JSON between ```json and ``` markers
+    json_pattern = r'```json\s*(.*?)\s*```'
+    matches = re.findall(json_pattern, text, re.DOTALL | re.IGNORECASE)
     
-    raise ValueError("No valid JSON found in response")
+    for match in matches:
+        try:
+            return json.loads(match)
+        except json.JSONDecodeError:
+            continue
+    
+    # Strategy 3: Look for JSON between ``` markers (without json keyword)
+    code_pattern = r'```\s*(.*?)\s*```'
+    matches = re.findall(code_pattern, text, re.DOTALL)
+    
+    for match in matches:
+        try:
+            return json.loads(match)
+        except json.JSONDecodeError:
+            continue
+    
+    # Strategy 4: Look for JSON starting with { and ending with }
+    brace_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+    matches = re.findall(brace_pattern, text, re.DOTALL)
+    
+    # Try the largest match first (likely to be the main JSON)
+    matches.sort(key=len, reverse=True)
+    
+    for match in matches:
+        try:
+            result = json.loads(match)
+            # Validate it's a dictionary and has some content
+            if isinstance(result, dict) and len(result) > 0:
+                return result
+        except json.JSONDecodeError:
+            continue
+    
+    # Strategy 5: Try to extract JSON array
+    array_pattern = r'\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]'
+    matches = re.findall(array_pattern, text, re.DOTALL)
+    
+    for match in matches:
+        try:
+            result = json.loads(match)
+            # If it's an array, wrap it in a standard structure
+            if isinstance(result, list):
+                return {"data": result}
+        except json.JSONDecodeError:
+            continue
+    
+    # Strategy 6: Clean common issues and retry
+    cleaned_text = clean_json_text(text)
+    if cleaned_text != text:
+        try:
+            return json.loads(cleaned_text)
+        except json.JSONDecodeError:
+            pass
+    
+    logger.debug(f"Could not extract JSON from text: {text[:200]}...")
+    return None
 
 
-def _extract_first_json_object(text: str) -> str | None:
+def clean_json_text(text: str) -> str:
     """
-    Extract the first balanced JSON object from text.
+    Clean common issues in JSON text.
     
     Args:
-        text: Text potentially containing JSON
+        text: Text that might contain malformed JSON
         
     Returns:
-        First balanced JSON object or None
+        Cleaned text
     """
-    openings = [i for i, c in enumerate(text) if c == "{"]
+    # Remove leading/trailing whitespace
+    text = text.strip()
     
-    for start in openings:
-        depth = 0
-        for end, c in enumerate(text[start:], start):
-            if c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = text[start:end + 1]
-                    # Validate it looks like a JSON object
-                    if re.match(r"^\s*\{.*\}\s*$", candidate, re.S):
-                        return candidate
-                    break
-    return None
+    # Remove BOM if present
+    if text.startswith('\ufeff'):
+        text = text[1:]
+    
+    # Remove trailing commas before closing braces/brackets
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+    
+    # Replace single quotes with double quotes (careful with apostrophes)
+    # Only replace single quotes that are likely JSON string delimiters
+    text = re.sub(r"(?<=[{\[,:])\s*'", '"', text)
+    text = re.sub(r"'\s*(?=[}\],:])", '"', text)
+    
+    # Fix unquoted keys (simple cases)
+    text = re.sub(r'([{\[,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)
+    
+    # Remove comments (both // and /* */ style)
+    text = re.sub(r'//.*?$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+    
+    # Handle None/null confusion
+    text = text.replace('None', 'null')
+    text = text.replace('True', 'true')
+    text = text.replace('False', 'false')
+    
+    return text
+
+
+def validate_extracted_data(data: Dict[str, Any]) -> bool:
+    """
+    Validate that extracted data contains meaningful information.
+    
+    Args:
+        data: Extracted data dictionary
+        
+    Returns:
+        True if data appears valid
+    """
+    if not data or not isinstance(data, dict):
+        return False
+    
+    # Check if dictionary has content
+    if len(data) == 0:
+        return False
+    
+    # Check if at least some values are non-null
+    non_null_values = sum(1 for v in data.values() if v is not None and v != "")
+    
+    # Require at least 20% of fields to have values
+    if non_null_values / len(data) < 0.2:
+        logger.warning(f"Extracted data has too many null values: {non_null_values}/{len(data)}")
+        return False
+    
+    return True
+
+
+def merge_json_objects(obj1: Dict[str, Any], obj2: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Merge two JSON objects, preferring non-null values from obj2.
+    
+    Args:
+        obj1: First object (base)
+        obj2: Second object (updates)
+        
+    Returns:
+        Merged object
+    """
+    result = obj1.copy()
+    
+    for key, value in obj2.items():
+        if value is not None and value != "":
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                # Recursively merge nested dictionaries
+                result[key] = merge_json_objects(result[key], value)
+            else:
+                result[key] = value
+    
+    return result

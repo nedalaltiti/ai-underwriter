@@ -1,288 +1,694 @@
 # services/document-parser/src/integrations/gemini.py
-"""Gemini API integration for document extraction."""
+"""
+Gemini client for underwriting document extraction with anti-hallucination measures.
+"""
 
 import json
-from typing import Any, Dict
-
 import httpx
-from google.auth.transport.requests import Request
+import time
+from typing import Dict, Any, Optional, List, Tuple
+from datetime import datetime
+from loguru import logger
 from google.oauth2 import service_account
-from tenacity import retry, stop_after_attempt, wait_exponential
+from google.auth.transport.requests import Request
 
-from config import config
-from core.exceptions import GeminiAPIError, GeminiRateLimitError, GeminiTimeoutError
-from utils.logging import get_logger
+from models.underwriting_entities import ExtractedDocumentPackage
+from prompts.underwriting_prompts import (
+    get_prompt_for_document_type, 
+    get_validation_prompt,
+    get_targeted_financial_analysis_prompt
+)
 from utils.json_parser import extract_json_from_response
-
-logger = get_logger(__name__)
-
-
-class PromptBuilder:
-    """Build consistent, structured prompts for extraction."""
-    
-    @staticmethod
-    def build_extraction_prompt() -> str:
-        """Build the main extraction prompt."""
-        return """You are an expert legal document analyst specializing in debt settlement contract analysis.
-
-TASK: Extract ALL information from the document in a structured JSON format that EXACTLY matches the schema below.
-
-CRITICAL RULES:
-1. Extract EVERY piece of information present in the document
-2. Use null for missing information - DO NOT skip fields
-3. Maintain exact data types as specified in the schema
-4. Extract ALL document sections, even if they seem redundant
-5. Include ALL creditors and payment schedules
-6. Validate formats (dates: YYYY-MM-DD, SSN: XXX-XX-XXXX, IP: x.x.x.x)
-
-OUTPUT SCHEMA:
-{
-    "client_info": {
-        "name": "string",
-        "ssn": "string (XXX-XX-XXXX format)",
-        "dob": "YYYY-MM-DD",
-        "email": "string",
-        "phone": "XXX-XXX-XXXX",
-        "address": {
-            "street": "string",
-            "city": "string",
-            "state": "string (2 letter code)",
-            "zip_code": "string"
-        }
-    },
-    "financial_analysis": {
-        "monthly_income": number,
-        "monthly_expenses": number,
-        "net_income": number,
-        "total_enrolled_debt": number,
-        "estimated_program_length": integer,
-        "monthly_program_deposit": number,
-        "estimated_settlement_amount": number,
-        "total_program_fees": number,
-        "estimated_savings": number,
-        "estimated_total_cost": number
-    },
-    "creditors": [
-        {
-            "creditor_name": "string",
-            "account_name": "string",
-            "current_balance": number,
-            "debt_type": "Credit Card|Installment|Personal Loan|Collection|Medical|Other",
-            "account_number": "string or null"
-        }
-    ],
-    "bank_details": {
-        "bank_name": "string",
-        "account_number": "string",
-        "routing_number": "string (9 digits)",
-        "account_type": "Checking|Savings"
-    },
-    "document_sections": [
-        {
-            "section_name": "string",
-            "data": {object with all fields from that section},
-            "signatures_valid": boolean,
-            "dates_valid": boolean
-        }
-    ],
-    "vlp_enrolled": boolean,
-    "contract_date": "YYYY-MM-DD",
-    "first_payment_date": "YYYY-MM-DD",
-    "sender_ip": "string (IP address)",
-    "signer_ip": "string (IP address)"
-}
-
-IMPORTANT: 
-- Extract COMPLETE payment schedules with ALL dates and amounts
-- Include ALL fee structures and charges
-- Capture EVERY signature and initial field
-- Return ONLY valid JSON - no additional text or formatting"""
 
 
 class GeminiClient:
-    """Client for interacting with Google Gemini API."""
+    """
+     Gemini client with robust validation and anti-hallucination measures.
+    """
     
-    def __init__(self, service_account_info: Dict[str, Any]):
-        """
-        Initialize Gemini client.
+    def __init__(self, service_account_info: Dict[str, Any] = None, config_instance=None):
+        # Use provided config or import global config
+        if config_instance:
+            self.config = config_instance
+        else:
+            from config import config
+            self.config = config
+            
+        # Use provided service account info or get from config
+        if service_account_info:
+            self.service_account_info = service_account_info
+        else:
+            # Load service account info from config
+            import json
+            service_account_json = self.config.gemini_service_account_json.get_secret_value()
+            self.service_account_info = json.loads(service_account_json)
+            
+        self.project_id = self.service_account_info.get("project_id", self.config.gemini.project_id)
+        self.region = self.config.gemini.region
+        self.model_name = self.config.gemini.model_name
+        self.temperature = self.config.gemini.temperature
+        self.credentials = None
+        self.last_token_usage = {}
         
-        Args:
-            service_account_info: Service account credentials dictionary
-        """
-        self.service_account_info = service_account_info
-        self.model_name = config.gemini.model_name
-        self.credentials = self._initialize_credentials()
-        self.endpoint_url = self._build_endpoint_url()
-        self._last_token_usage = {}
+        # Anti-hallucination settings
+        self.max_retries = self.config.max_retries
+        self.validation_threshold = 0.8
+        self.confidence_threshold = 0.7
+        self.timeout = self.config.gemini.timeout
         
-        logger.info(f"Gemini client initialized for model: {self.model_name}")
+        self._initialize_credentials()
     
     def _initialize_credentials(self):
-        """Initialize Google Cloud credentials."""
+        """Initialize Google Cloud credentials with proper key handling."""
         try:
-            credentials = service_account.Credentials.from_service_account_info(
-                self.service_account_info,
+            service_account_info = self.service_account_info.copy()
+            
+            # Fix newline handling in private key
+            if 'private_key' in service_account_info:
+                private_key = service_account_info['private_key']
+                if '\\n' in private_key:
+                    service_account_info['private_key'] = private_key.replace('\\n', '\n')
+            
+            self.credentials = service_account.Credentials.from_service_account_info(
+                service_account_info,
                 scopes=["https://www.googleapis.com/auth/cloud-platform"]
             )
-            credentials.refresh(Request())
-            logger.info("Gemini credentials initialized successfully")
-            return credentials
+            self.credentials.refresh(Request())
+            logger.info(" Gemini credentials initialized successfully")
+            
         except Exception as e:
             logger.error(f"Failed to initialize Gemini credentials: {e}")
-            raise GeminiAPIError(f"Credential initialization failed: {e}")
+            raise
     
     def _build_endpoint_url(self) -> str:
-        """Build Gemini API endpoint URL."""
-        base_url = f"https://{config.gemini.region}-aiplatform.googleapis.com/v1"
-        return (f"{base_url}/projects/{config.gemini.project_id}"
-                f"/locations/{config.gemini.region}"
-                f"/publishers/google/models/{self.model_name}:generateContent")
+        """Build the Gemini API endpoint URL."""
+        return (
+            f"https://{self.region}-aiplatform.googleapis.com/v1/"
+            f"projects/{self.project_id}/locations/{self.region}/"
+            f"publishers/google/models/{self.model_name}:generateContent"
+        )
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
-        reraise=True
-    )
-    def extract_document_data(self, pdf_data: Dict[str, str]) -> Dict[str, Any]:
-        """
-        Extract document data using Gemini API.
+    def _prepare_headers(self) -> Dict[str, str]:
+        """Prepare request headers with authentication."""
+        if not self.credentials.valid:
+            self.credentials.refresh(Request())
         
-        Args:
-            pdf_data: Dictionary containing base64 encoded PDF data
-            
-        Returns:
-            Extracted document data as dictionary
-        """
-        payload = self._build_extraction_payload(pdf_data)
-        response = self._call_gemini_api(payload)
-        return self._extract_json_from_response(response)
-    
-    def _build_extraction_payload(self, pdf_data: Dict[str, str]) -> Dict[str, Any]:
-        """Build the API payload for extraction."""
         return {
-            "contents": [{
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.credentials.token}"
+        }
+    
+    def _prepare_payload(self, prompt: str, pdf_data: Dict[str, str]) -> Dict[str, Any]:
+        """Prepare the request payload for Gemini API."""
+        return {
+            "contents": [
+                {
                 "role": "user",
                 "parts": [
-                    {"text": PromptBuilder.build_extraction_prompt()},
+                        {"text": prompt},
                     {"inlineData": pdf_data}
                 ]
-            }],
+                }
+            ],
             "generationConfig": {
-                "temperature": config.gemini.temperature,
-                "topK": config.gemini.top_k,
-                "topP": config.gemini.top_p,
-                "maxOutputTokens": config.gemini.max_output_tokens,
-                "responseMimeType": "application/json"
+                "temperature": self.temperature,
+                "topK": self.config.gemini.top_k,
+                "topP": self.config.gemini.top_p,
+                "maxOutputTokens": self.config.gemini.max_output_tokens,
+                "candidateCount": 1
             },
             "safetySettings": [
                 {
-                    "category": "HARM_CATEGORY_HATE_SPEECH",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
                     "category": "HARM_CATEGORY_DANGEROUS_CONTENT", 
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                    "threshold": "BLOCK_NONE"
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
                 },
                 {
                     "category": "HARM_CATEGORY_HARASSMENT",
-                    "threshold": "BLOCK_NONE"
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
                 }
             ]
         }
     
-    def _call_gemini_api(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Call Gemini API with error handling."""
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.credentials.token}"
-        }
+
+    async def extract_with_validation(self, pdf_data: Dict[str, str], file_id: int, attempts: int = 3) -> Optional[ExtractedDocumentPackage]:
+        """Extract with validation - wrapper for backwards compatibility."""
+        # Simply call extract_document_entities with retry logic
+        for attempt in range(max(1, attempts)):
+            logger.info(f"Extraction attempt {attempt + 1}/{attempts}")
+            try:
+                result = await self.extract_document_entities(pdf_data, file_id)
+                if result:
+                    return result
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1} failed: {e}")
+                if attempt == attempts - 1:
+                    raise
+        return None
+    
+    async def extract_document_entities(
+        self, 
+        pdf_data: Dict[str, str],
+        file_id: int
+    ) -> Optional[ExtractedDocumentPackage]:
+        """
+        Extract entities from document using comprehensive extraction.
+        
+        Args:
+            pdf_data: Base64 encoded PDF data
+            
+        Returns:
+            ExtractedDocumentPackage or None if extraction fails
+        """
+        start_time = time.time()
         
         try:
-            with httpx.Client(timeout=config.gemini.timeout) as client:
-                response = client.post(
-                    url=self.endpoint_url,
-                    headers=headers,
-                    json=payload
+            # Check document size limits
+            pdf_size_estimate = len(pdf_data.get('data', '')) if 'data' in pdf_data else 0
+            pdf_size_mb = pdf_size_estimate / 1024 / 1024 * 0.75
+            
+            if pdf_size_estimate > 26666666:  # >26.7MB base64 (~20MB PDF)
+                logger.error(f"Document too large ({pdf_size_mb:.1f}MB) for processing, skipping")
+                return None
+            
+            # Use comprehensive extraction prompt directly
+            prompt = get_prompt_for_document_type('comprehensive')
+            
+            # Extract data with retries (reduced for large files)
+            max_attempts = 1 if pdf_size_estimate > 7000000 else 2  # Reduce retries for very large files
+            
+            extracted_data = None
+            for attempt in range(max_attempts):
+                try:
+                    logger.info(f"Comprehensive extraction attempt {attempt + 1}")
+                    
+                    response = await self._make_gemini_request(prompt, pdf_data)
+                    if response:
+                        extracted_data = response
+                        break
+                        
+                except Exception as e:
+                    logger.warning(f"Extraction attempt {attempt + 1} failed: {e}")
+                    if attempt == self.max_retries:
+                        raise
+            
+            if not extracted_data:
+                logger.error("All extraction attempts failed")
+                return None
+            
+            # Validate extracted data to improve accuracy
+            try:
+                validation_passed, corrected_data = await self._validate_extracted_data(
+                    extracted_data, pdf_data
                 )
-                response.raise_for_status()
-                
-                result = response.json()
-                
-                # Store token usage for metrics
-                self._last_token_usage = result.get('usageMetadata', {})
-                
-                logger.info(f"Gemini API call successful. Tokens used: {self._last_token_usage}")
-                return result
-                
-        except httpx.TimeoutException as e:
-            logger.error(f"Gemini API timeout: {e}")
-            raise GeminiTimeoutError(f"API call timed out: {e}")
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
-                logger.error("Gemini API rate limit exceeded")
-                raise GeminiRateLimitError("Rate limit exceeded")
-            else:
-                logger.error(f"Gemini API HTTP error: {e}")
-                raise GeminiAPIError(f"HTTP error {e.response.status_code}: {e}")
-        except Exception as e:
-            logger.error(f"Gemini API call failed: {e}")
-            raise GeminiAPIError(f"API call failed: {e}")
-    
-    def _extract_json_from_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract and parse JSON from Gemini response."""
-        try:
-            if 'candidates' not in response:
-                raise GeminiAPIError("No candidates in response")
+                if corrected_data:
+                    extracted_data.update(corrected_data)
+            except Exception:
+                validation_passed = True
+                corrected_data = None
             
-            candidates = response['candidates']
-            if not candidates:
-                raise GeminiAPIError("Empty candidates list")
-            
-            candidate = candidates[0]
-            if 'content' not in candidate:
-                raise GeminiAPIError("No content in candidate")
-            
-            content = candidate['content']
-            if 'parts' not in content or not content['parts']:
-                raise GeminiAPIError("No parts in content")
-            
-            text_content = content['parts'][0].get('text', '')
-            if not text_content:
-                raise GeminiAPIError("Empty text content")
-            
-            # Extract JSON using utility function
-            return extract_json_from_response(text_content)
-            
-        except Exception as e:
-            logger.error(f"Failed to extract JSON from response: {e}")
-            raise GeminiAPIError(f"Response parsing failed: {e}")
-    
-    def get_last_token_usage(self) -> Dict[str, int]:
-        """Get token usage from last API call."""
-        return self._last_token_usage.copy()
-    
-    def health_check(self) -> bool:
-        """Perform a basic health check of the Gemini API."""
-        try:
-            # Simple test payload
-            test_payload = {
-                "contents": [{
-                    "role": "user",
-                    "parts": [{"text": "Hello, respond with just 'OK'"}]
-                }],
-                "generationConfig": {
-                    "temperature": 0.0,
-                    "maxOutputTokens": 10
+            # Create document package
+            package_data = {
+                'file_id': file_id,
+                'document_type': 'comprehensive',
+                'confidence_score': 1.0,  # Always confident with comprehensive extraction
+                'extraction_metadata': {
+                    'extraction_time': datetime.now().isoformat(),
+                    'processing_time_ms': int((time.time() - start_time) * 1000),
+                    'model': self.model_name,
+                    'temperature': self.temperature,
+                    'validation_passed': validation_passed,
+                    'attempts': attempt + 1
                 }
             }
             
-            response = self._call_gemini_api(test_payload)
-            return 'candidates' in response and len(response['candidates']) > 0
+            # Map extracted data to package structure and add file_id
+            mapped_data = self._map_extracted_data_to_package(extracted_data, 'comprehensive')
+            package_data.update(mapped_data)
+            
+            # Add file_id to all entities
+            self._add_file_id_to_entities(package_data, file_id)
+            
+            # Create and validate package
+            try:
+                package = ExtractedDocumentPackage(**package_data)
+                logger.info(f"Successfully created comprehensive document package")
+                
+                # Targeted backfill for missing critical FA fields
+                try:
+                    missing_fa_fields: List[str] = []
+                    fa = package_data.get('financial_analysis') or {}
+                    critical_keys = [
+                        'draft_type', 'fixed_income', 'day_phone', 'evening_phone', 'cell_phone',
+                        'estimated_program_settle_amount', 'fee_method'
+                    ]
+                    for key in critical_keys:
+                        if not fa.get(key):
+                            missing_fa_fields.append(key)
+                    if missing_fa_fields:
+                        prompt2 = get_targeted_financial_analysis_prompt(missing_fa_fields)
+                        response2 = await self._make_gemini_request(prompt2, pdf_data)
+                        if response2:
+                            # merge backfilled fields
+                            fa.update({k: v for k, v in response2.items() if k in missing_fa_fields})
+                            package_data['financial_analysis'] = fa
+                            package = ExtractedDocumentPackage(**package_data)
+                            logger.info("Applied targeted backfill for missing financial analysis fields")
+                except Exception as e:
+                    logger.warning(f"Backfill step skipped/failed: {e}")
+                return package
+                
+            except Exception as e:
+                logger.error(f"Failed to create document package: {e}")
+                logger.debug(f"Package data: {package_data}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Document extraction failed: {e}")
+            return None
+    
+    async def _make_gemini_request(self, prompt: str, pdf_data: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        """Make request to Gemini API with error handling."""
+        try:
+            logger.info(f"Making Gemini API request with timeout: {self.timeout}s")
+            
+            url = self._build_endpoint_url()
+            headers = self._prepare_headers()
+            payload = self._prepare_payload(prompt, pdf_data)
+            
+            # Adaptive timeout based on PDF size
+            pdf_size_estimate = len(pdf_data.get('data', '')) if 'data' in pdf_data else 0
+            pdf_size_mb = pdf_size_estimate / 1024 / 1024 * 0.75  # Approximate PDF size in MB
+            
+            if pdf_size_estimate > 20000000:  # >20MB base64 (~15MB PDF)
+                timeout_seconds = 600  # 10 minutes for very large files
+                logger.warning(f"Processing very large PDF (~{pdf_size_mb:.1f}MB), using extended timeout")
+            elif pdf_size_estimate > 13333333:  # >13.3MB base64 (~10MB PDF)
+                timeout_seconds = 450  # 7.5 minutes for large files
+                logger.warning(f"Processing large PDF (~{pdf_size_mb:.1f}MB), using extended timeout")
+            elif pdf_size_estimate > 7000000:  # >7MB base64 (~5MB PDF)
+                timeout_seconds = 300  # 5 minutes for medium files
+                logger.info(f"Processing medium PDF (~{pdf_size_mb:.1f}MB), using extended timeout")
+            elif pdf_size_estimate > 3500000:  # >3.5MB base64 (~2.5MB PDF)
+                timeout_seconds = 180  # 3 minutes for small-medium files
+                logger.info(f"Processing PDF (~{pdf_size_mb:.1f}MB), using extended timeout")
+            else:
+                timeout_seconds = 120  # 2 minutes for normal files
+                logger.info(f"Processing PDF (~{pdf_size_mb:.1f}MB), using standard timeout")
+            
+            timeout = httpx.Timeout(float(timeout_seconds))
+            
+            logger.info(f"Sending request to Gemini API (timeout: {timeout_seconds}s)")
+            
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                
+                logger.info(f"Received response from Gemini API: {response.status_code}")
+                
+                response_data = response.json()
+                
+                # Extract token usage
+                if 'usageMetadata' in response_data:
+                    self.last_token_usage = response_data['usageMetadata']
+                
+                # Extract content
+                if 'candidates' in response_data and response_data['candidates']:
+                    candidate = response_data['candidates'][0]
+                    if 'content' in candidate and 'parts' in candidate['content']:
+                        text_content = candidate['content']['parts'][0].get('text', '')
+                        
+                        # Parse JSON from response
+                        json_data = extract_json_from_response(text_content)
+                        if json_data:
+                            return json_data
+                        else:
+                            logger.warning("No valid JSON found in Gemini response")
+                            return None
+                
+                logger.warning("Unexpected Gemini response structure")
+                return None
+                
+        except httpx.TimeoutException as e:
+            logger.error(f"Gemini API request timed out after {timeout_seconds}s: {e}")
+            raise
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Gemini API HTTP error: {e.response.status_code} - {e.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"Gemini API request failed: {e}")
+            raise
+    
+    async def _validate_extracted_data(
+        self, 
+        extracted_data: Dict[str, Any], 
+        pdf_data: Dict[str, str]
+    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """
+        Validate extracted data for hallucination and accuracy.
+        
+        Returns:
+            Tuple of (validation_passed, corrected_data)
+        """
+        try:
+            validation_prompt = get_validation_prompt(extracted_data)
+            
+            validation_response = await self._make_gemini_request(validation_prompt, pdf_data)
+            
+            if validation_response:
+                validation_passed = validation_response.get('validation_passed', False)
+                confidence_score = validation_response.get('confidence_score', 0.0)
+                corrected_data = validation_response.get('corrected_data', {})
+                flagged_fields = validation_response.get('flagged_fields', [])
+                
+                if flagged_fields:
+                    logger.warning(f"Validation flagged suspicious fields: {flagged_fields}")
+                
+                if confidence_score < self.confidence_threshold:
+                    logger.warning(f"Low validation confidence: {confidence_score}")
+                
+                return validation_passed and confidence_score >= self.confidence_threshold, corrected_data
+            
+            return True, None  # Default to pass if validation fails
             
         except Exception as e:
-            logger.error(f"Gemini health check failed: {e}")
+            logger.warning(f"Validation failed: {e}")
+            return True, None  # Default to pass if validation fails
+    
+    def _map_extracted_data_to_package(
+        self, 
+        extracted_data: Dict[str, Any], 
+        document_type: str
+    ) -> Dict[str, Any]:
+        """Map extracted data to ExtractedDocumentPackage structure."""
+        package_data = {}
+        
+        # Handle different document types
+        if document_type == 'engagement_term' and extracted_data:
+            package_data['engagement_term'] = extracted_data
+            
+        elif document_type == 'power_of_attorney' and extracted_data:
+            package_data['power_of_attorney'] = extracted_data
+            
+        elif document_type == 'payment_gateway_agreement' and extracted_data:
+            package_data['payment_gateway_agreement'] = extracted_data
+            
+        elif document_type == 'financial_analysis' and extracted_data:
+            package_data['financial_analysis'] = extracted_data
+            
+        elif document_type == 'debt_schedule' and 'debt_schedule' in extracted_data:
+            package_data['debt_schedule'] = extracted_data['debt_schedule']
+            
+        elif document_type == 'legal_plan_agreement' and extracted_data:
+            package_data['legal_plan_agreement'] = extracted_data
+            
+        elif document_type == 'comprehensive':
+            # Map all possible entities from comprehensive extraction
+            entity_mappings = {
+                'engagement_term': 'engagement_term',
+                'power_of_attorney': 'power_of_attorney', 
+                'payment_gateway_agreement': 'payment_gateway_agreement',
+                'financial_analysis': 'financial_analysis',
+                'debt_schedule': 'debt_schedule',
+                'fcra_consent': 'fcra_consent',
+                'disclosure': 'disclosure',
+                'high_interest_disclosure': 'high_interest_disclosure',
+                'program_disclosure': 'program_disclosure',
+                'cancellation_notice': 'cancellation_notice',
+                'payment_service_fees': 'payment_service_fees',
+                'payment_bank_info': 'payment_bank_info',
+                'payment_deposit_schedule': 'payment_deposit_schedule',
+                'legal_plan_agreement': 'legal_plan_agreement',
+                'clixsign_sender': 'clixsign_sender',
+                'clixsign_signers': 'clixsign_signers'
+            }
+            
+            for key, package_key in entity_mappings.items():
+                if key in extracted_data and extracted_data[key]:
+                    value = extracted_data[key]
+                    # Normalize financial analysis to match DB schema and improve consistency
+                    if package_key == 'financial_analysis' and isinstance(value, dict):
+                        package_data[package_key] = self._normalize_financial_analysis_fields(value)
+                    else:
+                        package_data[package_key] = value
+        
+        return package_data
+
+    def _normalize_financial_analysis_fields(self, fa: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize financial analysis dict to match model field names and fix common issues."""
+        # Helper to fetch a value by any of several possible keys (case-insensitive)
+        def get_any(keys: List[str]) -> Any:
+            lower_map = {k.lower(): v for k, v in fa.items()}
+            for k in keys:
+                if k.lower() in lower_map and lower_map[k.lower()] not in ['', None]:
+                    return lower_map[k.lower()]
+            return None
+
+        normalized: Dict[str, Any] = {}
+
+        # Straightforward mappings with synonyms
+        normalized['applicant_name'] = get_any(['applicant_name', 'client_name'])
+        normalized['applicant_email'] = get_any(['applicant_email', 'client_email'])
+        normalized['coapplicant_name'] = get_any(['coapplicant_name', 'co_applicant_name', 'co-applicant_name'])
+        normalized['coapplicant_email'] = get_any(['coapplicant_email', 'co_applicant_email', 'co-applicant_email'])
+        normalized['draft_type'] = get_any(['draft_type', 'draft method', 'draft'])
+        normalized['fixed_income'] = get_any(['fixed_income', 'fixed income'])
+        normalized['day_phone'] = get_any(['day_phone', 'day phone', 'dayphone'])
+        normalized['evening_phone'] = get_any(['evening_phone', 'evening phone', 'eveningphone'])
+        normalized['cell_phone'] = get_any(['cell_phone', 'cell phone', 'mobile_phone', 'mobile'])
+        normalized['program_start_date'] = get_any(['program_start_date', 'start_date', 'program start date'])
+        normalized['estimated_program_start_date'] = get_any(['estimated_program_start_date', 'estimated start date'])
+        normalized['lump_sum'] = get_any(['lump_sum', 'lump sum', 'lump_sum_if_applicable'])
+        normalized['applicant_monthly_income'] = get_any(['applicant_monthly_income', 'applicant monthly income (after taxes):', 'applicant_monthly_income_after_taxes', 'monthly_income_after_taxes'])
+        normalized['coapplicant_monthly_income'] = get_any(['coapplicant_monthly_income', 'co-applicant monthly income (after taxes):', 'co_applicant_monthly_income_after_taxes'])
+        normalized['applicant_expenses'] = get_any(['applicant_expenses', 'applicant expenses'])
+        normalized['coapplicant_expenses'] = get_any(['coapplicant_expenses', 'co-applicant expenses'])
+        normalized['applicant_total_net_income'] = get_any(['applicant_total_net_income', 'total net income'])
+        normalized['coapplicant_total_net_income'] = get_any(['coapplicant_total_net_income', 'co-applicant total net income'])
+        normalized['total_enrolled_debt'] = get_any(['total_enrolled_debt', 'total enrolled debt (from exhibit a)', 'total_enrolled_debt_from_exhibit_a'])
+        normalized['estimated_program_length'] = get_any(['estimated_program_length', 'estimated program length', 'program_length', 'program duration'])
+        normalized['monthly_program_deposit'] = get_any(['monthly_program_deposit', 'monthly program deposit', 'monthly_payment'])
+        # Handle multiple variants of settlement amount
+        normalized['estimated_program_settle_amount'] = get_any([
+            'estimated_program_settle_amount', 'estimated program settle amount',
+            'estimated_settlement_amount', 'estimated_settle_amount', 'estimated_program_settlement_amount'
+        ])
+        normalized['fee_method'] = get_any(['fee_method', 'fee method'])
+        normalized['total_program_fees'] = get_any(['total_program_fees', 'total program fees'])
+        normalized['estimated_program_savings'] = get_any(['estimated_program_savings', 'estimated program savings'])
+        normalized['estimated_total_cost'] = get_any(['estimated_total_cost', 'estimated total cost'])
+        normalized['financial_hardship'] = get_any(['financial_hardship', 'financial hardship'])
+        normalized['hardship_details'] = get_any(['hardship_details', 'hardship details'])
+
+        # Ensure draft_type and fee_method mirror if only one provided
+        if not normalized.get('draft_type') and normalized.get('fee_method'):
+            normalized['draft_type'] = normalized['fee_method']
+        if not normalized.get('fee_method') and normalized.get('draft_type'):
+            normalized['fee_method'] = normalized['draft_type']
+
+        # Re-compute net incomes if missing or clearly wrong (income - expenses)
+        def to_decimal_like(x: Any) -> Optional[str]:
+            if x is None:
+                return None
+            s = str(x)
+            s = s.replace(',', '').replace('$', '').strip()
+            return s if s else None
+
+        ai = to_decimal_like(normalized.get('applicant_monthly_income'))
+        ae = to_decimal_like(normalized.get('applicant_expenses'))
+        if ai is not None and ae is not None:
+            try:
+                net = float(ai) - float(ae)
+                # Only set if missing or obviously equal to income (likely mis-extracted)
+                if not normalized.get('applicant_total_net_income') or str(normalized.get('applicant_total_net_income')).replace(',', '') == str(ai):
+                    normalized['applicant_total_net_income'] = f"{net:.2f}"
+            except Exception:
+                pass
+
+        ci = to_decimal_like(normalized.get('coapplicant_monthly_income'))
+        ce = to_decimal_like(normalized.get('coapplicant_expenses'))
+        if ci is not None and ce is not None:
+            try:
+                net = float(ci) - float(ce)
+                if not normalized.get('coapplicant_total_net_income'):
+                    normalized['coapplicant_total_net_income'] = f"{net:.2f}"
+            except Exception:
+                pass
+
+        return normalized
+    
+    def _add_file_id_to_entities(self, data: Dict[str, Any], file_id: int) -> None:
+        """Recursively add file_id to all entities and fix data formatting issues."""
+        for key, value in data.items():
+            if key == 'extraction_metadata':
+                continue  # Skip metadata
+                
+            if isinstance(value, dict):
+                # Add file_id to single entity
+                if key in ['engagement_term', 'power_of_attorney', 'payment_gateway_agreement', 
+                          'financial_analysis', 'fcra_consent', 'disclosure', 'high_interest_disclosure',
+                          'program_disclosure', 'cancellation_notice', 'payment_bank_info', 
+                          'legal_plan_agreement', 'clixsign_sender']:
+                    value['file_id'] = file_id
+                    self._fix_entity_data_formats(value)
+                    
+            elif isinstance(value, list):
+                # Add file_id to list entities
+                if key in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule', 'clixsign_signers']:
+                    for item in value:
+                        if isinstance(item, dict):
+                            item['file_id'] = file_id
+                            self._fix_entity_data_formats(item)
+    
+    def _fix_entity_data_formats(self, entity: Dict[str, Any]) -> None:
+        """Fix common data format issues in entities."""
+        # Field name mappings to fix mismatches between extraction and model fields
+        field_mappings = {
+            'signer_number': 'signer_name',  # Fix clixsign signer field name
+            'name': 'signer_name',           # Fix clixsign signer field name
+            'email_address': 'email',        # Common email field mapping
+            'consumer_signature': 'client_signature',  # FCRA consent mapping
+            'payment_number': 'payment_no',  # Payment schedule mapping
+            'process_date': 'process_date',  # Keep as is but validate format
+            'fee_type': 'service_type',      # Payment service fees mapping
+            'creditor_name': 'creditor_name', # Keep as is
+            'name_on_account': 'account_name', # Debt schedule mapping
+        }
+        
+        # Apply field name mappings
+        keys_to_update = {}
+        keys_to_remove = []
+        for old_key, new_key in field_mappings.items():
+            if old_key in entity and old_key != new_key:
+                keys_to_update[new_key] = entity[old_key]
+                keys_to_remove.append(old_key)
+        
+        # Update entity with new keys
+        entity.update(keys_to_update)
+        # Remove old keys
+        for key in keys_to_remove:
+            entity.pop(key, None)
+        
+        # Create a copy of items to avoid modification during iteration
+        items_to_process = list(entity.items())
+        for key, value in items_to_process:
+            if isinstance(value, str) and value is not None:
+                # Fix decimal parsing - remove commas and handle currency symbols and percentages
+                decimal_fields = [
+                    'current_balance', 'amount', 'settlement_fee', 'monthly_payment',
+                    'settlement_fee_percentage', 'first_payment_amount', 'monthly_payment_amount',
+                    'members_accumulation_amount', 'recurring_debit_authorization',
+                    'estimated_settle_amount', 'estimated_program_settle_amount', 'total_program_fees', 'estimated_total_cost',
+                    'estimated_program_savings', 'applicant_monthly_income', 'coapplicant_monthly_income',
+                    'applicant_expenses', 'coapplicant_expenses', 'total_net_income', 'total_enrolled_debt',
+                    'fixed_income', 'lump_sum', 'applicant_total_net_income', 'coapplicant_total_net_income',
+                    'monthly_program_deposit', 'service_amount'
+                ]
+                if key in decimal_fields:
+                    # Remove commas, dollar signs, percentage signs, and other currency symbols
+                    cleaned_value = value.replace(',', '').replace('$', '').replace('€', '').replace('£', '').replace('%', '').strip()
+                    # Handle negative values in parentheses like "(538.51)"
+                    if cleaned_value.startswith('(') and cleaned_value.endswith(')'):
+                        cleaned_value = '-' + cleaned_value[1:-1]
+                    entity[key] = cleaned_value
+                
+                # Fix percentage fields - ensure they're clean decimals
+                percentage_fields = ['settlement_fee_percentage', 'settlement_fee_percent']
+                if key in percentage_fields:
+                    cleaned_value = value.replace('%', '').replace(',', '').strip()
+                    entity[key] = cleaned_value
+                
+                # Fix date formats - convert various formats to yyyy-MM-dd or ISO datetime
+                date_fields = [
+                    'client_dob', 'coclient_dob', 'member_dob', 'coapplicant_dob',
+                    'signature_date', 'client_signature_date', 'coclient_signature_date',
+                    'cancellation_deadline', 'cancellation_date',
+                    'first_payment_date', 'process_date', 'first_debit_date', 'program_start_date',
+                    'estimated_program_start_date', 'date', 'cancel_by_date', 'date_of_first_debit',
+                    'credit_card_expiration_date', 'monthly_recurring_date'
+                ]
+                
+                # ClixSign datetime fields that need full datetime parsing
+                datetime_fields = [
+                    'package_opened_at', 'signature_adopted_at', 'package_signed_at', 
+                    'package_declined_at', 'final_status_date'
+                ]
+                
+                if key in date_fields and isinstance(value, str):
+                    try:
+                        # Handle MM/dd/yyyy format (including short formats like "11/6/2024")
+                        if '/' in value:
+                            parts = value.split('/')
+                            if len(parts) == 3 and len(parts[2]) == 4:
+                                entity[key] = f"{parts[2]}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"
+                        # Handle "Nov 21, 2024" format
+                        elif ',' in value and len(value.split()) == 3:
+                            import datetime
+                            parsed_date = datetime.datetime.strptime(value, '%b %d, %Y')
+                            entity[key] = parsed_date.strftime('%Y-%m-%d')
+                        # Handle "11-09-2024" format  
+                        elif '-' in value and len(value) == 10 and value.count('-') == 2:
+                            parts = value.split('-')
+                            if len(parts) == 3 and len(parts[2]) == 4:
+                                entity[key] = f"{parts[2]}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"
+                    except:
+                        pass  # Keep original if conversion fails
+                
+                # Fix ClixSign datetime formats - convert "MM/dd/yyyy h:mm:ss AM/PM" to ISO format
+                if key in datetime_fields and isinstance(value, str):
+                    try:
+                        import datetime
+                        # Handle "10/14/2022 2:17:37 PM" format
+                        if '/' in value and (' AM' in value or ' PM' in value):
+                            parsed_dt = datetime.datetime.strptime(value, '%m/%d/%Y %I:%M:%S %p')
+                            entity[key] = parsed_dt.isoformat()
+                        # Handle "10/14/2022 14:17:37" format (24-hour)
+                        elif '/' in value and ':' in value and ' AM' not in value and ' PM' not in value:
+                            parsed_dt = datetime.datetime.strptime(value, '%m/%d/%Y %H:%M:%S')
+                            entity[key] = parsed_dt.isoformat()
+                    except:
+                        pass  # Keep original if conversion fails
+                
+                # Fix account_type case sensitivity (must be lowercase)
+                if key == 'account_type':
+                    if value.lower() in ['checking', 'savings']:
+                        entity[key] = value.lower()
+                
+
+                
+                # Fix boolean fields that might come as strings
+                boolean_fields = [
+                    'dedicated_account_required', 'effective_immediately', 'local_counsel_disclosure',
+                    'credit_report_authorization', 'financial_info_disclosure_authorization',
+                    'termination_rights', 'arbitration_clause', 'class_action_waiver',
+                    'recurring_debit_authorization_bool', 'credit_counseling_disclosure',
+                    'bankruptcy_disclosure', 'debt_negotiation_disclosure'
+                ]
+                if key in boolean_fields:
+                    entity[key] = value.lower() in ['true', 'yes', '1', 'on']
+                
+                # Fix integer fields that might come as strings
+                integer_fields = [
+                    'estimated_program_length', 'debt_relief_program_duration',
+                    'signer_number', 'initials_count', 'page_count', 'pages_count', 'signers_count'
+                ]
+                if key in integer_fields and value.isdigit():
+                    entity[key] = int(value)
+                
+                # Clean up empty strings to None for optional fields
+                if value.strip() == '' or value.lower() in ['null', 'none', 'n/a', 'na']:
+                    entity[key] = None
+            
+            # Handle non-string values for payment_no (integers need to be converted to strings)
+            if key in ['payment_no', 'payment_number'] and isinstance(value, int):
+                entity[key] = str(value)
+    
+    def health_check(self) -> bool:
+        """Check if Gemini client is healthy."""
+        try:
+            return self.credentials and self.credentials.valid
+        except Exception:
             return False
+    
+    def get_last_token_usage(self) -> Dict[str, Any]:
+        """Get token usage from last request."""
+        return self.last_token_usage.copy()

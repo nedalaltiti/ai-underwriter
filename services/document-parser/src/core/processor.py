@@ -33,7 +33,7 @@ class DocumentProcessor:
         wait=wait_exponential(multiplier=1, min=4, max=10),
         reraise=True
     )
-    def process_document(self, task: ProcessingTask) -> ProcessingResult:
+    async def process_document(self, task: ProcessingTask) -> ProcessingResult:
         """
         Main method to process a document.
         
@@ -54,39 +54,62 @@ class DocumentProcessor:
             # Download and prepare document
             pdf_data = self._prepare_document(task)
             
-            # Extract data using Gemini
-            extracted_data = self.gemini_client.extract_document_data(pdf_data)
-            
-            # Add metadata
-            extracted_data['extraction_metadata'] = {
-                'timestamp': datetime.now().isoformat(),
-                'task_id': str(task.task_id),
-                'model': self.gemini_client.model_name,
-                'processing_time_ms': int((time.time() - start_time) * 1000)
-            }
-            
-            # Validate with Pydantic
+            # Enhanced extraction and storage with validation
             try:
-                document = ExtractedDocument(**extracted_data)
-                logger.info(f"Document {task.doc_id} successfully validated")
+                from integrations.database import UnderwritingDatabaseAdapter
                 
-                # Create successful result
-                result = ProcessingResult(
-                    task_id=task.task_id,
-                    status=ProcessingStatus.COMPLETED,
-                    extracted_document=document,
-                    processing_time_ms=int((time.time() - start_time) * 1000),
-                    token_usage=self.gemini_client.get_last_token_usage()
-                )
+                # Extract document package with validation using existing client
+                file_id = int(task.doc_id)
+                # Use multi-attempt extraction and pick most complete result
+                package = await self.gemini_client.extract_with_validation(pdf_data, file_id, attempts=3)
                 
-                task.status = ProcessingStatus.COMPLETED
-                task.processing_completed_at = datetime.now()
+                if not package:
+                    raise ExtractionError("Failed to extract valid entities from document")
                 
-                return result
+                logger.info(f"Successfully extracted package for {task.doc_id}, type: {package.document_type}")
+                
+                # Initialize database adapter
+                db_adapter = UnderwritingDatabaseAdapter()
+                await db_adapter.initialize()
+                
+                # Store complete package to database
+                success = await db_adapter.store_document_package(package)
+                
+                await db_adapter.close()
+                
+                if success:
+                    logger.info(f"Document {task.doc_id} successfully processed and stored")
+                    
+                    # Create successful result
+                    # Safely handle token usage data
+                    token_usage = self.gemini_client.get_last_token_usage()
+                    safe_token_usage = {}
+                    if token_usage:
+                        # Extract only safe integer values
+                        for key, value in token_usage.items():
+                            if isinstance(value, (int, float)):
+                                safe_token_usage[key] = int(value)
+                            elif isinstance(value, str) and value.isdigit():
+                                safe_token_usage[key] = int(value)
+                    
+                    result = ProcessingResult(
+                        task_id=task.task_id,
+                        status=ProcessingStatus.COMPLETED,
+                        extracted_document=package,  # Return the package for validation
+                        processing_time_ms=int((time.time() - start_time) * 1000),
+                        token_usage=safe_token_usage
+                    )
+                    
+                    task.status = ProcessingStatus.COMPLETED
+                    task.processing_completed_at = datetime.now()
+                    
+                    return result
+                else:
+                    raise ExtractionError("Failed to store document package to database")
                 
             except Exception as e:
-                logger.error(f"Validation error for {task.doc_id}: {e}")
-                raise ExtractionError(f"Document validation failed: {e}")
+                logger.error(f"Enhanced processing error for {task.doc_id}: {e}")
+                raise ExtractionError(f"Enhanced processing failed: {e}")
                 
         except Exception as e:
             logger.error(f"Processing failed for {task.doc_id}: {e}")

@@ -73,8 +73,16 @@ class WebhookConfig(BaseServiceConfig):
     webhook_secret: SecretStr = Field(
         ...,
         min_length=32,
-        description="Webhook signature secret (≥32 characters)"
+        description="Webhook signature secret (≥32 characters) - REQUIRED for authentication"
     )
+    
+    @field_validator('webhook_secret')
+    @classmethod
+    def validate_webhook_secret(cls, v):
+        """Ensure webhook secret is provided and meets minimum requirements."""
+        if not v or len(v.get_secret_value()) < 32:
+            raise ValueError("Webhook secret must be at least 32 characters long")
+        return v
     
     # Rate Limiting
     rate_limit_enabled: bool = Field(

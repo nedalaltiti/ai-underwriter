@@ -47,4 +47,4 @@ echo -e "${YELLOW}🤖 Gemini Model: ${PARSER_GEMINI_MODEL:-gemini-2.0-flash}${N
 echo -e "${GREEN}🚀 Starting background worker...${NC}"
 
 # Run the worker
-python -m services.worker
+python3 services/worker.py

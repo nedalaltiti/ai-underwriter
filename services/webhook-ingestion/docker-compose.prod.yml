@@ -39,7 +39,7 @@ services:
       - WEBHOOK_UW_UPLOADED_DOCS_DLQ=${UW_UPLOADED_DOCS_DLQ:-uw-uploaded-docs-prod-dlq.fifo}
       
       # Security Configuration
-      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:?WEBHOOK_SECRET is required for authentication}
       - WEBHOOK_CORS_ORIGINS=${WEBHOOK_CORS_ORIGINS:-https://app.yourcompany.com}
       
       # Rate Limiting
