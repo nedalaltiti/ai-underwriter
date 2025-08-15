@@ -169,11 +169,7 @@ class WebhookRequest(BaseSchema):
                 if not DIGIT_PATTERN.match(doc_id):
                     raise ValueError(f"All document IDs must be numeric, got: {doc_id}")
             
-            logger.bind(
-                event="multi_doc_id_received",
-                all_doc_ids=v,
-                total_count=len(doc_ids)
-            ).debug("Multiple doc_ids received, will process based on webhook_type")
+            logger.debug(f"Multiple doc_ids received: {len(doc_ids)} documents")
         
         return v  # Return original value
     
@@ -230,25 +226,13 @@ class WebhookRequest(BaseSchema):
             if self.webhook_type == WebhookType.CLIENT_SUBMITTED:
                 # For CLIENT_SUBMITTED: keep all doc_ids (comma-separated)
                 # The processor will handle splitting them
-                logger.bind(
-                    event="client_submitted_multi_docs",
-                    webhook_type=self.webhook_type.value,
-                    all_doc_ids=original_doc_id,
-                    total_documents=len(doc_ids),
-                    contact_id=self.contact_id
-                ).info(f"Client submitted webhook with {len(doc_ids)} documents - will process all docs")
+                logger.debug(f"Client submitted: {len(doc_ids)} documents")
                    
             else:
                 # For DOCUMENT_UPLOADED: take only the last doc_id 
                 selected_id = doc_ids[-1]
                 
-                logger.bind(
-                    event="document_uploaded_multi_docs",
-                    webhook_type=self.webhook_type.value,
-                    selected_doc_id=selected_id,
-                    all_doc_ids=original_doc_id,
-                    total_count=len(doc_ids)
-                ).debug("Multiple doc_ids received, using last one for document_uploaded")
+                logger.debug(f"Document uploaded: using last ID {selected_id} from {len(doc_ids)} docs")
                 
                 # Update doc_id to only the selected one
                 object.__setattr__(self, 'doc_id', selected_id)

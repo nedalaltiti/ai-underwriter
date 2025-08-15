@@ -124,7 +124,7 @@ class SQSAdapter(QueueAdapter):
             try:
                 response = await self._client.get_queue_url(QueueName=self.queue_name)
                 self._queue_url = response['QueueUrl']
-                logger.info(f"🔗 Connected to SQS: {self.queue_name}")
+                logger.debug(f"🔗 SQS connected: {self.queue_name}")
             except Exception as e:
                 logger.error(f"Failed to connect to SQS queue {self.queue_name}: {e}")
                 raise
@@ -209,11 +209,7 @@ class SQSAdapter(QueueAdapter):
                 'message_dedup_id': {'StringValue': params['MessageDeduplicationId'], 'DataType': 'String'},
             })
 
-            logger.info(
-                "📤 SQS FIFO send: queue={}, group_id={}, dedup_id={}, doc_id={}, contact_id={}".format(
-                    self.queue_name, message_group_id, params['MessageDeduplicationId'], doc_id, message.contact_id
-                )
-            )
+            logger.debug(f"📤 SQS: {doc_id} → {self.queue_name}")
             
         response = await self._client.send_message(**params)
         return response['MessageId']

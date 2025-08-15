@@ -38,11 +38,7 @@ class WebhookValidator:
                 raw_data=dict(data)  # Convert mapping to dict for storage
             )
             
-            logger.bind(
-                contact_id=payload.contact_id,
-                doc_id=payload.doc_id,
-                correlation_id=str(payload.correlation_id) if payload.correlation_id else None
-            ).debug("Webhook validation successful")
+            logger.debug("Webhook validation successful")
             
             return payload
             

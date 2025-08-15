@@ -3,9 +3,7 @@ from typing import Dict, Set, List, Optional
 from collections import defaultdict
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
-from libs.forth_shared.utils.logging import get_logger
-
-logger = get_logger(__name__)
+from loguru import logger
 
 
 @dataclass

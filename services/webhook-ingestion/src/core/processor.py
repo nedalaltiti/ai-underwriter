@@ -129,7 +129,7 @@ class WebhookProcessor:
                 source=payload.source.value
             )
             
-            webhook_logger.info("📨 Processing webhook")
+            webhook_logger.info(f"📨 Processing {payload.webhook_type.value} webhook")
             
             # Create and send queue messages based on webhook type
             try:
@@ -146,10 +146,7 @@ class WebhookProcessor:
             processing_time_ms = int((time.perf_counter() - start_time) * 1000)
             self._update_metrics(True, processing_time_ms)
             
-            webhook_logger.bind(
-                message_id=message_id,
-                processing_time_ms=processing_time_ms
-            ).info(f"✅ Webhook processed successfully: {processing_time_ms}ms")
+            webhook_logger.info(f"✅ Webhook processed successfully - {len(message_ids)} messages sent ({processing_time_ms}ms)")
             
             return ProcessingResult(
                 success=True,
@@ -298,10 +295,7 @@ class WebhookProcessor:
             # For CLIENT_SUBMITTED: process all documents
             doc_ids = self._extract_all_doc_ids(payload.doc_id)
             
-            webhook_logger.bind(
-                webhook_type=payload.webhook_type.value,
-                total_documents=len(doc_ids)
-            ).info("📋 Client submitted webhook: processing {} documents".format(len(doc_ids)))
+            webhook_logger.info(f"📋 Processing {len(doc_ids)} documents")
             
             for i, doc_id in enumerate(doc_ids):
                 message = QueueMessage(
@@ -323,11 +317,7 @@ class WebhookProcessor:
                 message_id = await self.queue_adapter.send_message(message)
                 message_ids.append(message_id)
                 
-                webhook_logger.bind(
-                    doc_id=doc_id,
-                    message_id=message_id,
-                    document_index=i+1
-                ).debug("📤 Queued document {}/{}: {}".format(i+1, len(doc_ids), doc_id))
+                # Remove individual document logging - too verbose
         
         else:
             # For DOCUMENT_UPLOADED: process single document (existing behavior)
