@@ -87,7 +87,7 @@ class WebhookRequest(BaseSchema):
         ..., 
         description="Document identifier", 
         min_length=1,
-        pattern=r'^(\d+(,\d+)*|\{[A-Z_0-9_]+\})$', 
+        pattern=r'^(\d+(,\d+)*)$', 
         alias="docId" 
     )
 
@@ -129,6 +129,13 @@ class WebhookRequest(BaseSchema):
         description="Mapping of document IDs to their types (e.g., {'475837940': 'contract', '475837941': 'addendum'})",
         alias="docTypes"
     )
+    
+    # Special Forth CRM parameters (preserved as-is per documentation)
+    copydocs: Optional[str] = Field(
+        None,
+        description="Forth CRM special parameter for document copying (contains template variables)",
+        alias="__copydocs"
+    )
         
     @field_validator('contact_id')
     @classmethod
@@ -136,13 +143,13 @@ class WebhookRequest(BaseSchema):
         """Validate contact ID format using regex."""
         v = v.strip()
         
-        # Skip validation for Forth template variables
+        # REJECT template variables - these should be actual contact IDs  
         if v.startswith('{') and v.endswith('}'):
             logger.bind(
-                event="forth_template_contact_id",
+                event="forth_template_contact_id_rejected",
                 template_value=v
-            ).debug("Forth template variable received for contact_id")
-            return v
+            ).warning(f"Rejecting webhook with template variable in contact_id: {v}")
+            raise ValueError(f"Template variables not allowed in contact_id: {v}. Please configure Forth CRM to send actual contact ID values, not placeholders.")
             
         if not DIGIT_PATTERN.match(v):
             raise ValueError("Contact ID must be numeric")
@@ -154,13 +161,13 @@ class WebhookRequest(BaseSchema):
         """Validate document ID format but preserve original value for webhook type processing."""
         v = v.strip()
         
-        # Skip validation for Forth template variables
+        # REJECT template variables - these should be actual document IDs
         if v.startswith('{') and v.endswith('}'):
             logger.bind(
-                event="forth_template_doc_id",
+                event="forth_template_doc_id_rejected",
                 template_value=v
-            ).debug("Forth template variable received for doc_id")
-            return v
+            ).warning(f"Rejecting webhook with template variable in doc_id: {v}")
+            raise ValueError(f"Template variables not allowed in doc_id: {v}. Please configure Forth CRM to send actual document ID values instead of placeholders like {{UPLOAD_DOC_IDS}}.")
         
         if "," in v:
             doc_ids = [id_str.strip() for id_str in v.split(",") if id_str.strip()]
@@ -302,6 +309,7 @@ class WebhookPayload(BaseSchema):
     source: WebhookSource
     webhook_type: WebhookType = WebhookType.DOCUMENT_UPLOADED
     doc_types: Optional[Dict[str, str]] = None
+    copydocs: Optional[str] = None  # Special Forth CRM parameter
     raw_data: Optional[Mapping[str, Any]] = None
     
     @classmethod
@@ -323,6 +331,7 @@ class WebhookPayload(BaseSchema):
             source=request.source,
             webhook_type=request.webhook_type or WebhookType.DOCUMENT_UPLOADED,
             doc_types=request.doc_types,
+            copydocs=request.copydocs,
             raw_data=raw_data
         )
 

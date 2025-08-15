@@ -198,10 +198,12 @@ class DownloadWorker:
                 task = DownloadTask.from_queue_message(queue_message)
             except ValueError as e:
                 # Invalid message format - send to DLQ immediately
+                # Escape curly braces in error message to prevent logging formatter conflicts
+                error_msg = str(e).replace('{', '{{').replace('}', '}}')
                 logger.bind(
                     correlation_id=queue_message.correlation_id,
                     contact_id=queue_message.contact_id
-                ).error("❌ Invalid message format - sending to DLQ: {}", str(e))
+                ).error(f"❌ Invalid message format - sending to DLQ: {error_msg}")
                 
                 await self.input_queue.send_to_dlq(
                     message=queue_message,

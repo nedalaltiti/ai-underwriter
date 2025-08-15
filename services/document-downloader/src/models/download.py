@@ -52,11 +52,13 @@ class DownloadTask(BaseModel):
         # Check for placeholder values that should be rejected
         doc_id_str = str(v).strip()
         invalid_patterns = [
-            '{UPLOADED_DOCS}',
+            '{UPLOADED_DOCS}',      # Variant we saw in logs
+            '{UPLOAD_DOC_IDS}',     # Correct Forth CRM placeholder
             '{DOC_ID}',
             '{',
             '}',
             'UPLOADED_DOCS',
+            'UPLOAD_DOC_IDS',       # Also check without braces
             'DOC_ID'
         ]
         
