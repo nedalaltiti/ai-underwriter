@@ -171,6 +171,53 @@ class DownloadWorker:
             
         return False
     
+    def _is_confirmed_document_not_found(self, result) -> bool:
+        """
+        Determine if this is a confirmed 404 (document truly doesn't exist)
+        vs a temporary API issue that might have returned a 404-like response.
+        """
+        error_message = result.error_message or ""
+        
+        # Indicators of a TRUE 404 (safe to delete)
+        confirmed_not_found_indicators = [
+            "Document not found: ",  # Our specific error message format
+            "404",                   # HTTP status in message
+            "not found",            # Clear "not found" language
+        ]
+        
+        # Indicators of possible API issues (should go to DLQ)
+        api_issue_indicators = [
+            "timeout",
+            "connection",
+            "network",
+            "authentication",
+            "unauthorized",
+            "forbidden",
+            "server error",
+            "503",
+            "502", 
+            "500",
+            "gateway",
+        ]
+        
+        error_lower = error_message.lower()
+        
+        # Check for API issues first (these override "not found")
+        for indicator in api_issue_indicators:
+            if indicator in error_lower:
+                logger.debug(f"🔍 API issue indicator found: {indicator}")
+                return False  # Not confirmed - might be API issue
+        
+        # Check for confirmed not found indicators
+        for indicator in confirmed_not_found_indicators:
+            if indicator in error_lower:
+                logger.debug(f"🔍 Confirmed not found indicator: {indicator}")
+                return True  # Confirmed 404
+        
+        # Default: if uncertain, err on the side of caution (send to DLQ)
+        logger.debug(f"🔍 Uncertain error type: {error_message}")
+        return False
+    
     async def _process_message(self, message: Dict[str, Any]) -> bool:
         """Process a single message."""
         receipt_handle = message.get("ReceiptHandle")
@@ -288,18 +335,45 @@ class DownloadWorker:
                             error_message=result.error_message or "Unknown permanent failure"
                         )
                         
-                        # Send permanent failures to DLQ without retrying
-                        await self.input_queue.send_to_dlq(
-                            message=queue_message,
-                            error=result.error_message
-                        )
-                        await self.input_queue.delete_message(receipt_handle)
-                        logger.bind(
-                            contact_id=task.contact_id,
-                            doc_id=task.doc_id,
-                            error_code=result.error_code
-                        ).warning(f"❌ Permanent failure - sent to DLQ: {result.error_message}")
-                        return False
+                        # Handle different types of permanent failures differently
+                        if result.error_code == "DOCUMENT_NOT_FOUND":
+                            # Check if this is a confirmed 404 (document truly doesn't exist)
+                            # vs a temporary API issue (network/auth error that returned 404-like response)
+                            if self._is_confirmed_document_not_found(result):
+                                # True 404 from Forth API - document doesn't exist, safe to delete
+                                await self.input_queue.delete_message(receipt_handle)
+                                logger.bind(
+                                    contact_id=task.contact_id,
+                                    doc_id=task.doc_id,
+                                    error_code=result.error_code
+                                ).info(f"📄 Document confirmed not found - message deleted: {task.doc_id}")
+                                return True  # Treated as successful (message handled)
+                            else:
+                                # Uncertain 404 (might be API issue) - send to DLQ for manual review
+                                await self.input_queue.send_to_dlq(
+                                    message=queue_message,
+                                    error=f"Uncertain document not found (possible API issue): {result.error_message}"
+                                )
+                                await self.input_queue.delete_message(receipt_handle)
+                                logger.bind(
+                                    contact_id=task.contact_id,
+                                    doc_id=task.doc_id,
+                                    error_code=result.error_code
+                                ).warning(f"⚠️ Uncertain document not found - sent to DLQ for review: {result.error_message}")
+                                return False
+                        else:
+                            # Other permanent failures still go to DLQ for investigation
+                            await self.input_queue.send_to_dlq(
+                                message=queue_message,
+                                error=result.error_message
+                            )
+                            await self.input_queue.delete_message(receipt_handle)
+                            logger.bind(
+                                contact_id=task.contact_id,
+                                doc_id=task.doc_id,
+                                error_code=result.error_code
+                            ).warning(f"❌ Permanent failure - sent to DLQ: {result.error_message}")
+                            return False
                 
                 # Handle retryable failures
                 elif queue_message.retry_count >= self.config.max_retries:

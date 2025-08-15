@@ -316,9 +316,7 @@ class WebhookProcessor:
                 
                 message_id = await self.queue_adapter.send_message(message)
                 message_ids.append(message_id)
-                
-                # Remove individual document logging - too verbose
-        
+                        
         else:
             # For DOCUMENT_UPLOADED: process single document (existing behavior)
             message = QueueMessage(

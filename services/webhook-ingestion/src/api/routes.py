@@ -87,14 +87,27 @@ async def receive_webhook(
             }
         )
     except ValueError as e:
-        logger.warning(f"Invalid webhook data: {e}")
+        error_msg = str(e)
+        logger.warning(f"Invalid webhook data: {error_msg}")
+        
+        # Determine which field caused the validation error
+        field_name = "unknown"
+        if "doc_id" in error_msg:
+            field_name = "doc_id"
+        elif "contact_id" in error_msg:
+            field_name = "contact_id"
+        elif "Template variables not allowed" in error_msg:
+            field_name = "template_variable"
+        
         raise HTTPException(
             status_code=400, 
             detail={
                 "error": "VALIDATION_ERROR",
-                "message": str(e),
+                "message": error_msg,
                 "details": {
-                    "error_code": ErrorCode.VALIDATION_ERROR.value
+                    "error_code": ErrorCode.VALIDATION_ERROR.value,
+                    "field": field_name,
+                    "suggestion": "Please configure Forth CRM to send actual field values instead of template placeholders."
                 }
             }
         )
