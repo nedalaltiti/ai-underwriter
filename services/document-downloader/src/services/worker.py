@@ -100,7 +100,8 @@ class DownloadWorker:
             if not messages:
                 return
             
-            logger.info(f"📦 Processing {len(messages)} download tasks")
+            # Production: concise batch log
+            logger.debug(f"processing.batch size={len(messages)}")
             
             # Process messages concurrently
             tasks = []
@@ -279,13 +280,9 @@ class DownloadWorker:
                 correlation_id=task.correlation_id
             )
             
-            logger.bind(
-                contact_id=task.contact_id,
-                doc_id=task.doc_id,
-                correlation_id=task.correlation_id,
-                doc_type=task.doc_type
-            ).info(
-                f"📥 Downloading document: contact_id={task.contact_id}, doc_id={task.doc_id}"
+            # Start marker for single document
+            logger.info(
+                f"download.start contact_id={task.contact_id} doc_id={task.doc_id} correlation_id={task.correlation_id}"
             )
             
             # Download document
@@ -305,14 +302,20 @@ class DownloadWorker:
                 # Delete message
                 await self.input_queue.delete_message(receipt_handle)
                 
-                logger.bind(
-                    contact_id=task.contact_id,
-                    doc_id=task.doc_id,
-                    s3_key=result.s3_key,
-                    processing_time_ms=result.processing_time_ms
-                ).info(
-                    f"✅ Download completed: {task.doc_id} -> {result.s3_key}"
+                # Compact success line
+                size_mb = None
+                try:
+                    if getattr(result, 'file_size', None):
+                        size_mb = f"{(result.file_size / 1048576):.2f}"
+                except Exception:
+                    size_mb = None
+                msg = (
+                    f"download.success contact_id={task.contact_id} doc_id={task.doc_id} "
+                    f"duration_ms={result.processing_time_ms} s3_key=\"{result.s3_key}\""
                 )
+                if size_mb:
+                    msg += f" size_mb={size_mb}"
+                logger.info(msg)
                 return True
             else:
                 # Use utility function to check if this is a permanent failure
@@ -321,11 +324,9 @@ class DownloadWorker:
                     if is_successful_completion(result):
                         # Skipped documents are successful, just delete the message
                         await self.input_queue.delete_message(receipt_handle)
-                        logger.bind(
-                            contact_id=task.contact_id,
-                            doc_id=task.doc_id,
-                            error_code=result.error_code
-                        ).info(f"✅ Document skipped: {result.error_message}")
+                        logger.info(
+                            f"download.skipped contact_id={task.contact_id} doc_id={task.doc_id} reason=excluded"
+                        )
                         return True
                     else:
                         # Record permanent failure
@@ -342,11 +343,9 @@ class DownloadWorker:
                             if self._is_confirmed_document_not_found(result):
                                 # True 404 from Forth API - document doesn't exist, safe to delete
                                 await self.input_queue.delete_message(receipt_handle)
-                                logger.bind(
-                                    contact_id=task.contact_id,
-                                    doc_id=task.doc_id,
-                                    error_code=result.error_code
-                                ).info(f"📄 Document confirmed not found - message deleted: {task.doc_id}")
+                                logger.info(
+                                    f"download.not_found_deleted contact_id={task.contact_id} doc_id={task.doc_id}"
+                                )
                                 return True  # Treated as successful (message handled)
                             else:
                                 # Uncertain 404 (might be API issue) - send to DLQ for manual review
@@ -355,11 +354,9 @@ class DownloadWorker:
                                     error=f"Uncertain document not found (possible API issue): {result.error_message}"
                                 )
                                 await self.input_queue.delete_message(receipt_handle)
-                                logger.bind(
-                                    contact_id=task.contact_id,
-                                    doc_id=task.doc_id,
-                                    error_code=result.error_code
-                                ).warning(f"⚠️ Uncertain document not found - sent to DLQ for review: {result.error_message}")
+                                logger.warning(
+                                    f"download.failed contact_id={task.contact_id} doc_id={task.doc_id} error_code={result.error_code} message=Uncertain_not_found_sent_to_DLQ"
+                                )
                                 return False
                         else:
                             # Other permanent failures still go to DLQ for investigation
@@ -368,11 +365,9 @@ class DownloadWorker:
                                 error=result.error_message
                             )
                             await self.input_queue.delete_message(receipt_handle)
-                            logger.bind(
-                                contact_id=task.contact_id,
-                                doc_id=task.doc_id,
-                                error_code=result.error_code
-                            ).warning(f"❌ Permanent failure - sent to DLQ: {result.error_message}")
+                            logger.warning(
+                                f"download.failed contact_id={task.contact_id} doc_id={task.doc_id} error_code={result.error_code} message={result.error_message}"
+                            )
                             return False
                 
                 # Handle retryable failures

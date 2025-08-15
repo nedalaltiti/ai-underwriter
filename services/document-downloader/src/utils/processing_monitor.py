@@ -142,10 +142,10 @@ class ProcessingMonitor:
         }
         
         # Most common errors
-        error_counts = defaultdict(int)
+        error_counts: Dict[str, int] = {}
         for stats in recent_docs.values():
             if stats.error_message:
-                error_counts[stats.error_message] += 1
+                error_counts[stats.error_message] = error_counts.get(stats.error_message, 0) + 1
         
         return {
             "summary": {
@@ -165,7 +165,7 @@ class ProcessingMonitor:
                 }
                 for key, stats in repeated_attempts.items()
             },
-            "common_errors": dict(error_counts.most_common(5)),
+            "common_errors": dict(sorted(error_counts.items(), key=lambda x: x[1], reverse=True)[:5]),
             "timestamp": now.isoformat()
         }
     

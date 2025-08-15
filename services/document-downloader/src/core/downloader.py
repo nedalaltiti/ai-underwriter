@@ -91,12 +91,9 @@ class DocumentDownloader:
                 if doc_type and hasattr(task, 'doc_type'):
                     original_doc_type = task.doc_type
                     task.doc_type = doc_type
-                    logger.bind(
-                        contact_id=task.contact_id,
-                        doc_id=task.doc_id,
-                        original_doc_type=original_doc_type,
-                        retrieved_doc_type=doc_type
-                    ).info("🔄 Updated task with document type from Forth API")
+                    logger.debug(
+                        f"forth.doc_type_update contact_id={task.contact_id} doc_id={task.doc_id} from={original_doc_type} to={doc_type}"
+                    )
                     
                 # Download to temp file with streaming
                 temp_file_path = await self._download_to_temp(
@@ -130,15 +127,6 @@ class DocumentDownloader:
                 processing_time_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
                 self._update_metrics(True, file_size, processing_time_ms)
                 
-                logger.bind(
-                    contact_id=task.contact_id,
-                    doc_id=task.doc_id,
-                    s3_key=s3_key,
-                    file_size=file_size,
-                    processing_time_ms=processing_time_ms
-                ).info(
-                    f"✅ Document downloaded: {task.doc_id} -> {s3_key} ({file_size} bytes, {processing_time_ms}ms)"
-                )
                 
                 return DownloadResult(
                     success=True,
@@ -270,12 +258,9 @@ class DocumentDownloader:
                 ).error("📄 No download URL found in document info")
                 raise Exception(f"No download URL found for document: {task.contact_id}/{task.doc_id}")
             
-            logger.bind(
-                contact_id=task.contact_id,
-                doc_id=task.doc_id,
-                doc_type=doc_type,
-                file_name=file_name
-            ).info("📋 Retrieved document URL and type from Forth API")
+            logger.debug(
+                f"forth.document_info contact_id={task.contact_id} doc_id={task.doc_id} doc_type={doc_type} file_name=\"{file_name}\""
+            )
             
             return download_url, doc_type
             
