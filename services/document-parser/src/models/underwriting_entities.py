@@ -50,6 +50,7 @@ class EngagementTerm(BaseUnderwritingModel):
     coclient_signature_date: Optional[date] = None
     initials: Optional[str] = Field(None, max_length=10)
     initials_count: Optional[int] = Field(None, ge=0)
+    is_all_initials_present: Optional[bool] = None
     page_count: Optional[int] = Field(None, ge=1)
 
     @field_validator('company_phone')
@@ -75,7 +76,8 @@ class DebtSchedule(BaseUnderwritingModel):
     
     file_id: int = Field(..., description="File identifier")
     creditor_name: Optional[str] = Field(None, max_length=255)
-    account_name: Optional[str] = Field(None, max_length=255)
+    name_on_account: Optional[str] = Field(None, max_length=255)
+    account_number: Optional[str] = Field(None, max_length=64)
     current_balance: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
     debt_type: Optional[str] = Field(None, max_length=100)
 
@@ -110,8 +112,9 @@ class FinancialAnalysis(BaseUnderwritingModel):
     total_program_fees: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
     estimated_program_savings: Optional[Decimal] = Field(None, decimal_places=2)
     estimated_total_cost: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
-    financial_hardship: Optional[str] = Field(None, max_length=255)
-    hardship_details: Optional[str] = None
+    hardship_details: Optional[str] = Field(None, max_length=2000)
+    client_signature: Optional[str] = Field(None, max_length=255)
+    client_signature_date: Optional[date] = None
 
 
 class Disclosure(BaseUnderwritingModel):
@@ -144,6 +147,7 @@ class ProgramDisclosure(BaseUnderwritingModel):
     company_name: Optional[str] = Field(None, max_length=255)
     settlement_fee_percent: Optional[Decimal] = Field(None, ge=0, le=100, decimal_places=2)
     client_initial: Optional[str] = Field(None, max_length=10)
+    is_all_initials_present: Optional[bool] = None
 
 
 class PowerOfAttorney(BaseUnderwritingModel):
@@ -295,6 +299,7 @@ class LegalPlanAgreement(BaseUnderwritingModel):
     credit_card_billing_address: Optional[str] = Field(None, max_length=500)
     account_holder_name: Optional[str] = Field(None, max_length=255)
     initials_count: Optional[int] = Field(None, ge=0)
+    is_all_initials_present: Optional[bool] = None
     client_signature: Optional[str] = Field(None, max_length=255)
     signature_date: Optional[datetime] = None
     pages_count: Optional[int] = Field(None, ge=1)

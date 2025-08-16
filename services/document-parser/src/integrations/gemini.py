@@ -4,6 +4,7 @@ Gemini client for underwriting document extraction with anti-hallucination measu
 """
 
 import json
+import re
 import httpx
 import time
 from typing import Dict, Any, Optional, List, Tuple
@@ -476,7 +477,6 @@ class GeminiClient:
         normalized['total_program_fees'] = get_any(['total_program_fees', 'total program fees'])
         normalized['estimated_program_savings'] = get_any(['estimated_program_savings', 'estimated program savings'])
         normalized['estimated_total_cost'] = get_any(['estimated_total_cost', 'estimated total cost'])
-        normalized['financial_hardship'] = get_any(['financial_hardship', 'financial hardship'])
         normalized['hardship_details'] = get_any(['hardship_details', 'hardship details'])
 
         # Ensure draft_type and fee_method mirror if only one provided
@@ -551,7 +551,10 @@ class GeminiClient:
             'process_date': 'process_date',  # Keep as is but validate format
             'fee_type': 'service_type',      # Payment service fees mapping
             'creditor_name': 'creditor_name', # Keep as is
-            'name_on_account': 'account_name', # Debt schedule mapping
+            'account_name': 'name_on_account', # Debt schedule mapping (applicant/c oapplicant/joint)
+            'account_no': 'account_number',
+            'acct_no': 'account_number',
+            'account_number': 'account_number',
         }
         
         # Apply field name mappings
@@ -572,6 +575,10 @@ class GeminiClient:
         items_to_process = list(entity.items())
         for key, value in items_to_process:
             if isinstance(value, str) and value is not None:
+                # General cleanup: collapse whitespace/newlines
+                raw_value = value
+                value = re.sub(r"\s+", " ", value).strip()
+                entity[key] = value
                 # Fix decimal parsing - remove commas and handle currency symbols and percentages
                 decimal_fields = [
                     'current_balance', 'amount', 'settlement_fee', 'monthly_payment',
@@ -589,7 +596,11 @@ class GeminiClient:
                     # Handle negative values in parentheses like "(538.51)"
                     if cleaned_value.startswith('(') and cleaned_value.endswith(')'):
                         cleaned_value = '-' + cleaned_value[1:-1]
-                    entity[key] = cleaned_value
+                    # If still non-numeric (e.g., long text), set to None to avoid decimal parsing errors
+                    if not re.match(r'^-?\d+(?:\.\d+)?$', cleaned_value):
+                        entity[key] = None
+                    else:
+                        entity[key] = cleaned_value
                 
                 # Fix percentage fields - ensure they're clean decimals
                 percentage_fields = ['settlement_fee_percentage', 'settlement_fee_percent']
@@ -615,21 +626,41 @@ class GeminiClient:
                 
                 if key in date_fields and isinstance(value, str):
                     try:
-                        # Handle MM/dd/yyyy format (including short formats like "11/6/2024")
-                        if '/' in value:
-                            parts = value.split('/')
-                            if len(parts) == 3 and len(parts[2]) == 4:
-                                entity[key] = f"{parts[2]}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"
+                        cleaned = re.sub(r"\s+", "", raw_value)
+                        # Handle MM/dd/yyyy and M/d/yyyy
+                        if '/' in cleaned:
+                            parts = cleaned.split('/')
+                            if len(parts) == 3:
+                                # year-first e.g. 2025/8/15
+                                if len(parts[0]) == 4:
+                                    y, m, d = parts[0], parts[1], parts[2]
+                                    if len(y) == 4 and m.isdigit() and d.isdigit():
+                                        entity[key] = f"{y}-{m.zfill(2)}-{d.zfill(2)}"
+                                else:
+                                    # month-first e.g. 11/6/2024 or 09/28/1971 with noise removed
+                                    m, d, y = parts[0], parts[1], parts[2]
+                                    if len(y) == 4 and m.isdigit() and d.isdigit():
+                                        entity[key] = f"{y}-{m.zfill(2)}-{d.zfill(2)}"
                         # Handle "Nov 21, 2024" format
-                        elif ',' in value and len(value.split()) == 3:
+                        elif re.search(r"[A-Za-z]", value) and re.search(r"\d{4}", value):
                             import datetime
-                            parsed_date = datetime.datetime.strptime(value, '%b %d, %Y')
-                            entity[key] = parsed_date.strftime('%Y-%m-%d')
+                            txt = value.replace('\n', ' ').replace('  ', ' ').strip()
+                            # Accept short/long month names with ordinal day
+                            m = re.search(r"([A-Za-z]+)\s*([0-9]{1,2})(?:st|nd|rd|th)?[, ]+([0-9]{4})", txt)
+                            if m:
+                                month_name, day, year = m.groups()
+                                try:
+                                    parsed_date = datetime.datetime.strptime(f"{month_name} {day} {year}", '%B %d %Y')
+                                except ValueError:
+                                    parsed_date = datetime.datetime.strptime(f"{month_name} {day} {year}", '%b %d %Y')
+                                entity[key] = parsed_date.strftime('%Y-%m-%d')
                         # Handle "11-09-2024" format  
-                        elif '-' in value and len(value) == 10 and value.count('-') == 2:
+                        elif '-' in value and value.count('-') == 2:
                             parts = value.split('-')
-                            if len(parts) == 3 and len(parts[2]) == 4:
-                                entity[key] = f"{parts[2]}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"
+                            if len(parts) == 3:
+                                # Try month-first
+                                if len(parts[2]) == 4 and parts[0].isdigit() and parts[1].isdigit():
+                                    entity[key] = f"{parts[2]}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"
                     except:
                         pass  # Keep original if conversion fails
                 
@@ -671,8 +702,10 @@ class GeminiClient:
                     'estimated_program_length', 'debt_relief_program_duration',
                     'signer_number', 'initials_count', 'page_count', 'pages_count', 'signers_count'
                 ]
-                if key in integer_fields and value.isdigit():
-                    entity[key] = int(value)
+                if key in integer_fields and isinstance(value, str):
+                    numeric = re.sub(r"[^0-9]", "", value)
+                    if numeric.isdigit():
+                        entity[key] = int(numeric)
                 
                 # Clean up empty strings to None for optional fields
                 if value.strip() == '' or value.lower() in ['null', 'none', 'n/a', 'na']:
@@ -681,6 +714,18 @@ class GeminiClient:
             # Handle non-string values for payment_no (integers need to be converted to strings)
             if key in ['payment_no', 'payment_number'] and isinstance(value, int):
                 entity[key] = str(value)
+
+        # Normalize SSN-like fields specifically after general cleanup
+        ssn_fields = {'client_ssn', 'coclient_ssn', 'member_ssn'}
+        for f in ssn_fields:
+            if f in entity and isinstance(entity[f], str):
+                raw = re.sub(r"\s+", "", entity[f])
+                digits = re.sub(r"[^0-9]", "", raw)
+                if len(digits) == 9:
+                    entity[f] = f"{digits[0:3]}-{digits[3:5]}-{digits[5:9]}"
+                else:
+                    # leave as-is; validator may null it
+                    entity[f] = raw
     
     def health_check(self) -> bool:
         """Check if Gemini client is healthy."""

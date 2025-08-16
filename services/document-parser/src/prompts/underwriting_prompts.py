@@ -165,8 +165,9 @@ Extract the following information and return as JSON:
   "total_program_fees": "Total fees for program",
   "estimated_program_savings": "Estimated total savings",
   "estimated_total_cost": "Estimated total program cost",
-  "financial_hardship": "Type of financial hardship",
-  "hardship_details": "Detailed description of hardship"
+  "hardship_details": "Detailed description of hardship",
+  "client_signature": "Client signature indicator",
+  "client_signature_date": "Date client signed (YYYY-MM-DD)"
 }}
 
 Look for:
@@ -319,7 +320,8 @@ You are extracting ALL underwriting entities from a multi-document package. Foll
     "coclient_signature_date": null,
     "initials": null,
     "initials_count": null,
-    "page_count": null
+    "page_count": null,
+    "is_all_initials_present": null
   }},
   "fcra_consent": {{
     "file_id": null,
@@ -331,7 +333,8 @@ You are extracting ALL underwriting entities from a multi-document package. Foll
   "debt_schedule": [{{
     "file_id": null,
     "creditor_name": null,
-    "account_name": null,
+    "name_on_account": null,
+    "account_number": null,
     "current_balance": null,
     "debt_type": null
   }}],
@@ -363,8 +366,9 @@ You are extracting ALL underwriting entities from a multi-document package. Foll
     "total_program_fees": null,
     "estimated_program_savings": null,
     "estimated_total_cost": null,
-    "financial_hardship": null,
-    "hardship_details": null
+    "hardship_details": null,
+    "client_signature": null,
+    "client_signature_date": null
   }},
   "disclosure": {{
     "file_id": null,
@@ -387,7 +391,8 @@ You are extracting ALL underwriting entities from a multi-document package. Foll
     "file_id": null,
     "company_name": null,
     "settlement_fee_percent": null,
-    "client_initial": null
+    "client_initial": null,
+    "is_all_initials_present": null
   }},
   "power_of_attorney": {{
     "file_id": null,
@@ -490,7 +495,8 @@ You are extracting ALL underwriting entities from a multi-document package. Foll
     "payment_processor_name": null,
     "client_signature": null,
     "signature_date": null,
-    "pages_count": null
+    "pages_count": null,
+    "is_all_initials_present": null
   }},
   "clixsign_sender": {{
     "file_id": null,

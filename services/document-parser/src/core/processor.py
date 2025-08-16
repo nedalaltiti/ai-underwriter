@@ -146,10 +146,10 @@ class DocumentProcessor:
         Returns:
             Dictionary with base64 encoded PDF data
         """
-        logger.info(f"Preparing document {task.doc_id} - S3 key: {bool(task.s3_key)}, URL: {bool(task.document_url)}")
+        logger.info(f"Preparing document {task.doc_id} - S3 key present: {bool(task.s3_key)}, URL present: {bool(task.document_url)}")
         
         # Strategy 1: Try S3 direct access first (most efficient)
-        if task.s3_key:
+        if task.s3_key and task.s3_key.strip():
             try:
                 from integrations.s3 import S3Client
                 s3_client = S3Client()
@@ -166,7 +166,7 @@ class DocumentProcessor:
                 logger.warning(f"❌ S3 direct download failed, falling back to URL: {e}")
         
         # Strategy 2: Fall back to URL download
-        if task.document_url:
+        if task.document_url and task.document_url.strip():
             try:
                 logger.info(f"📥 Attempting URL download: {task.document_url}")
                 
@@ -182,7 +182,7 @@ class DocumentProcessor:
                 raise DocumentProcessingError(f"Failed to download document from URL: {e}")
         
         # No valid source available
-        error_msg = f"No valid document source available. S3 key: {task.s3_key}, URL: {task.document_url}"
+        error_msg = f"No valid document source available. S3 key present: {bool(task.s3_key)}, URL present: {bool(task.document_url)}"
         logger.error(error_msg)
         raise DocumentProcessingError(error_msg)
     

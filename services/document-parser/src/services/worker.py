@@ -186,15 +186,15 @@ class DocumentWorker:
             # Format 1: Direct from document-downloader (structured message)
             if 'message_type' in body and 'data' in body:
                 data = body['data']
-                contact_id = body.get('contact_id', '')
-                doc_id = data.get('doc_id', 'unknown')
+                contact_id = body.get('contact_id') or ''
+                doc_id = data.get('doc_id') or 'unknown'
                 
                 task = ProcessingTask(
                     task_id=uuid4(),
-                    document_url=data.get('s3_url', ''),  # Use s3_url from document-downloader
-                    s3_key=data.get('s3_key', ''),
-                    contact_id=contact_id,
-                    doc_id=doc_id,
+                    document_url=(data.get('s3_url') or ''),  # Use s3_url from document-downloader
+                    s3_key=(data.get('s3_key') or ''),
+                    contact_id=contact_id or '',
+                    doc_id=doc_id or 'unknown',
                     received_at=datetime.now(),
                     metadata={
                         'file_size': data.get('file_size'),
@@ -208,13 +208,13 @@ class DocumentWorker:
                 
             # Format 2: Direct API call or legacy format (flat structure)
             else:
-                doc_id = body.get('doc_id', 'unknown')
+                doc_id = body.get('doc_id') or 'unknown'
                 task = ProcessingTask(
                     task_id=uuid4(),
-                    document_url=body.get('document_url', ''),
-                    s3_key=body.get('s3_key', ''),
-                    contact_id=body.get('contact_id', ''),
-                    doc_id=doc_id,
+                    document_url=(body.get('document_url') or ''),
+                    s3_key=(body.get('s3_key') or ''),
+                    contact_id=(body.get('contact_id') or ''),
+                    doc_id=doc_id or 'unknown',
                     received_at=datetime.now(),
                     metadata=body.get('metadata', {})
                 )
@@ -269,10 +269,15 @@ class DocumentWorker:
                 except:
                     pass
                 
+                # Use an existing enum value for failure notifications
                 failed_message = QueueMessage(
-                    message_type=MessageType.DOCUMENT_PROCESSING,
-                    contact_id=failed_contact_id,
-                    data=failed_data,
+                    message_type=MessageType.ERROR_NOTIFICATION,
+                    contact_id=failed_contact_id or '0',
+                    data={
+                        **(failed_data or {}),
+                        "error": str(e),
+                        "worker_id": worker_id,
+                    },
                     correlation_id=failed_correlation_id,
                     retry_count=receive_count
                 )

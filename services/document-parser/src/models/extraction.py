@@ -83,8 +83,8 @@ class ExtractedDocument(BaseModel):
 class ProcessingTask(BaseModel):
     """Model for a document processing task."""
     task_id: UUID
-    document_url: str
-    s3_key: str
+    document_url: str  
+    s3_key: str        
     contact_id: str
     doc_id: str
     received_at: datetime
@@ -98,8 +98,10 @@ class ProcessingTask(BaseModel):
     @field_validator('document_url')
     def validate_document_url(cls, v):
         """Validate document URL format."""
-        if not (v.startswith('http://') or v.startswith('https://') or v.startswith('s3://')):
-            raise ValueError("Document URL must be HTTP, HTTPS, or S3 URL")
+        # Allow empty string (when using only s3_key). Validate only when provided.
+        if v:
+            if not (v.startswith('http://') or v.startswith('https://') or v.startswith('s3://')):
+                raise ValueError("Document URL must be HTTP, HTTPS, or S3 URL")
         return v
 
 

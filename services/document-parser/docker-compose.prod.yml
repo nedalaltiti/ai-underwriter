@@ -1,13 +1,11 @@
 # services/document-parser/docker-compose.prod.yml
 # Production deployment configuration for document-parser service
 
-version: '3.8'
-
 services:
   document-parser-api:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: services/document-parser/Dockerfile
     container_name: document-parser-api
     restart: unless-stopped
     ports:
@@ -26,7 +24,6 @@ services:
       - ai-underwriter-network
     depends_on:
       - postgres
-      - redis
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/api/v1/health/live"]
       interval: 30s
@@ -36,11 +33,10 @@ services:
 
   document-parser-worker:
     build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: document-parser-worker
+      context: ../..
+      dockerfile: services/document-parser/Dockerfile
     restart: unless-stopped
-    command: ["python3", "services/worker.py"]
+    command: ["python3", "-m", "src.services.worker"]
     environment:
       - PARSER_ENVIRONMENT=production
       - PARSER_LOG_LEVEL=INFO
@@ -53,7 +49,6 @@ services:
       - ai-underwriter-network
     depends_on:
       - postgres
-      - redis
     deploy:
       replicas: 3  # Scale workers for high throughput
       resources:
@@ -75,19 +70,7 @@ services:
     networks:
       - ai-underwriter-network
     ports:
-      - "5432:5432"
-
-  redis:
-    image: redis:7-alpine
-    container_name: document-parser-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
-    volumes:
-      - redis_data:/data
-    networks:
-      - ai-underwriter-network
-    ports:
-      - "6379:6379"
+      - "3307:5432"
 
   nginx:
     image: nginx:alpine
@@ -116,24 +99,9 @@ services:
     networks:
       - ai-underwriter-network
 
-  grafana:
-    image: grafana/grafana:latest
-    container_name: document-parser-grafana
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
-    volumes:
-      - grafana_data:/var/lib/grafana
-    networks:
-      - ai-underwriter-network
-
 volumes:
   postgres_data:
-  redis_data:
   prometheus_data:
-  grafana_data:
 
 networks:
   ai-underwriter-network:
