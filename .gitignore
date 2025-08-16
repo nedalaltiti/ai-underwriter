@@ -219,3 +219,11 @@ output/
 *.generated
 scripts/
 .env.production
+
+*.env
+*.env.*
+/services/**/.env*
+/configs/.env*
+*.json.key
+*.p12
+*.pem
