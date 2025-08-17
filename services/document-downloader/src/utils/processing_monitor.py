@@ -60,7 +60,7 @@ class ProcessingMonitor:
                 attempt_count=stats.attempt_count,
                 correlation_id=correlation_id,
                 unique_correlations=len(stats.correlation_ids)
-            ).warning(f"🔄 Document processing attempt #{stats.attempt_count}: {doc_id}")
+            ).warning(f"attempt.reprocess contact={contact_id} doc={doc_id} count={stats.attempt_count}")
     
     def record_processing_result(self, contact_id: str, doc_id: str, success: bool, error_message: Optional[str] = None):
         """Record the result of document processing."""
@@ -87,7 +87,7 @@ class ProcessingMonitor:
                 doc_id=doc_id,
                 total_attempts=stats.attempt_count,
                 processing_duration_seconds=(stats.last_seen - stats.first_seen).total_seconds()
-            ).info(f"✅ Document processing completed: {doc_id}")
+            ).info(f"process.completed contact={contact_id} doc={doc_id}")
         else:
             logger.bind(
                 contact_id=contact_id,
@@ -96,10 +96,10 @@ class ProcessingMonitor:
                 error_message=error_message,
                 processing_duration_seconds=(stats.last_seen - stats.first_seen).total_seconds(),
                 unique_correlations=len(stats.correlation_ids)
-            ).warning(f"❌ Document processing failed: {doc_id}")
+            ).warning(f"process.failed contact={contact_id} doc={doc_id}")
     
-    def record_permanent_failure(self, contact_id: str, doc_id: str, error_message: str):
-        """Record that a document has been permanently failed and sent to DLQ."""
+    def record_permanent_failure(self, contact_id: str, doc_id: str, error_message: str, sent_to_dlq: bool = True):
+        """Record that a document has been permanently failed."""
         self.record_processing_result(contact_id, doc_id, False, error_message)
         
         doc_key = self._get_doc_key(contact_id, doc_id)
@@ -107,7 +107,14 @@ class ProcessingMonitor:
             stats = self._documents[doc_key]
             stats.status = "permanent_failure"
             
-            logger.bind(
+            if sent_to_dlq:
+                log_message = f"process.permanent_failure contact={contact_id} doc={doc_id} dlq=true"
+                log_level = "error"
+            else:
+                log_message = f"process.not_found_deleted contact={contact_id} doc={doc_id} dlq=false"
+                log_level = "info"
+                
+            bound_logger = logger.bind(
                 contact_id=contact_id,
                 doc_id=doc_id,
                 total_attempts=stats.attempt_count,
@@ -115,7 +122,12 @@ class ProcessingMonitor:
                 unique_correlations=len(stats.correlation_ids),
                 first_seen=stats.first_seen.isoformat(),
                 duration_minutes=(stats.last_seen - stats.first_seen).total_seconds() / 60
-            ).error(f"🚫 Document permanently failed - sent to DLQ: {doc_id}")
+            )
+            
+            if log_level == "error":
+                bound_logger.error(log_message)
+            else:
+                bound_logger.info(log_message)
     
     def get_processing_summary(self) -> Dict[str, any]:
         """Get a summary of current processing status."""
@@ -180,10 +192,9 @@ class ProcessingMonitor:
         summary = self.get_processing_summary()
         self._last_summary = now
         
-        logger.bind(**summary["summary"]).info(
-            f"📊 Processing Summary (1h): {summary['summary']['total_documents_1h']} docs, "
-            f"{summary['summary']['completed']} ✅, {summary['summary']['permanent_failures']} 🚫, "
-            f"{summary['summary']['documents_with_retries']} 🔄"
+        s = summary["summary"]
+        logger.info(
+            f"summary.1h total={s['total_documents_1h']} ok={s['completed']} dlq={s['permanent_failures']} retries={s['documents_with_retries']} processing={s['still_processing']}"
         )
         
         # Log details about repeated attempts
@@ -194,7 +205,7 @@ class ProcessingMonitor:
                     contact_id=contact_id,
                     doc_id=doc_id,
                     **details
-                ).warning(f"🔄 Document with multiple attempts: {doc_id}")
+                ).warning(f"attempt.multi contact={contact_id} doc={doc_id} attempts={details['attempts']}")
     
     def cleanup_old_entries(self):
         """Clean up old document entries to prevent memory leaks."""

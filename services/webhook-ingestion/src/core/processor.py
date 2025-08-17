@@ -129,7 +129,7 @@ class WebhookProcessor:
                 source=payload.source.value
             )
             
-            webhook_logger.info(f"📨 Processing {payload.webhook_type.value} webhook")
+            webhook_logger.info(f"webhook.process type={payload.webhook_type.value} contact={payload.contact_id}")
             
             # Create and send queue messages based on webhook type
             try:
@@ -146,7 +146,7 @@ class WebhookProcessor:
             processing_time_ms = int((time.perf_counter() - start_time) * 1000)
             self._update_metrics(True, processing_time_ms)
             
-            webhook_logger.info(f"✅ Webhook processed successfully - {len(message_ids)} messages sent ({processing_time_ms}ms)")
+            webhook_logger.info(f"webhook.success contact={payload.contact_id} docs={len(message_ids)} duration_ms={processing_time_ms}")
             
             return ProcessingResult(
                 success=True,
@@ -164,7 +164,7 @@ class WebhookProcessor:
                 correlation_id=correlation_id,
                 processing_time_ms=processing_time_ms
             ).warning(
-                "❌ Webhook validation failed: %s", str(e)
+                "webhook.validation_failed error=%s", str(e)
             )
             
             return ProcessingResult(
@@ -185,7 +185,7 @@ class WebhookProcessor:
                 processing_time_ms=processing_time_ms,
                 queue_name=self.config.uw_uploaded_docs_queue
             ).error(
-                "🚫 Queue error during webhook processing: %s", str(e)
+                "webhook.queue_error error=%s", str(e)
             )
             
             return ProcessingResult(
@@ -206,7 +206,7 @@ class WebhookProcessor:
                 processing_time_ms=processing_time_ms,
                 error_type=type(e).__name__
             ).error(
-                "💥 Unexpected webhook processing error: %s", str(e)
+                "webhook.error type=%s error=%s", type(e).__name__, str(e)
             )
             
             return ProcessingResult(
@@ -295,7 +295,7 @@ class WebhookProcessor:
             # For CLIENT_SUBMITTED: process all documents
             doc_ids = self._extract_all_doc_ids(payload.doc_id)
             
-            webhook_logger.info(f"📋 Processing {len(doc_ids)} documents")
+            webhook_logger.debug(f"queue.batch_create docs={len(doc_ids)}")
             
             for i, doc_id in enumerate(doc_ids):
                 message = QueueMessage(

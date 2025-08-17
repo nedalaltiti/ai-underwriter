@@ -60,7 +60,7 @@ class ForthAPIClient:
             # Construct endpoint - API requires file_type parameter (using 'uploaded' as default)
             endpoint = f"/contacts/{contact_id}/documents/{doc_id}/uploaded"
             
-            logger.info(f"Fetching document from Forth API: {endpoint}")
+            logger.debug(f"forth.request endpoint={endpoint}")
             
             headers = await self._get_headers()
             response = await self.client.get(endpoint, headers=headers)
@@ -100,20 +100,22 @@ class ForthAPIClient:
                 }
             
             elif response.status_code == 404:
-                logger.warning(f"Document not found: {contact_id}/{doc_id}")
+                logger.warning(f"forth.not_found contact={contact_id} doc={doc_id}")
                 raise DocumentNotFoundError(f"{contact_id}/{doc_id}")
             
             else:
                 logger.error(
-                    f"Forth API error: {response.status_code} - {response.text}"
+                    f"forth.error contact={contact_id} doc={doc_id} status={response.status_code}"
                 )
                 raise ForthAPIError(response.status_code, response.text)
                 
         except httpx.TimeoutException:
-            logger.error(f"Forth API timeout for document {contact_id}/{doc_id}")
+            logger.warning(f"forth.timeout contact={contact_id} doc={doc_id} timeout_s={self.timeout}")
             raise ForthAPIError(408, f"timeout after {self.timeout}s")
+        except DocumentNotFoundError:
+            raise
         except Exception as e:
-            logger.error(f"Forth API error: {e}")
+            logger.error(f"forth.error contact={contact_id} doc={doc_id} error={type(e).__name__}")
             raise
     
     async def get_contact(self, contact_id: str) -> Optional[Dict[str, Any]]:

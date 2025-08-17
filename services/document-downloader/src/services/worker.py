@@ -101,7 +101,7 @@ class DownloadWorker:
                 return
             
             # Production: concise batch log
-            logger.debug(f"processing.batch size={len(messages)}")
+            logger.debug(f"batch.process size={len(messages)}")
             
             # Process messages concurrently
             tasks = []
@@ -119,10 +119,11 @@ class DownloadWorker:
             failures = len(results) - successes
             
             if failures > 0:
-                logger.warning(f"Batch completed: {successes} success, {failures} failed")
+                logger.warning(f"batch.completed success={successes} failed={failures}")
             else:
                 # Reset error count on successful batch
                 self._error_count = 0
+                logger.debug(f"batch.completed success={successes} failed=0")
             
             # Log periodic processing summary
             processing_monitor.log_periodic_summary()
@@ -283,7 +284,7 @@ class DownloadWorker:
             # Start marker for single document (sanitize braces to avoid Loguru formatting issues)
             safe_correlation_id = (task.correlation_id or "-").replace("{", "(").replace("}", ")")
             logger.info(
-                f"download.start contact_id={task.contact_id} doc_id={task.doc_id} correlation_id={safe_correlation_id}"
+                f"download.start contact={task.contact_id} doc={task.doc_id} corr={safe_correlation_id}"
             )
             
             # Download document
@@ -311,7 +312,7 @@ class DownloadWorker:
                 except Exception:
                     size_mb = None
                 msg = (
-                    f"download.success contact_id={task.contact_id} doc_id={task.doc_id} "
+                    f"download.success contact={task.contact_id} doc={task.doc_id} "
                     f"duration_ms={result.processing_time_ms} s3_key=\"{result.s3_key}\""
                 )
                 if size_mb:
@@ -326,17 +327,10 @@ class DownloadWorker:
                         # Skipped documents are successful, just delete the message
                         await self.input_queue.delete_message(receipt_handle)
                         logger.info(
-                            f"download.skipped contact_id={task.contact_id} doc_id={task.doc_id} reason=excluded"
+                            f"download.skipped contact={task.contact_id} doc={task.doc_id} reason=excluded"
                         )
                         return True
                     else:
-                        # Record permanent failure
-                        processing_monitor.record_permanent_failure(
-                            contact_id=task.contact_id,
-                            doc_id=task.doc_id,
-                            error_message=result.error_message or "Unknown permanent failure"
-                        )
-                        
                         # Handle different types of permanent failures differently
                         if result.error_code == "DOCUMENT_NOT_FOUND":
                             # Check if this is a confirmed 404 (document truly doesn't exist)
@@ -352,31 +346,47 @@ class DownloadWorker:
                                 explicit_404 = True
                             if self._is_confirmed_document_not_found(result) or explicit_404 or receive_count >= 3:
                                 # True 404 from Forth API - document doesn't exist, safe to delete
-                                await self.input_queue.delete_message(receipt_handle)
-                                logger.info(
-                                    f"download.not_found_deleted contact_id={task.contact_id} doc_id={task.doc_id}"
+                                processing_monitor.record_permanent_failure(
+                                    contact_id=task.contact_id,
+                                    doc_id=task.doc_id,
+                                    error_message=result.error_message or "Document not found",
+                                    sent_to_dlq=False
                                 )
+                                await self.input_queue.delete_message(receipt_handle)
+                                logger.info(f"download.deleted contact={task.contact_id} doc={task.doc_id} reason=not_found")
                                 return True  # Treated as successful (message handled)
                             else:
                                 # Uncertain 404 (might be API issue) - send to DLQ for manual review
+                                processing_monitor.record_permanent_failure(
+                                    contact_id=task.contact_id,
+                                    doc_id=task.doc_id,
+                                    error_message=result.error_message or "Uncertain not found",
+                                    sent_to_dlq=True
+                                )
                                 await self.input_queue.send_to_dlq(
                                     message=queue_message,
                                     error=f"Uncertain document not found (possible API issue): {result.error_message}"
                                 )
                                 await self.input_queue.delete_message(receipt_handle)
                                 logger.warning(
-                                    f"download.failed contact_id={task.contact_id} doc_id={task.doc_id} error_code={result.error_code} message=Uncertain_not_found_sent_to_DLQ"
+                                    f"download.failed_dlq contact={task.contact_id} doc={task.doc_id} code={result.error_code} reason=uncertain_not_found"
                                 )
                                 return False
                         else:
                             # Other permanent failures still go to DLQ for investigation
+                            processing_monitor.record_permanent_failure(
+                                contact_id=task.contact_id,
+                                doc_id=task.doc_id,
+                                error_message=result.error_message or "Unknown permanent failure",
+                                sent_to_dlq=True
+                            )
                             await self.input_queue.send_to_dlq(
                                 message=queue_message,
                                 error=result.error_message
                             )
                             await self.input_queue.delete_message(receipt_handle)
                             logger.warning(
-                                f"download.failed contact_id={task.contact_id} doc_id={task.doc_id} error_code={result.error_code} message={result.error_message}"
+                                f"download.failed_dlq contact={task.contact_id} doc={task.doc_id} code={result.error_code}"
                             )
                             return False
                 
@@ -491,7 +501,7 @@ class DownloadWorker:
             )
             
             await self.output_queue.send_message(parse_message)
-            logger.debug(f"📤 Queued for parsing: {result.s3_key}")
+            logger.debug(f"parse.queued s3_key={result.s3_key}")
             
         except Exception as e:
             logger.warning(f"Failed to queue for parsing (queue may not exist): {e}")
