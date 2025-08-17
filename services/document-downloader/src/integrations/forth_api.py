@@ -4,6 +4,7 @@ from typing import Optional, Dict, Any
 from loguru import logger
 
 from integrations.forth_auth import ForthAuthManager
+from core.exceptions import DocumentNotFoundError, ForthAPIError
 
 
 class ForthAPIClient:
@@ -100,20 +101,20 @@ class ForthAPIClient:
             
             elif response.status_code == 404:
                 logger.warning(f"Document not found: {contact_id}/{doc_id}")
-                return None
+                raise DocumentNotFoundError(f"{contact_id}/{doc_id}")
             
             else:
                 logger.error(
                     f"Forth API error: {response.status_code} - {response.text}"
                 )
-                return None
+                raise ForthAPIError(response.status_code, response.text)
                 
         except httpx.TimeoutException:
             logger.error(f"Forth API timeout for document {contact_id}/{doc_id}")
-            return None
+            raise ForthAPIError(408, f"timeout after {self.timeout}s")
         except Exception as e:
             logger.error(f"Forth API error: {e}")
-            return None
+            raise
     
     async def get_contact(self, contact_id: str) -> Optional[Dict[str, Any]]:
         """Get contact information from Forth API."""

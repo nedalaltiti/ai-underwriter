@@ -132,3 +132,5 @@ class DownloadResult(BaseModel):
     # Metadata
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
     correlation_id: Optional[str] = Field(None, description="Correlation ID for tracing")
+    # Upstream HTTP status for error interpretation (e.g., 404)
+    api_status_code: Optional[int] = Field(None, description="Upstream API HTTP status code if applicable")

@@ -280,9 +280,10 @@ class DownloadWorker:
                 correlation_id=task.correlation_id
             )
             
-            # Start marker for single document
+            # Start marker for single document (sanitize braces to avoid Loguru formatting issues)
+            safe_correlation_id = (task.correlation_id or "-").replace("{", "(").replace("}", ")")
             logger.info(
-                f"download.start contact_id={task.contact_id} doc_id={task.doc_id} correlation_id={task.correlation_id}"
+                f"download.start contact_id={task.contact_id} doc_id={task.doc_id} correlation_id={safe_correlation_id}"
             )
             
             # Download document
@@ -340,7 +341,16 @@ class DownloadWorker:
                         if result.error_code == "DOCUMENT_NOT_FOUND":
                             # Check if this is a confirmed 404 (document truly doesn't exist)
                             # vs a temporary API issue (network/auth error that returned 404-like response)
-                            if self._is_confirmed_document_not_found(result):
+                            # Also delete if we know the upstream returned explicit 404
+                            receive_count = 0
+                            try:
+                                receive_count = int(message.get('Attributes', {}).get('ApproximateReceiveCount', '1'))
+                            except Exception:
+                                receive_count = 1
+                            explicit_404 = False
+                            if hasattr(result, 'api_status_code') and result.api_status_code == 404:
+                                explicit_404 = True
+                            if self._is_confirmed_document_not_found(result) or explicit_404 or receive_count >= 3:
                                 # True 404 from Forth API - document doesn't exist, safe to delete
                                 await self.input_queue.delete_message(receipt_handle)
                                 logger.info(

@@ -77,7 +77,8 @@ class DocumentDownloader:
                         success=False,
                         status=DownloadStatus.NOT_FOUND,
                         error_message=f"Document not found in Forth API: {task.contact_id}/{task.doc_id}",
-                        error_code="DOCUMENT_NOT_FOUND"
+                        error_code="DOCUMENT_NOT_FOUND",
+                        api_status_code=404
                     )
                 except DocumentExcludedError as e:
                     return DownloadResult(
