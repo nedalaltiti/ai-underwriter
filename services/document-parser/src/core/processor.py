@@ -146,44 +146,44 @@ class DocumentProcessor:
         Returns:
             Dictionary with base64 encoded PDF data
         """
-        logger.info(f"Preparing document {task.doc_id} - S3 key present: {bool(task.s3_key)}, URL present: {bool(task.document_url)}")
+        logger.debug(f"parse.prepare contact={task.contact_id} doc={task.doc_id} s3_key_present={bool(task.s3_key)} url_present={bool(task.document_url)}")
         
         # Strategy 1: Try S3 direct access first (most efficient)
         if task.s3_key and task.s3_key.strip():
             try:
                 from integrations.s3 import S3Client
                 s3_client = S3Client()
-                logger.info(f"📥 Attempting S3 direct download: {task.s3_key}")
+                logger.debug(f"parse.s3_download contact={task.contact_id} doc={task.doc_id} s3_key={task.s3_key}")
                 
                 start_time = time.time()
                 result = s3_client.download_document_from_s3(task.s3_key)
                 download_time = int((time.time() - start_time) * 1000)
                 
-                logger.info(f"✅ S3 direct download successful in {download_time}ms")
+                logger.info(f"parse.s3_success contact={task.contact_id} doc={task.doc_id} duration_ms={download_time}")
                 return result
                 
             except Exception as e:
-                logger.warning(f"❌ S3 direct download failed, falling back to URL: {e}")
+                logger.warning(f"parse.s3_failed contact={task.contact_id} doc={task.doc_id} error={type(e).__name__}")
         
         # Strategy 2: Fall back to URL download
         if task.document_url and task.document_url.strip():
             try:
-                logger.info(f"📥 Attempting URL download: {task.document_url}")
+                logger.debug(f"parse.url_download contact={task.contact_id} doc={task.doc_id} url={task.document_url}")
                 
                 start_time = time.time()
                 result = self._download_from_url(task.document_url)
                 download_time = int((time.time() - start_time) * 1000)
                 
-                logger.info(f"✅ URL download successful in {download_time}ms")
+                logger.info(f"parse.url_success contact={task.contact_id} doc={task.doc_id} duration_ms={download_time}")
                 return result
                 
             except Exception as e:
-                logger.error(f"❌ URL download failed: {e}")
+                logger.error(f"parse.url_failed contact={task.contact_id} doc={task.doc_id} error={type(e).__name__}")
                 raise DocumentProcessingError(f"Failed to download document from URL: {e}")
         
         # No valid source available
-        error_msg = f"No valid document source available. S3 key present: {bool(task.s3_key)}, URL present: {bool(task.document_url)}"
-        logger.error(error_msg)
+        error_msg = f"No valid document source available"
+        logger.error(f"parse.no_source contact={task.contact_id} doc={task.doc_id} s3_key_present={bool(task.s3_key)} url_present={bool(task.document_url)}")
         raise DocumentProcessingError(error_msg)
     
     def _download_from_url(self, document_url: str) -> Dict[str, str]:

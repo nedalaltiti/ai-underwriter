@@ -291,34 +291,52 @@ class DownloadWorker:
             result = await self.downloader.download_document(task)
             
             if result.success:
-                # Record successful processing
-                processing_monitor.record_processing_result(
-                    contact_id=task.contact_id,
-                    doc_id=task.doc_id,
-                    success=True
-                )
-                
-                # Queue for parsing
-                await self._queue_for_parsing(task, result)
-                
-                # Delete message
-                await self.input_queue.delete_message(receipt_handle)
-                
-                # Compact success line
-                size_mb = None
-                try:
-                    if getattr(result, 'file_size', None):
-                        size_mb = f"{(result.file_size / 1048576):.2f}"
-                except Exception:
+                # Check if this was actually a skipped document
+                if result.status == DownloadStatus.SKIPPED:
+                    # Record successful processing (skipped is still success)
+                    processing_monitor.record_processing_result(
+                        contact_id=task.contact_id,
+                        doc_id=task.doc_id,
+                        success=True
+                    )
+                    
+                    # Delete message
+                    await self.input_queue.delete_message(receipt_handle)
+                    
+                    # Log as skipped, not success
+                    logger.info(f"download.skipped contact={task.contact_id} doc={task.doc_id} reason={result.error_code or 'excluded'}")
+                    return True
+                else:
+                    # Actual successful download
+                    # Record successful processing
+                    processing_monitor.record_processing_result(
+                        contact_id=task.contact_id,
+                        doc_id=task.doc_id,
+                        success=True
+                    )
+                    
+                    # Queue for parsing only if we have a valid S3 key
+                    if result.s3_key and result.s3_key.strip():
+                        await self._queue_for_parsing(task, result)
+                    
+                    # Delete message
+                    await self.input_queue.delete_message(receipt_handle)
+                    
+                    # Compact success line
                     size_mb = None
-                msg = (
-                    f"download.success contact={task.contact_id} doc={task.doc_id} "
-                    f"duration_ms={result.processing_time_ms} s3_key=\"{result.s3_key}\""
-                )
-                if size_mb:
-                    msg += f" size_mb={size_mb}"
-                logger.info(msg)
-                return True
+                    try:
+                        if getattr(result, 'file_size', None):
+                            size_mb = f"{(result.file_size / 1048576):.2f}"
+                    except Exception:
+                        size_mb = None
+                    msg = (
+                        f"download.success contact={task.contact_id} doc={task.doc_id} "
+                        f"duration_ms={result.processing_time_ms} s3_key=\"{result.s3_key}\""
+                    )
+                    if size_mb:
+                        msg += f" size_mb={size_mb}"
+                    logger.info(msg)
+                    return True
             else:
                 # Use utility function to check if this is a permanent failure
                 if is_permanent_failure(result):

@@ -641,7 +641,7 @@ class GeminiClient:
                                     m, d, y = parts[0], parts[1], parts[2]
                                     if len(y) == 4 and m.isdigit() and d.isdigit():
                                         entity[key] = f"{y}-{m.zfill(2)}-{d.zfill(2)}"
-                        # Handle "Nov 21, 2024" format
+                        # Handle "Nov 21, 2024" format and other month-name patterns
                         elif re.search(r"[A-Za-z]", value) and re.search(r"\d{4}", value):
                             import datetime
                             txt = value.replace('\n', ' ').replace('  ', ' ').strip()
@@ -652,8 +652,16 @@ class GeminiClient:
                                 try:
                                     parsed_date = datetime.datetime.strptime(f"{month_name} {day} {year}", '%B %d %Y')
                                 except ValueError:
-                                    parsed_date = datetime.datetime.strptime(f"{month_name} {day} {year}", '%b %d %Y')
+                                    try:
+                                        parsed_date = datetime.datetime.strptime(f"{month_name} {day} {year}", '%b %d %Y')
+                                    except ValueError:
+                                        # Handle invalid patterns like "2025-Aug-Fri" by nulling them
+                                        entity[key] = None
+                                        continue
                                 entity[key] = parsed_date.strftime('%Y-%m-%d')
+                            else:
+                                # Pattern like "2025-Aug-Fri" doesn't match our regex, set to None
+                                entity[key] = None
                         # Handle "11-09-2024" format  
                         elif '-' in value and value.count('-') == 2:
                             parts = value.split('-')

@@ -248,7 +248,7 @@ class DocumentDownloader:
                     contact_id=task.contact_id,
                     doc_id=task.doc_id,
                     doc_type=doc_type
-                ).info("🚫 Skipping document - excluded doc_type")
+                ).info(f"download.excluded doc_type={doc_type}")
                 raise DocumentExcludedError(f"Document excluded - doc_type: {doc_type}")
             
             if not download_url:

@@ -204,7 +204,7 @@ class DocumentWorker:
                         **data
                     }
                 )
-                logger.info(f"Worker {worker_id} processing document-downloader message: {doc_id}")
+                logger.info(f"parse.start worker={worker_id} contact={contact_id} doc={doc_id}")
                 
             # Format 2: Direct API call or legacy format (flat structure)
             else:
@@ -218,7 +218,7 @@ class DocumentWorker:
                     received_at=datetime.now(),
                     metadata=body.get('metadata', {})
                 )
-                logger.info(f"Worker {worker_id} processing direct message: {doc_id}")
+                logger.info(f"parse.start worker={worker_id} contact={body.get('contact_id', 'unknown')} doc={doc_id}")
             
             # Process document
             result = await self.processor.process_document(task)
@@ -226,7 +226,7 @@ class DocumentWorker:
             # Validate if successful
             if result.extracted_document:
                 validation_results = self.validator.validate_document(result.extracted_document)
-                logger.info(f"Document {task.doc_id} validated with {len(validation_results)} checks")
+                logger.debug(f"parse.validated contact={task.contact_id} doc={task.doc_id} checks={len(validation_results)}")
             
             # Store results in database
             await self._store_processing_result(task, result, worker_id)
@@ -234,14 +234,14 @@ class DocumentWorker:
             # Delete message from queue
             await self._delete_message(queue_url, receipt_handle)
             
-            logger.info(f"✅ Worker {worker_id} completed processing: {task.doc_id}")
+            logger.info(f"parse.completed worker={worker_id} contact={task.contact_id} doc={task.doc_id} status={result.status.value}")
             
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in message: {e}")
+            logger.error(f"parse.invalid_json worker={worker_id} error={str(e)}")
             await self._delete_message(queue_url, receipt_handle)  # Remove invalid message
             
         except Exception as e:
-            logger.error(f"Worker {worker_id} processing error: {e}")
+            logger.error(f"parse.error worker={worker_id} doc={doc_id or 'unknown'} error={type(e).__name__}")
             
             # Get message attributes for retry count
             attributes = message.get('Attributes', {})
@@ -251,7 +251,7 @@ class DocumentWorker:
             # Check if we should retry or send to DLQ
             if receive_count >= max_retries:
                 # Send to DLQ
-                logger.warning(f"Worker {worker_id}: Processing failed after {receive_count} attempts for {doc_id or 'unknown'}, sending to DLQ")
+                logger.warning(f"parse.dlq worker={worker_id} doc={doc_id or 'unknown'} attempts={receive_count} reason=max_retries")
                 
                 # Create QueueMessage for DLQ
                 from libs.forth_shared.models.queue import QueueMessage, MessageType
@@ -292,7 +292,7 @@ class DocumentWorker:
                 await self._delete_message(queue_url, receipt_handle)
             else:
                 # Let message return to queue for retry (visibility timeout will expire)
-                logger.info(f"Worker {worker_id}: Processing failed for {doc_id or 'unknown'}, attempt {receive_count}/{max_retries}, will retry")
+                logger.info(f"parse.retry worker={worker_id} doc={doc_id or 'unknown'} attempt={receive_count}/{max_retries}")
                 # Don't delete message - let it be retried when visibility timeout expires
     
     async def _store_processing_result(self, task: ProcessingTask, result, worker_id: str):
@@ -312,19 +312,19 @@ class DocumentWorker:
                         success = await db_adapter.store_document_package(result.extracted_document)
                         
                         if success:
-                            logger.info(f"Worker {worker_id}: Successfully stored document package for {task.doc_id}")
+                            logger.info(f"db.stored worker={worker_id} contact={task.contact_id} doc={task.doc_id}")
                         else:
-                            logger.error(f"Worker {worker_id}: Failed to store document package for {task.doc_id}")
+                            logger.error(f"db.store_failed worker={worker_id} contact={task.contact_id} doc={task.doc_id}")
                     else:
-                        logger.warning(f"Worker {worker_id}: Extracted document for {task.doc_id} is not a valid package")
+                        logger.warning(f"parse.invalid_package worker={worker_id} contact={task.contact_id} doc={task.doc_id}")
                 else:
-                    logger.warning(f"Worker {worker_id}: Processing failed or no data extracted for {task.doc_id}, status: {result.status.value}")
+                    logger.warning(f"parse.no_data worker={worker_id} contact={task.contact_id} doc={task.doc_id} status={result.status.value}")
                     
             finally:
                 await db_adapter.close()
                 
         except Exception as e:
-            logger.error(f"Worker {worker_id}: Database storage error for {task.doc_id}: {e}")
+            logger.error(f"db.error worker={worker_id} contact={task.contact_id} doc={task.doc_id} error={type(e).__name__}")
             # Don't raise - we don't want to fail message processing due to storage issues
     
     async def _delete_message(self, queue_url: str, receipt_handle: str):
