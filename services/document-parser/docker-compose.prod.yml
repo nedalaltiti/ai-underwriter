@@ -6,6 +6,11 @@ services:
     build:
       context: ../..
       dockerfile: services/document-parser/Dockerfile
+      args:
+        BUILD_DATE: "${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}"
+        VERSION: "${VERSION:-latest}"
+        SERVICE_NAME: "document-parser"
+        VCS_REF: "${VCS_REF:-$(git rev-parse --short HEAD)}"
     container_name: document-parser-api
     restart: unless-stopped
     ports:
@@ -35,6 +40,11 @@ services:
     build:
       context: ../..
       dockerfile: services/document-parser/Dockerfile
+      args:
+        BUILD_DATE: "${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}"
+        VERSION: "${VERSION:-latest}"
+        SERVICE_NAME: "document-parser"
+        VCS_REF: "${VCS_REF:-$(git rev-parse --short HEAD)}"
     restart: unless-stopped
     command: ["python3", "-m", "src.services.worker"]
     environment:

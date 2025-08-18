@@ -175,6 +175,7 @@ cython_debug/
 .cursorindexingignore
 .cursor/
 .cursorrules
+.cursor/rules
 
 # Ruff stuff:
 .ruff_cache/

@@ -17,9 +17,12 @@ pipelines:
             - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-prod services\webhook-ingestion\Dockerfile
             - echo "Pushing docker image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-prod 
-            - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-prod services\document-downloader\Dockerfile
+            - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-prod -f services/document-downloader/Dockerfile .
             - echo "Pushing docker second image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-prod
+            - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-prod -f services/document-parser/Dockerfile .
+            - echo "Pushing docker third image to AWS ECR..."
+            - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-prod
       - step:
           name: Trigger Deployment Pipeline
           image: curlimages/curl
@@ -56,6 +59,22 @@ pipelines:
                     }
                   }' \
               https://api.bitbucket.org/2.0/repositories/wuduh/document-downloader-prod-deployment/pipelines/
+
+            - |
+              curl -X POST -u leen.a:$APP_PASSWORD \
+              -H "Content-Type: application/json" \
+              -d '{
+                    "target": {
+                      "type": "pipeline_ref_target",
+                      "ref_type": "branch",
+                      "ref_name": "main",
+                      "selector": {
+                        "type": "custom",
+                        "pattern": "deployment"
+                      }
+                    }
+                  }' \
+              https://api.bitbucket.org/2.0/repositories/wuduh/document-parser-prod-deployment/pipelines/
     stg:
       - step:
           name: Build Docker Image (STG)
@@ -70,9 +89,12 @@ pipelines:
             - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-stg services\webhook-ingestion\Dockerfile
             - echo "Pushing docker image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-stg 
-            - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-stg services\document-downloader\Dockerfile
+            - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-stg -f services/document-downloader/Dockerfile .
             - echo "Pushing docker second image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-stg
+            - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-stg -f services/document-parser/Dockerfile .
+            - echo "Pushing docker third image to AWS ECR..."
+            - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-stg
       - step:
           name: Trigger Deployment Pipeline
           image: curlimages/curl
@@ -109,6 +131,22 @@ pipelines:
                     }
                   }' \
               https://api.bitbucket.org/2.0/repositories/wuduh/document-downloader-stg-deployment/pipelines/
+
+            - |
+              curl -X POST -u leen.a:$APP_PASSWORD \
+              -H "Content-Type: application/json" \
+              -d '{
+                    "target": {
+                      "type": "pipeline_ref_target",
+                      "ref_type": "branch",
+                      "ref_name": "main",
+                      "selector": {
+                        "type": "custom",
+                        "pattern": "deployment"
+                      }
+                    }
+                  }' \
+              https://api.bitbucket.org/2.0/repositories/wuduh/document-parser-stg-deployment/pipelines/
     dev:
       - step:
           name: Build Docker Image (Dev)
@@ -124,8 +162,11 @@ pipelines:
             - echo "Pushing docker image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-dev 
             - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-dev -f services/document-downloader/Dockerfile .
-            - echo "Pushing docker image to AWS ECR..."
+            - echo "Pushing docker second image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-dev
+            - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-dev -f services/document-parser/Dockerfile .
+            - echo "Pushing docker third image to AWS ECR..."
+            - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-dev
       - step:
           name: Trigger Deployment Pipeline
           image: curlimages/curl
@@ -162,3 +203,19 @@ pipelines:
                     }
                   }' \
               https://api.bitbucket.org/2.0/repositories/wuduh/document-downloader-dev-deployment/pipelines/
+
+            - |
+              curl -X POST -u leen.a:$APP_PASSWORD \
+              -H "Content-Type: application/json" \
+              -d '{
+                    "target": {
+                      "type": "pipeline_ref_target",
+                      "ref_type": "branch",
+                      "ref_name": "main",
+                      "selector": {
+                        "type": "custom",
+                        "pattern": "deployment"
+                      }
+                    }
+                  }' \
+              https://api.bitbucket.org/2.0/repositories/wuduh/document-parser-dev-deployment/pipelines/
