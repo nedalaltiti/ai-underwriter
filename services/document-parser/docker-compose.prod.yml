@@ -2,7 +2,7 @@
 # Production deployment configuration for document-parser service
 
 services:
-  document-parser-api:
+  document-parser:
     build:
       context: ../..
       dockerfile: services/document-parser/Dockerfile
@@ -11,8 +11,9 @@ services:
         VERSION: "${VERSION:-latest}"
         SERVICE_NAME: "document-parser"
         VCS_REF: "${VCS_REF:-$(git rev-parse --short HEAD)}"
-    container_name: document-parser-api
+    container_name: document-parser
     restart: unless-stopped
+    command: ["python3", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8003", "--workers", "1"]
     ports:
       - "8003:8003"
     environment:
@@ -20,7 +21,8 @@ services:
       - PARSER_LOG_LEVEL=INFO
       - PARSER_HOST=0.0.0.0
       - PARSER_PORT=8003
-      - PARSER_WORKERS=4
+      - PARSER_WORKERS=1
+      - PARSER_WORKER_CONCURRENCY=3
     env_file:
       - .env.prod
     volumes:
@@ -35,36 +37,11 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  document-parser-worker:
-    build:
-      context: ../..
-      dockerfile: services/document-parser/Dockerfile
-      args:
-        BUILD_DATE: "${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}"
-        VERSION: "${VERSION:-latest}"
-        SERVICE_NAME: "document-parser"
-        VCS_REF: "${VCS_REF:-$(git rev-parse --short HEAD)}"
-    restart: unless-stopped
-    command: ["python3", "-m", "src.services.worker"]
-    environment:
-      - PARSER_ENVIRONMENT=production
-      - PARSER_LOG_LEVEL=INFO
-      - PARSER_WORKER_CONCURRENCY=3
-    env_file:
-      - .env.prod
-    volumes:
-      - ./logs:/app/logs
-    networks:
-      - ai-underwriter-network
-    depends_on:
-      - postgres
     deploy:
-      replicas: 1  # Start with 1 worker for initial testing
       resources:
         limits:
-          memory: 2G
-          cpus: '1.0'
+          memory: 3G
+          cpus: '1.5'
 
   postgres:
     image: postgres:15-alpine

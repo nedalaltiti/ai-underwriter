@@ -24,15 +24,30 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
-    logger.info("🚀 Starting document-parser service")
+    logger.info("Starting document-parser service")
     logger.info(f"Environment: {config.environment}")
     logger.info(f"Service version: {config.service_version}")
     logger.info(f"Gemini model: {config.gemini.model_name}")
     
-    yield
+    # Start the worker in background
+    import asyncio
+    from services.worker import DocumentProcessor
+    worker = DocumentProcessor()
+    worker_task = asyncio.create_task(worker.start())
+    logger.info("Background worker started alongside API")
     
-    # Shutdown
-    logger.info("🛑 Shutting down document-parser service")
+    try:
+        yield
+    finally:
+        # Shutdown
+        logger.info("🛑 Shutting down document-parser service")
+        worker.stop()
+        try:
+            await asyncio.wait_for(worker_task, timeout=30.0)
+            logger.info("✅ Worker stopped gracefully")
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ Worker stop timeout, forcing cancellation")
+            worker_task.cancel()
 
 
 # Create FastAPI application
