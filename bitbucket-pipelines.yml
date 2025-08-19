@@ -14,7 +14,7 @@ pipelines:
             - export AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION
             - aws ecr get-login-password --region us-west-1 | docker login --username AWS --password-stdin 794038237159.dkr.ecr.us-west-1.amazonaws.com
             - echo "Building docker image.."
-            - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-prod services\webhook-ingestion\Dockerfile
+            - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-prod -f services/webhook-ingestion/Dockerfile .
             - echo "Pushing docker image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-prod 
             - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-prod -f services/document-downloader/Dockerfile .
@@ -86,14 +86,18 @@ pipelines:
             - export AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION
             - aws ecr get-login-password --region us-west-1 | docker login --username AWS --password-stdin 794038237159.dkr.ecr.us-west-1.amazonaws.com
             - echo "Building docker image.."
-            - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-stg services\webhook-ingestion\Dockerfile
+            - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-stg -f services/webhook-ingestion/Dockerfile .
             - echo "Pushing docker image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/webhook-ingestion-stg 
             - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-stg -f services/document-downloader/Dockerfile .
             - echo "Pushing docker second image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-stg
             - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-stg -f services/document-parser/Dockerfile .
+<<<<<<< HEAD
             - echo "Pushing docker third image to AWS ECR..."
+=======
+            - echo "Pushing docker second image to AWS ECR..."
+>>>>>>> 0628449c8369b2504b1a7412d1ff37cb662eb042
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-stg
       - step:
           name: Trigger Deployment Pipeline
@@ -165,7 +169,11 @@ pipelines:
             - echo "Pushing docker second image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-dev
             - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-dev -f services/document-parser/Dockerfile .
+<<<<<<< HEAD
             - echo "Pushing docker third image to AWS ECR..."
+=======
+            - echo "Pushing docker second image to AWS ECR..."
+>>>>>>> 0628449c8369b2504b1a7412d1ff37cb662eb042
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-dev
       - step:
           name: Trigger Deployment Pipeline
