@@ -15,7 +15,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PYTHONPATH=/app/src \
+    PYTHONPATH=/app/src:/app \
     DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies with security updates
