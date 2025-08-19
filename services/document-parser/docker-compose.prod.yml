@@ -48,7 +48,7 @@ services:
     container_name: document-parser-postgres
     restart: unless-stopped
     environment:
-      - POSTGRES_DB=ai_underwriting
+      - POSTGRES_DB=postgres
       - POSTGRES_USER=ai_underwriting_user
       - POSTGRES_PASSWORD=${DB_PASSWORD}
     volumes:
