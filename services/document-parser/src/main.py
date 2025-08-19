@@ -31,8 +31,8 @@ async def lifespan(app: FastAPI):
     
     # Start the worker in background
     import asyncio
-    from services.worker import DocumentProcessor
-    worker = DocumentProcessor()
+    from services.worker import DocumentWorker
+    worker = DocumentWorker()
     worker_task = asyncio.create_task(worker.start())
     logger.info("Background worker started alongside API")
     
