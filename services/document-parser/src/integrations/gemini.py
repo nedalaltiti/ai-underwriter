@@ -249,8 +249,29 @@ class GeminiClient:
                         prompt2 = get_targeted_financial_analysis_prompt(missing_fa_fields)
                         response2 = await self._make_gemini_request(prompt2, pdf_data)
                         if response2:
-                            # merge backfilled fields
-                            fa.update({k: v for k, v in response2.items() if k in missing_fa_fields})
+                            # merge backfilled fields with proper cleaning
+                            for k, v in response2.items():
+                                if k in missing_fa_fields and v is not None:
+                                    # Apply same decimal cleaning as main processing
+                                    financial_decimal_fields = [
+                                        'fixed_income', 'lump_sum', 'applicant_monthly_income', 'coapplicant_monthly_income',
+                                        'applicant_expenses', 'coapplicant_expenses', 'applicant_total_net_income', 'coapplicant_total_net_income',
+                                        'total_enrolled_debt', 'estimated_program_length', 'monthly_program_deposit',
+                                        'estimated_program_settle_amount', 'total_program_fees', 'estimated_program_savings', 'estimated_total_cost'
+                                    ]
+                                    if k in financial_decimal_fields:
+                                        # Clean currency formatting
+                                        cleaned_value = str(v).replace(',', '').replace('$', '').replace('%', '').strip()
+                                        if cleaned_value.startswith('(') and cleaned_value.endswith(')'):
+                                            cleaned_value = '-' + cleaned_value[1:-1]
+                                        if re.match(r'^-?\d+(?:\.\d+)?$', cleaned_value):
+                                            fa[k] = cleaned_value
+                                        else:
+                                            fa[k] = None
+                                    else:
+                                        fa[k] = v
+                            # Ensure file_id is set in the updated financial_analysis
+                            fa['file_id'] = file_id
                             package_data['financial_analysis'] = fa
                             package = ExtractedDocumentPackage(**package_data)
                             logger.info("Applied targeted backfill for missing financial analysis fields")
@@ -333,7 +354,22 @@ class GeminiClient:
             logger.error(f"Gemini API request timed out after {timeout_seconds}s: {e}")
             raise
         except httpx.HTTPStatusError as e:
-            logger.error(f"Gemini API HTTP error: {e.response.status_code} - {e.response.text}")
+            status_code = e.response.status_code
+            error_text = e.response.text
+            
+            # Handle specific error codes with better logging
+            if status_code == 400:
+                logger.error(f"Gemini API 400 error - invalid request: {error_text}")
+                # For 400 errors, don't retry immediately - it's likely a parameter issue
+            elif status_code == 429:
+                logger.warning(f"Gemini API rate limit hit: {error_text}")
+                # Rate limiting - will be retried with backoff
+            elif status_code in [500, 502, 503, 504]:
+                logger.warning(f"Gemini API server error {status_code}: {error_text}")
+                # Server errors - will be retried
+            else:
+                logger.error(f"Gemini API HTTP error: {status_code} - {error_text}")
+            
             raise
         except Exception as e:
             logger.error(f"Gemini API request failed: {e}")
@@ -579,17 +615,22 @@ class GeminiClient:
                 raw_value = value
                 value = re.sub(r"\s+", " ", value).strip()
                 entity[key] = value
-                # Fix decimal parsing - remove commas and handle currency symbols and percentages
-                decimal_fields = [
+                # Financial analysis decimal fields (based on actual database schema)
+                financial_decimal_fields = [
+                    'fixed_income', 'lump_sum', 'applicant_monthly_income', 'coapplicant_monthly_income',
+                    'applicant_expenses', 'coapplicant_expenses', 'applicant_total_net_income', 'coapplicant_total_net_income',
+                    'total_enrolled_debt', 'estimated_program_length', 'monthly_program_deposit',
+                    'estimated_program_settle_amount', 'total_program_fees', 'estimated_program_savings', 'estimated_total_cost'
+                ]
+                
+                # Other decimal fields for other entities
+                other_decimal_fields = [
                     'current_balance', 'amount', 'settlement_fee', 'monthly_payment',
                     'settlement_fee_percentage', 'first_payment_amount', 'monthly_payment_amount',
-                    'members_accumulation_amount', 'recurring_debit_authorization',
-                    'estimated_settle_amount', 'estimated_program_settle_amount', 'total_program_fees', 'estimated_total_cost',
-                    'estimated_program_savings', 'applicant_monthly_income', 'coapplicant_monthly_income',
-                    'applicant_expenses', 'coapplicant_expenses', 'total_net_income', 'total_enrolled_debt',
-                    'fixed_income', 'lump_sum', 'applicant_total_net_income', 'coapplicant_total_net_income',
-                    'monthly_program_deposit', 'service_amount'
+                    'members_accumulation_amount', 'recurring_debit_authorization'
                 ]
+                
+                decimal_fields = financial_decimal_fields + other_decimal_fields
                 if key in decimal_fields:
                     # Remove commas, dollar signs, percentage signs, and other currency symbols
                     cleaned_value = value.replace(',', '').replace('$', '').replace('€', '').replace('£', '').replace('%', '').strip()

@@ -29,7 +29,7 @@ class ProcessingRequest(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "document_url": "https://drive.google.com/uc?export=download&id=108ayIc5J8Y9yZDZLlrJf9kGJzq1r-Bcy",
                 "contact_id": "contact_12345",
@@ -52,7 +52,7 @@ class ProcessingResponse(BaseModel):
     validation_summary: Dict[str, Any] = None
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "task_id": "123e4567-e89b-12d3-a456-426614174000",
                 "status": "completed",

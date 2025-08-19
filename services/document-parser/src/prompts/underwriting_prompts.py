@@ -21,6 +21,8 @@ CRITICAL EXTRACTION RULES:
 10. Page counts should reflect actual document pages visible
 11. Match the EXACT field names and JSON shape requested; do not invent fields
 12. If a label indicates a range, select the single value closest to the label
+13. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616")
+14. ACCOUNT NUMBER: Usually longer than 9 digits (e.g., "1200000246482")
 """
 
 ENGAGEMENT_TERM_PROMPT = f"""

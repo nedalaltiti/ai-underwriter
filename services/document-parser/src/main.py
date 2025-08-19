@@ -1,6 +1,10 @@
 # services/document-parser/src/main.py
 """Main FastAPI application for document-parser service."""
 
+import warnings
+# Suppress Pydantic v2 deprecation warnings for cleaner logs
+warnings.filterwarnings("ignore", message="Valid config keys have changed in V2")
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI

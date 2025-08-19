@@ -50,7 +50,7 @@ services:
     environment:
       - PARSER_ENVIRONMENT=production
       - PARSER_LOG_LEVEL=INFO
-      - PARSER_WORKER_CONCURRENCY=10
+      - PARSER_WORKER_CONCURRENCY=3
     env_file:
       - .env.prod
     volumes:
@@ -60,7 +60,7 @@ services:
     depends_on:
       - postgres
     deploy:
-      replicas: 3  # Scale workers for high throughput
+      replicas: 1  # Start with 1 worker for initial testing
       resources:
         limits:
           memory: 2G
@@ -82,36 +82,8 @@ services:
     ports:
       - "3307:5432"
 
-  nginx:
-    image: nginx:alpine
-    container_name: document-parser-nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
-      - ./ssl:/etc/nginx/ssl
-    networks:
-      - ai-underwriter-network
-    depends_on:
-      - document-parser-api
-
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: document-parser-prometheus
-    restart: unless-stopped
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus_data:/prometheus
-    networks:
-      - ai-underwriter-network
-
 volumes:
   postgres_data:
-  prometheus_data:
 
 networks:
   ai-underwriter-network:
