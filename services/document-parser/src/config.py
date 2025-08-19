@@ -45,6 +45,7 @@ class ServiceConfig(BaseSettings):
     output_queue_name: Optional[str] = Field(None, env="PARSER_OUTPUT_QUEUE_NAME")
     sqs_wait_time: int = Field(default=20, ge=0, le=20, env="PARSER_SQS_WAIT_TIME")
     sqs_max_messages: int = Field(default=1, ge=1, le=10, env="PARSER_SQS_MAX_MESSAGES")
+    sqs_visibility_timeout: int = Field(default=3600, ge=60, le=43200, env="PARSER_SQS_VISIBILITY_TIMEOUT")  # 1 hour
     
     # S3 Configuration
     s3_bucket_name: str = Field(default="contact-contracts-dev-s3-us-west-1", env="PARSER_S3_BUCKET_NAME")

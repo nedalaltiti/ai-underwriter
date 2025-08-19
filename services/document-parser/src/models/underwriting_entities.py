@@ -203,7 +203,7 @@ class PaymentGatewayAgreement(BaseUnderwritingModel):
     client_email: Optional[EmailStr] = None
     coclient_first_name: Optional[str] = Field(None, max_length=255)
     coclient_last_name: Optional[str] = Field(None, max_length=255)
-    coclient_middle_initial: Optional[str] = Field(None, max_length=1)
+    coclient_middle_initial: Optional[str] = Field(None, max_length=255)
     coclient_ssn: Optional[str] = Field(None, max_length=11)
     coclient_dob: Optional[date] = None
     client_initials: Optional[str] = Field(None, max_length=10)

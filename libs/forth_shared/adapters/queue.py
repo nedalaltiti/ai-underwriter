@@ -217,18 +217,25 @@ class SQSAdapter(QueueAdapter):
     async def receive_messages(
         self, 
         max_messages: int = 10,
-        wait_time_seconds: int = 20
+        wait_time_seconds: int = 20,
+        visibility_timeout_seconds: int = None
     ) -> List[Dict[str, Any]]:
         """Receive messages from SQS."""
         await self._ensure_client()
         
-        response = await self._client.receive_message(
-            QueueUrl=self._queue_url,
-            MaxNumberOfMessages=min(max_messages, 10),
-            WaitTimeSeconds=wait_time_seconds,
-            MessageAttributeNames=['All'],
-            AttributeNames=['All']
-        )
+        params = {
+            'QueueUrl': self._queue_url,
+            'MaxNumberOfMessages': min(max_messages, 10),
+            'WaitTimeSeconds': wait_time_seconds,
+            'MessageAttributeNames': ['All'],
+            'AttributeNames': ['All']
+        }
+        
+        # Add visibility timeout if specified
+        if visibility_timeout_seconds is not None:
+            params['VisibilityTimeout'] = visibility_timeout_seconds
+            
+        response = await self._client.receive_message(**params)
         
         return response.get('Messages', [])
     

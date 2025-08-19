@@ -166,7 +166,7 @@ class DocumentWorker:
                 QueueUrl=queue_url,
                 MaxNumberOfMessages=config.sqs_max_messages,
                 WaitTimeSeconds=config.sqs_wait_time,
-                VisibilityTimeout=config.processing_timeout,
+                VisibilityTimeout=config.sqs_visibility_timeout,
                 AttributeNames=['All']  # Include message attributes for retry count
             )
             return response.get('Messages', [])
