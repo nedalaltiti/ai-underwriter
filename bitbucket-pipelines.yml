@@ -93,11 +93,7 @@ pipelines:
             - echo "Pushing docker second image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-stg
             - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-stg -f services/document-parser/Dockerfile .
-<<<<<<< HEAD
             - echo "Pushing docker third image to AWS ECR..."
-=======
-            - echo "Pushing docker second image to AWS ECR..."
->>>>>>> 0628449c8369b2504b1a7412d1ff37cb662eb042
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-stg
       - step:
           name: Trigger Deployment Pipeline
@@ -169,11 +165,7 @@ pipelines:
             - echo "Pushing docker second image to AWS ECR..."
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-downloader-dev
             - docker build --no-cache -t 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-dev -f services/document-parser/Dockerfile .
-<<<<<<< HEAD
             - echo "Pushing docker third image to AWS ECR..."
-=======
-            - echo "Pushing docker second image to AWS ECR..."
->>>>>>> 0628449c8369b2504b1a7412d1ff37cb662eb042
             - docker push 794038237159.dkr.ecr.us-west-1.amazonaws.com/document-parser-dev
       - step:
           name: Trigger Deployment Pipeline
