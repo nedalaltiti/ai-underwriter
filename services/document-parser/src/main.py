@@ -5,15 +5,19 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
 
 from api.health import router as health_router
 from api.routes import router as api_router
 from config import config
-from utils.logging import setup_logging, get_logger
+from libs.forth_shared.utils.logging import setup_logging
 
 # Setup logging first
-setup_logging()
-logger = get_logger(__name__)
+setup_logging(
+    service_name=config.service_name,
+    log_level=config.log_level,
+    log_format="human" if config.is_development() else "json"
+)
 
 
 @asynccontextmanager

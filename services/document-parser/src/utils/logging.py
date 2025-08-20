@@ -1,50 +1,13 @@
 # services/document-parser/src/utils/logging.py
-"""Professional logging utilities for document-parser service."""
+"""Backward compatibility bridge for logging - use forth_shared logging."""
 
-import sys
-from typing import Optional
+# Import from shared logging utilities
+from libs.forth_shared.utils.logging import setup_logging
 from loguru import logger
-from config import config
 
+def get_logger(name: str = None):
+    """Get logger instance for backward compatibility."""
+    return logger
 
-def setup_logging() -> None:
-    """Setup professional logging configuration."""
-    # Remove default loguru handler
-    logger.remove()
-    
-    logger.add(
-        sys.stdout,
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name} | {message}",
-        level=config.log_level,
-        enqueue=True,    # Thread-safe
-        catch=True       # Catch exceptions
-    )
-    
-    # Configure external library logging levels
-    import logging
-    logging.getLogger('httpx').setLevel(logging.WARNING)
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
-    logging.getLogger('google').setLevel(logging.INFO)
-    logging.getLogger('botocore').setLevel(logging.WARNING)
-    logging.getLogger('boto3').setLevel(logging.WARNING)
-    
-    # Service startup log
-    logger.bind(service=config.service_name, version=config.service_version).info(
-        f"service.start name={config.service_name} version={config.service_version} env={config.environment}"
-    )
-
-
-def get_logger(name: Optional[str] = None):
-    """
-    Get a loguru logger instance with service context.
-    
-    Args:
-        name: Logger name (defaults to service name)
-        
-    Returns:
-        Loguru logger instance
-    """
-    if name is None:
-        name = config.service_name
-    
-    return logger.bind(service=config.service_name, module=name)
+# Re-export for backward compatibility
+__all__ = ['setup_logging', 'get_logger', 'logger']
