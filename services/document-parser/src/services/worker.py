@@ -16,9 +16,8 @@ from config import config
 from core.processor import DocumentProcessor
 from core.validator import UnderwritingValidator
 from integrations.gemini import GeminiClient
-from models.extraction import ProcessingTask, ProcessingStatus
+from models.extraction import ProcessingTask
 from utils.logging import get_logger, setup_logging
-from utils.metrics import metrics_tracker
 
 logger = get_logger(__name__)
 
@@ -298,7 +297,7 @@ class DocumentWorker:
     async def _store_processing_result(self, task: ProcessingTask, result, worker_id: str):
         """Store processing result to database."""
         try:
-            from integrations.database import UnderwritingDatabaseAdapter
+            from integrations.database.adapter import UnderwritingDatabaseAdapter
             
             # Initialize database adapter with config
             db_adapter = UnderwritingDatabaseAdapter(config)

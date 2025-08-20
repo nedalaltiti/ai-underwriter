@@ -1,56 +1,62 @@
 # services/document-parser/src/utils/logging.py
-"""Logging utilities for document-parser service."""
+"""Professional logging utilities for document-parser service."""
 
-import logging
 import sys
 from typing import Optional
-
+from loguru import logger
 from config import config
 
 
 def setup_logging() -> None:
-    """Setup logging configuration for the service."""
-    # Create formatter
-    formatter = logging.Formatter(
-        fmt='%(asctime)s | %(levelname)-5s | %(name)s | %(message)s',
-        datefmt='%b%d %H:%M:%S'
-    )
+    """Setup professional JSON logging configuration."""
+    # Remove default loguru handler
+    logger.remove()
     
-    # Setup root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(getattr(logging, config.log_level))
+    # Add structured JSON handler for production
+    if config.environment == "production":
+        logger.add(
+            sys.stdout,
+            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name} | {message}",
+            level=config.log_level,
+            serialize=True,  # JSON output
+            enqueue=True,    # Thread-safe
+            catch=True       # Catch exceptions
+        )
+    else:
+        # Development format (more readable)
+        logger.add(
+            sys.stdout,
+            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name} | {message}",
+            level=config.log_level,
+            enqueue=True,
+            catch=True
+        )
     
-    # Remove existing handlers
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-    
-    # Add console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-    root_logger.addHandler(console_handler)
-    
-    # Set specific logger levels
+    # Configure external library logging levels
+    import logging
     logging.getLogger('httpx').setLevel(logging.WARNING)
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('google').setLevel(logging.INFO)
+    logging.getLogger('botocore').setLevel(logging.WARNING)
+    logging.getLogger('boto3').setLevel(logging.WARNING)
     
-    # Service-specific logger
-    service_logger = logging.getLogger(config.service_name)
-    service_logger.info(f"🚀 Starting {config.service_name} v{config.service_version}")
-    service_logger.info(f"Environment: {config.environment}")
-    service_logger.info(f"Log level: {config.log_level}")
+    # Service startup log
+    logger.bind(service=config.service_name, version=config.service_version).info(
+        f"service.start name={config.service_name} version={config.service_version} env={config.environment}"
+    )
 
 
-def get_logger(name: Optional[str] = None) -> logging.Logger:
+def get_logger(name: Optional[str] = None):
     """
-    Get a logger instance.
+    Get a loguru logger instance with service context.
     
     Args:
         name: Logger name (defaults to service name)
         
     Returns:
-        Logger instance
+        Loguru logger instance
     """
     if name is None:
         name = config.service_name
-    return logging.getLogger(name)
+    
+    return logger.bind(service=config.service_name, module=name)

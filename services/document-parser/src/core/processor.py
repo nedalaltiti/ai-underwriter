@@ -1,19 +1,16 @@
 # services/document-parser/src/core/processor.py
 """Core document processing logic."""
 
-import json
-import re
 import time
 from datetime import datetime
-from typing import Any, Dict
+from typing import Dict
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from integrations.gemini import GeminiClient
-from models.extraction import ExtractedDocument, ProcessingResult, ProcessingStatus, ProcessingTask
+from models.extraction import ProcessingResult, ProcessingStatus, ProcessingTask
 from utils.logging import get_logger
-from utils.json_parser import extract_json_from_response
 from config import config
 
 from .exceptions import DocumentProcessingError, ExtractionError, NonRetryableError
@@ -56,7 +53,7 @@ class DocumentProcessor:
             
             # Enhanced extraction and storage with validation
             try:
-                from integrations.database import UnderwritingDatabaseAdapter
+                from integrations.database.adapter import UnderwritingDatabaseAdapter
                 
                 # Extract document package with validation using existing client
                 file_id = int(task.doc_id)
@@ -146,44 +143,78 @@ class DocumentProcessor:
         Returns:
             Dictionary with base64 encoded PDF data
         """
-        logger.debug(f"parse.prepare contact={task.contact_id} doc={task.doc_id} s3_key_present={bool(task.s3_key)} url_present={bool(task.document_url)}")
+        logger.bind(
+            contact_id=task.contact_id,
+            doc_id=task.doc_id,
+            s3_key_present=bool(task.s3_key),
+            url_present=bool(task.document_url)
+        ).debug("parse.prepare")
         
         # Strategy 1: Try S3 direct access first (most efficient)
         if task.s3_key and task.s3_key.strip():
             try:
                 from integrations.s3 import S3Client
                 s3_client = S3Client()
-                logger.debug(f"parse.s3_download contact={task.contact_id} doc={task.doc_id} s3_key={task.s3_key}")
+                logger.bind(
+                    contact_id=task.contact_id,
+                    doc_id=task.doc_id,
+                    s3_key=task.s3_key
+                ).debug("parse.s3_download")
                 
                 start_time = time.time()
                 result = s3_client.download_document_from_s3(task.s3_key)
                 download_time = int((time.time() - start_time) * 1000)
                 
-                logger.info(f"parse.s3_success contact={task.contact_id} doc={task.doc_id} duration_ms={download_time}")
+                logger.bind(
+                    contact_id=task.contact_id,
+                    doc_id=task.doc_id,
+                    duration_ms=download_time
+                ).info("parse.s3_success")
                 return result
                 
             except Exception as e:
-                logger.warning(f"parse.s3_failed contact={task.contact_id} doc={task.doc_id} error={type(e).__name__}")
+                logger.bind(
+                    contact_id=task.contact_id,
+                    doc_id=task.doc_id,
+                    error=type(e).__name__
+                ).warning("parse.s3_failed")
         
         # Strategy 2: Fall back to URL download
         if task.document_url and task.document_url.strip():
             try:
-                logger.debug(f"parse.url_download contact={task.contact_id} doc={task.doc_id} url={task.document_url}")
+                logger.bind(
+                    contact_id=task.contact_id,
+                    doc_id=task.doc_id,
+                    url=task.document_url
+                ).debug("parse.url_download")
                 
                 start_time = time.time()
                 result = self._download_from_url(task.document_url)
                 download_time = int((time.time() - start_time) * 1000)
                 
-                logger.info(f"parse.url_success contact={task.contact_id} doc={task.doc_id} duration_ms={download_time}")
+                logger.bind(
+                    contact_id=task.contact_id,
+                    doc_id=task.doc_id,
+                    duration_ms=download_time
+                ).info("parse.url_success")
                 return result
                 
             except Exception as e:
-                logger.error(f"parse.url_failed contact={task.contact_id} doc={task.doc_id} error={type(e).__name__}")
+                logger.bind(
+                    contact_id=task.contact_id,
+                    doc_id=task.doc_id,
+                    error=type(e).__name__
+                ).error("parse.url_failed")
                 raise DocumentProcessingError(f"Failed to download document from URL: {e}")
         
         # No valid source available
         error_msg = f"No valid document source available"
-        logger.error(f"parse.no_source contact={task.contact_id} doc={task.doc_id} s3_key_present={bool(task.s3_key)} url_present={bool(task.document_url)}")
+        logger.bind(
+            contact_id=task.contact_id,
+            doc_id=task.doc_id,
+            s3_key_present=bool(task.s3_key),
+            url_present=bool(task.document_url)
+        ).error("parse.no_source")
         raise DocumentProcessingError(error_msg)
     
     def _download_from_url(self, document_url: str) -> Dict[str, str]:

@@ -229,6 +229,9 @@ class GeminiClient:
             # Add file_id to all entities
             self._add_file_id_to_entities(package_data, file_id)
             
+            # Fix string 'null' values to actual None for nested objects
+            self._fix_null_strings(package_data)
+            
             # Create and validate package
             try:
                 package = ExtractedDocumentPackage(**package_data)
@@ -756,9 +759,23 @@ class GeminiClient:
                     if numeric.isdigit():
                         entity[key] = int(numeric)
                 
-                # Clean up empty strings to None for optional fields
+                # Clean up empty strings and placeholders to None for optional fields
                 if value.strip() == '' or value.lower() in ['null', 'none', 'n/a', 'na']:
                     entity[key] = None
+                
+                # Fix placeholder values - common in template documents
+                if isinstance(value, str) and '{' in value and '}' in value:
+                    # Common placeholders that should be None
+                    placeholder_patterns = [
+                        '{COSIGNDATE}', '{SIGNDATE}', '{DATE}', '{SIGNATURE}', '{NAME}',
+                        '{AMOUNT}', '{PHONE}', '{EMAIL}', '{ADDRESS}', '{SSN}'
+                    ]
+                    if value.upper() in placeholder_patterns:
+                        logger.bind(
+                            field=key,
+                            placeholder=value
+                        ).debug("gemini.placeholder_detected")
+                        entity[key] = None
             
             # Handle non-string values for payment_no (integers need to be converted to strings)
             if key in ['payment_no', 'payment_number'] and isinstance(value, int):
@@ -776,6 +793,22 @@ class GeminiClient:
                     # leave as-is; validator may null it
                     entity[f] = raw
     
+    def _fix_null_strings(self, data: Dict[str, Any]) -> None:
+        """Convert string 'null' values to actual None for nested objects."""
+        for key, value in data.items():
+            if isinstance(value, str) and value.lower() == 'null':
+                data[key] = None
+            elif isinstance(value, list):
+                # Fix null strings in list items
+                for i, item in enumerate(value):
+                    if isinstance(item, str) and item.lower() == 'null':
+                        value[i] = None
+                    elif isinstance(item, dict):
+                        self._fix_null_strings(item)
+            elif isinstance(value, dict):
+                # Recursively fix nested objects
+                self._fix_null_strings(value)
+
     def health_check(self) -> bool:
         """Check if Gemini client is healthy."""
         try:

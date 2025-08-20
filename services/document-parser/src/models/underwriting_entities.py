@@ -1,7 +1,6 @@
 # services/document-parser/src/models/underwriting_entities.py
 """
 Comprehensive Pydantic v2 models for underwriting database entities.
-Designed for robust extraction, validation, and storage with zero tolerance for hallucination.
 """
 
 from datetime import date, datetime
