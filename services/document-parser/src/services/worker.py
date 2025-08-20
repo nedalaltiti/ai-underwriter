@@ -89,9 +89,12 @@ class DocumentWorker:
     
     async def start(self):
         """Start the worker."""
-        logger.info("🔄 Starting document processing worker")
-        logger.info(f"Input queue: {config.input_queue_name}")
-        logger.info(f"Worker concurrency: {config.worker_concurrency}")
+        logger.bind(service="document-parser").info("worker.startup")
+        logger.bind(
+            service="document-parser",
+            queue=config.input_queue_name,
+            concurrency=config.worker_concurrency
+        ).info("worker.config")
         
         self.running = True
         
@@ -112,11 +115,14 @@ class DocumentWorker:
         except asyncio.CancelledError:
             logger.info("Worker tasks cancelled")
         finally:
-            logger.info("🛑 Document processing worker stopped")
+            logger.bind(service="document-parser").info("worker.stopped")
     
     async def _process_messages_loop(self, worker_id: str):
         """Main message processing loop for a worker."""
-        logger.info(f"Worker {worker_id} started")
+        logger.bind(
+            service="document-parser",
+            worker_id=worker_id
+        ).info("worker.started")
         
         while self.running:
             try:
@@ -338,12 +344,16 @@ class DocumentWorker:
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals."""
-        logger.info(f"Received signal {signum}, shutting down gracefully...")
+        logger.bind(
+            service="document-parser",
+            signal=signum,
+            graceful=True
+        ).info("worker.shutdown_signal")
         self.running = False
     
     def stop(self):
         """Stop the worker."""
-        logger.info("Stopping worker...")
+        logger.bind(service="document-parser").info("worker.stopping")
         self.running = False
 
 

@@ -12,25 +12,14 @@ def setup_logging() -> None:
     # Remove default loguru handler
     logger.remove()
     
-    # Add structured JSON handler for production
-    if config.environment == "production":
-        logger.add(
-            sys.stdout,
-            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name} | {message}",
-            level=config.log_level,
-            serialize=True,  # JSON output
-            enqueue=True,    # Thread-safe
-            catch=True       # Catch exceptions
-        )
-    else:
-        # Development format (more readable)
-        logger.add(
-            sys.stdout,
-            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name} | {message}",
-            level=config.log_level,
-            enqueue=True,
-            catch=True
-        )
+    logger.add(
+        sys.stdout,
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name} | {message}",
+        level=config.log_level,
+        serialize=True,  
+        enqueue=True,    # Thread-safe
+        catch=True       # Catch exceptions
+    )
     
     # Configure external library logging levels
     import logging

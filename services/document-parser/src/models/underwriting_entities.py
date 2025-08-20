@@ -36,11 +36,11 @@ class EngagementTerm(BaseUnderwritingModel):
     file_id: int = Field(..., description="File identifier")
     company_name: Optional[str] = Field(None, max_length=255)
     company_address: Optional[str] = Field(None, max_length=500)
-    company_phone: Optional[str] = Field(None, max_length=20)
+    company_phone: Optional[str] = Field(None)
     company_type: Optional[str] = Field(None, max_length=100)
-    settlement_fee: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
-    settlement_fee_percentage: Optional[Decimal] = Field(None, ge=0, le=100, decimal_places=2)
-    monthly_payment: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    settlement_fee: Optional[Decimal] = None
+    settlement_fee_percentage: Optional[Decimal] = None
+    monthly_payment: Optional[Decimal] = None
     client_name: Optional[str] = Field(None, max_length=255)
     client_signature: Optional[str] = Field(None, max_length=255)
     client_signature_date: Optional[date] = None
@@ -48,16 +48,10 @@ class EngagementTerm(BaseUnderwritingModel):
     coclient_signature: Optional[str] = Field(None, max_length=255)
     coclient_signature_date: Optional[date] = None
     initials: Optional[str] = Field(None, max_length=10)
-    initials_count: Optional[int] = Field(None, ge=0)
+    initials_count: Optional[int] = None
     is_all_initials_present: Optional[bool] = None
-    page_count: Optional[int] = Field(None, ge=1)
+    page_count: Optional[int] = None
 
-    @field_validator('company_phone')
-    @classmethod
-    def validate_phone(cls, v):
-        if v and not re.match(r'^[\d\s\-\(\)\+\.]+$', v):
-            return None  # Invalid phone, set to None rather than error
-        return v
 
 
 class FCRAConsumerReportConsent(BaseUnderwritingModel):
@@ -77,7 +71,7 @@ class DebtSchedule(BaseUnderwritingModel):
     creditor_name: Optional[str] = Field(None, max_length=255)
     name_on_account: Optional[str] = Field(None, max_length=255)
     account_number: Optional[str] = Field(None, max_length=64)
-    current_balance: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    current_balance: Optional[Decimal] = None
     debt_type: Optional[str] = Field(None, max_length=100)
 
 
@@ -90,27 +84,27 @@ class FinancialAnalysis(BaseUnderwritingModel):
     coapplicant_name: Optional[str] = Field(None, max_length=255)
     coapplicant_email: Optional[EmailStr] = None
     draft_type: Optional[str] = Field(None, max_length=100)
-    fixed_income: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    fixed_income: Optional[Decimal] = None
     day_phone: Optional[str] = Field(None, max_length=20)
     evening_phone: Optional[str] = Field(None, max_length=20)
     cell_phone: Optional[str] = Field(None, max_length=20)
     program_start_date: Optional[date] = None
     estimated_program_start_date: Optional[date] = None
-    lump_sum: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
-    applicant_monthly_income: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
-    coapplicant_monthly_income: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
-    applicant_expenses: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
-    coapplicant_expenses: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    lump_sum: Optional[Decimal] = None
+    applicant_monthly_income: Optional[Decimal] = None
+    coapplicant_monthly_income: Optional[Decimal] = None
+    applicant_expenses: Optional[Decimal] = None
+    coapplicant_expenses: Optional[Decimal] = None
     applicant_total_net_income: Optional[Decimal] = Field(None, decimal_places=2)
     coapplicant_total_net_income: Optional[Decimal] = Field(None, decimal_places=2)
-    total_enrolled_debt: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
-    estimated_program_length: Optional[int] = Field(None, ge=1)
-    monthly_program_deposit: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
-    estimated_program_settle_amount: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    total_enrolled_debt: Optional[Decimal] = None
+    estimated_program_length: Optional[int] = None
+    monthly_program_deposit: Optional[Decimal] = None
+    estimated_program_settle_amount: Optional[Decimal] = None
     fee_method: Optional[str] = Field(None, max_length=100)
-    total_program_fees: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    total_program_fees: Optional[Decimal] = None
     estimated_program_savings: Optional[Decimal] = Field(None, decimal_places=2)
-    estimated_total_cost: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    estimated_total_cost: Optional[Decimal] = None
     hardship_details: Optional[str] = Field(None, max_length=2000)
     client_signature: Optional[str] = Field(None, max_length=255)
     client_signature_date: Optional[date] = None
@@ -158,21 +152,17 @@ class PowerOfAttorney(BaseUnderwritingModel):
     attorney_address: Optional[str] = Field(None, max_length=500)
     attorney_phone: Optional[str] = Field(None, max_length=20)
     client_name: Optional[str] = Field(None, max_length=255)
-    client_ssn: Optional[str] = Field(None, max_length=11)
+    client_ssn: Optional[str] = None
     client_dob: Optional[date] = None
     client_signature: Optional[str] = Field(None, max_length=255)
     client_signature_date: Optional[datetime] = None
     coclient_name: Optional[str] = Field(None, max_length=255)
-    coclient_ssn: Optional[str] = Field(None, max_length=11)
+    coclient_ssn: Optional[str] = None
     coclient_dob: Optional[date] = None
     coclient_signature: Optional[str] = Field(None, max_length=255)
 
-    @field_validator('client_ssn', 'coclient_ssn')
-    @classmethod
-    def validate_ssn(cls, v):
-        if v and not re.match(r'^\d{3}-?\d{2}-?\d{4}$', v):
-            return None  # Invalid SSN format
-        return v
+    # SSN validation removed - store whatever is extracted
+    # Validation will be handled by separate validation service
 
 
 class CancellationNotice(BaseUnderwritingModel):
@@ -192,7 +182,7 @@ class PaymentGatewayAgreement(BaseUnderwritingModel):
     client_first_name: Optional[str] = Field(None, max_length=255)
     client_last_name: Optional[str] = Field(None, max_length=255)
     client_middle_initial: Optional[str] = Field(None, max_length=255)
-    client_ssn: Optional[str] = Field(None, max_length=11)
+    client_ssn: Optional[str] = None
     client_dob: Optional[date] = None
     client_address: Optional[str] = Field(None, max_length=500)
     client_city: Optional[str] = Field(None, max_length=100)
@@ -203,21 +193,15 @@ class PaymentGatewayAgreement(BaseUnderwritingModel):
     coclient_first_name: Optional[str] = Field(None, max_length=255)
     coclient_last_name: Optional[str] = Field(None, max_length=255)
     coclient_middle_initial: Optional[str] = Field(None, max_length=255)
-    coclient_ssn: Optional[str] = Field(None, max_length=11)
+    coclient_ssn: Optional[str] = None
     coclient_dob: Optional[date] = None
     client_initials: Optional[str] = Field(None, max_length=10)
     client_signature: Optional[str] = Field(None, max_length=255)
     client_signature_date: Optional[datetime] = None
     coclient_signature: Optional[str] = Field(None, max_length=255)
     coclient_signature_date: Optional[datetime] = None
-    pages_count: Optional[int] = Field(None, ge=1)
+    pages_count: Optional[int] = None
 
-    @field_validator('client_state')
-    @classmethod
-    def validate_state(cls, v):
-        if v and len(v) != 2:
-            return None  # Invalid state code
-        return v.upper() if v else None
 
 
 class PaymentGatewayServiceFees(BaseUnderwritingModel):
@@ -226,7 +210,7 @@ class PaymentGatewayServiceFees(BaseUnderwritingModel):
     file_id: int = Field(..., description="File identifier")
     service_type: Optional[str] = Field(None, max_length=100)
     service_name: Optional[str] = Field(None, max_length=255)
-    service_amount: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    service_amount: Optional[Decimal] = None
 
 
 class PaymentGatewayBankInfo(BaseUnderwritingModel):
@@ -239,19 +223,12 @@ class PaymentGatewayBankInfo(BaseUnderwritingModel):
     routing_number: Optional[str] = Field(None, max_length=9)
     account_type: Optional[Literal["checking", "savings"]] = None
     address: Optional[str] = Field(None, max_length=500)
-    recurring_debit_authorization: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    recurring_debit_authorization: Optional[Decimal] = None
     first_debit_date: Optional[date] = None
     client_signature: Optional[str] = Field(None, max_length=128)
     client_signature_date: Optional[date] = None
     coclient_signature: Optional[str] = Field(None, max_length=128)
     coclient_signature_date: Optional[date] = None
-
-    @field_validator('routing_number')
-    @classmethod
-    def validate_routing_number(cls, v):
-        if v and not re.match(r'^\d{9}$', v):
-            return None  # Invalid routing number
-        return v
 
 
 class PaymentGatewayDepositSchedule(BaseUnderwritingModel):
@@ -260,7 +237,7 @@ class PaymentGatewayDepositSchedule(BaseUnderwritingModel):
     file_id: int = Field(..., description="File identifier")
     payment_no: Optional[str] = Field(None, max_length=50)
     process_date: Optional[date] = None
-    amount: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    amount: Optional[Decimal] = None
 
 
 class LegalPlanAgreement(BaseUnderwritingModel):
@@ -269,10 +246,10 @@ class LegalPlanAgreement(BaseUnderwritingModel):
     file_id: int = Field(..., description="File identifier")
     legal_plan_provider: Optional[str] = Field(None, max_length=255)
     member_name: Optional[str] = Field(None, max_length=255)
-    member_ssn: Optional[str] = Field(None, max_length=11)
+    member_ssn: Optional[str] = None
     member_dob: Optional[date] = None
     coapplicant_name: Optional[str] = Field(None, max_length=255)
-    coapplicant_ssn: Optional[str] = Field(None, max_length=11)
+    coapplicant_ssn: Optional[str] = None
     coapplicant_dob: Optional[date] = None
     address: Optional[str] = Field(None, max_length=500)
     city: Optional[str] = Field(None, max_length=100)
@@ -283,11 +260,11 @@ class LegalPlanAgreement(BaseUnderwritingModel):
     email: Optional[EmailStr] = None
     referring_company: Optional[str] = Field(None, max_length=255)
     first_payment_date: Optional[date] = None
-    first_payment_amount: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    first_payment_amount: Optional[Decimal] = None
     monthly_recurring_date: Optional[date] = None
-    monthly_payment_amount: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
-    debt_relief_program_duration: Optional[int] = Field(None, ge=1)
-    members_accumulation_amount: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    monthly_payment_amount: Optional[Decimal] = None
+    debt_relief_program_duration: Optional[int] = None
+    members_accumulation_amount: Optional[Decimal] = None
     payment_processor_name: Optional[str] = Field(None, max_length=255)
     credit_card_number: Optional[str] = Field(None, max_length=20)
     bank_account_number: Optional[str] = Field(None, max_length=50)
@@ -297,11 +274,11 @@ class LegalPlanAgreement(BaseUnderwritingModel):
     bank_institution_name: Optional[str] = Field(None, max_length=255)
     credit_card_billing_address: Optional[str] = Field(None, max_length=500)
     account_holder_name: Optional[str] = Field(None, max_length=255)
-    initials_count: Optional[int] = Field(None, ge=0)
+    initials_count: Optional[int] = None
     is_all_initials_present: Optional[bool] = None
     client_signature: Optional[str] = Field(None, max_length=255)
     signature_date: Optional[datetime] = None
-    pages_count: Optional[int] = Field(None, ge=1)
+    pages_count: Optional[int] = None
 
 
 class ClixsignCertificateSender(BaseUnderwritingModel):
@@ -316,16 +293,8 @@ class ClixsignCertificateSender(BaseUnderwritingModel):
     sender_name: Optional[str] = None
     sender_email_address: Optional[EmailStr] = None
     sender_ip_address: Optional[str] = Field(None, max_length=32)
-    signers_count: Optional[int] = Field(None, ge=0)
+    signers_count: Optional[int] = None
     
-    @field_validator('package_id', mode='before')
-    @classmethod
-    def validate_package_id(cls, v):
-        """Convert package_id to string for consistent storage."""
-        if v is None:
-            return None
-        return str(v)
-
 
 class ClixsignCertificateSigner(BaseUnderwritingModel):
     """Clixsign Certificate Signer information - multiple entries per file."""
@@ -341,13 +310,6 @@ class ClixsignCertificateSigner(BaseUnderwritingModel):
     package_signed_at: Optional[datetime] = None
     package_declined_at: Optional[datetime] = None
     
-    @field_validator('package_id', mode='before')
-    @classmethod
-    def validate_package_id(cls, v):
-        """Convert package_id to string for consistent storage."""
-        if v is None:
-            return None
-        return str(v)
 
 
 class ExtractedDocumentPackage(BaseUnderwritingModel):

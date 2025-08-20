@@ -34,8 +34,20 @@ async def lifespan(app: FastAPI):
     # Start the worker in background
     import asyncio
     from services.worker import DocumentWorker
-    worker = DocumentWorker()
-    worker_task = asyncio.create_task(worker.start())
+    
+    try:
+        worker = DocumentWorker()
+        worker_task = asyncio.create_task(worker.start())
+        
+        # Give worker time to initialize before declaring ready
+        await asyncio.sleep(2)
+        
+    except Exception as e:
+        logger.bind(
+            service=config.service_name,
+            error=type(e).__name__
+        ).error("worker.startup_failed")
+        raise
     
     logger.bind(
         service=config.service_name,
