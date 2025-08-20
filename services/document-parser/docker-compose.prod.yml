@@ -23,7 +23,6 @@ services:
       - PARSER_PORT=8003
       - PARSER_WORKERS=1
       - PARSER_WORKER_CONCURRENCY=3
-      - PARSER_DATABASE_URL=postgresql://ai_underwriting_user:${DB_PASSWORD}@postgres:5432/postgres
     env_file:
       - .env.prod
     volumes:
