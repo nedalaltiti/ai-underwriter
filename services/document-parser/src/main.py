@@ -1,10 +1,6 @@
 # services/document-parser/src/main.py
 """Main FastAPI application for document-parser service."""
 
-import warnings
-# Suppress Pydantic v2 deprecation warnings for cleaner logs
-warnings.filterwarnings("ignore", message="Valid config keys have changed in V2")
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -31,41 +27,53 @@ async def lifespan(app: FastAPI):
         gemini_model=config.gemini.model_name
     ).info("service.startup api=starting worker=starting")
     
-    # Start the worker in background
-    import asyncio
-    from services.worker import DocumentWorker
+    worker = None
+    worker_task = None
     
     try:
+        from services.worker import DocumentWorker
         worker = DocumentWorker()
+        
+        # Start worker in background task
+        import asyncio
         worker_task = asyncio.create_task(worker.start())
         
-        # Give worker time to initialize before declaring ready
-        await asyncio.sleep(2)
+        await asyncio.sleep(5 if config.is_production() else 2)
+        
+        logger.bind(
+            service=config.service_name,
+            module="main"
+        ).info("service.ready api=true worker=true")
         
     except Exception as e:
         logger.bind(
             service=config.service_name,
             error=type(e).__name__
         ).error("worker.startup_failed")
-        raise
-    
-    logger.bind(
-        service=config.service_name,
-        component="combined"
-    ).info("service.ready api=true worker=true")
+        if not config.is_production():
+            raise
+        logger.bind(service=config.service_name).warning("service.ready api=true worker=false")
     
     try:
         yield
     finally:
-        # Shutdown
+        # Graceful shutdown
         logger.bind(service=config.service_name).info("service.shutdown graceful=true")
-        worker.stop()
-        try:
-            await asyncio.wait_for(worker_task, timeout=30.0)
-            logger.bind(service=config.service_name).info("service.stopped worker=graceful api=graceful")
-        except asyncio.TimeoutError:
-            logger.bind(service=config.service_name).warning("service.stopped worker=timeout api=graceful")
-            worker_task.cancel()
+        
+        if worker:
+            worker.stop()
+            
+        if worker_task:
+            try:
+                await asyncio.wait_for(worker_task, timeout=config.graceful_shutdown_timeout)
+                logger.bind(service=config.service_name).info("service.stopped worker=graceful api=graceful")
+            except asyncio.TimeoutError:
+                logger.bind(service=config.service_name).warning("service.stopped worker=timeout api=graceful")
+                worker_task.cancel()
+                try:
+                    await worker_task
+                except asyncio.CancelledError:
+                    pass
 
 
 # Create FastAPI application

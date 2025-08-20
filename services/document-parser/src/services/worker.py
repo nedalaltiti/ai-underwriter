@@ -120,9 +120,10 @@ class DocumentWorker:
     async def _process_messages_loop(self, worker_id: str):
         """Main message processing loop for a worker."""
         logger.bind(
-            service="document-parser",
-            worker_id=worker_id
-        ).info("worker.started")
+            service="document-parser", 
+            worker_id=worker_id,
+            queue=config.input_queue_name
+        ).info("worker.ready")
         
         while self.running:
             try:
@@ -144,7 +145,11 @@ class DocumentWorker:
                     try:
                         await self._process_message(message, queue_url, worker_id)
                     except Exception as e:
-                        logger.error(f"Worker {worker_id} failed to process message: {e}")
+                        logger.bind(
+                            service="document-parser",
+                            worker_id=worker_id,
+                            error=type(e).__name__
+                        ).error("worker.message_failed")
                         
             except Exception as e:
                 logger.error(f"Worker {worker_id} loop error: {e}")
@@ -239,7 +244,13 @@ class DocumentWorker:
             # Delete message from queue
             await self._delete_message(queue_url, receipt_handle)
             
-            logger.info(f"parse.completed worker={worker_id} contact={task.contact_id} doc={task.doc_id} status={result.status.value}")
+            logger.bind(
+                service="document-parser",
+                worker_id=worker_id,
+                contact_id=task.contact_id,
+                doc_id=task.doc_id,
+                status=result.status.value,
+            ).info("parse.completed")
             
         except json.JSONDecodeError as e:
             logger.error(f"parse.invalid_json worker={worker_id} error={str(e)}")
@@ -317,9 +328,19 @@ class DocumentWorker:
                         success = await db_adapter.store_document_package(result.extracted_document)
                         
                         if success:
-                            logger.info(f"db.stored worker={worker_id} contact={task.contact_id} doc={task.doc_id}")
+                            logger.bind(
+                                service="document-parser",
+                                worker_id=worker_id,
+                                contact_id=task.contact_id,
+                                doc_id=task.doc_id,
+                            ).info("db.stored")
                         else:
-                            logger.error(f"db.store_failed worker={worker_id} contact={task.contact_id} doc={task.doc_id}")
+                            logger.bind(
+                                service="document-parser",
+                                worker_id=worker_id,
+                                contact_id=task.contact_id,
+                                doc_id=task.doc_id,
+                            ).error("db.store_failed")
                     else:
                         logger.warning(f"parse.invalid_package worker={worker_id} contact={task.contact_id} doc={task.doc_id}")
                 else:

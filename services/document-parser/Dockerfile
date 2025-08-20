@@ -85,5 +85,5 @@ EXPOSE 8003
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://127.0.0.1:8003/api/v1/health/live || exit 1
 
-# Default command for API server
-CMD ["python3", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8003", "--workers", "1"]
+# Default command for API server (production-ready, no --reload)
+CMD ["python3", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8003", "--workers", "1", "--access-log", "--log-level", "info"]

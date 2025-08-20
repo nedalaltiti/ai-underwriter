@@ -22,7 +22,7 @@ class ServiceConfig(BaseSettings):
     """Main service configuration."""
     
     # Core service configuration
-    environment: str = Field(default="development", env="PARSER_ENVIRONMENT")
+    environment: str = Field(default="production", env="PARSER_ENVIRONMENT")
     service_name: str = Field(default="document-parser", env="PARSER_SERVICE_NAME")
     service_version: str = Field(default="1.0.0", env="PARSER_SERVICE_VERSION")
     log_level: str = Field(default="INFO", env="PARSER_LOG_LEVEL")
@@ -44,8 +44,8 @@ class ServiceConfig(BaseSettings):
     input_queue_name: str = Field(default="uw-downloaded-docs-dev-sqs.fifo", env="PARSER_INPUT_QUEUE_NAME")
     output_queue_name: Optional[str] = Field(None, env="PARSER_OUTPUT_QUEUE_NAME")
     sqs_wait_time: int = Field(default=20, ge=0, le=20, env="PARSER_SQS_WAIT_TIME")
-    sqs_max_messages: int = Field(default=1, ge=1, le=10, env="PARSER_SQS_MAX_MESSAGES")
-    sqs_visibility_timeout: int = Field(default=3600, ge=60, le=43200, env="PARSER_SQS_VISIBILITY_TIMEOUT")  # 1 hour
+    sqs_max_messages: int = Field(default=1, ge=1, le=10, env="PARSER_SQS_MAX_MESSAGES")  # One document per worker
+    sqs_visibility_timeout: int = Field(default=300, ge=60, le=43200, env="PARSER_SQS_VISIBILITY_TIMEOUT") 
     
     # S3 Configuration
     s3_bucket_name: str = Field(default="contact-contracts-dev-s3-us-west-1", env="PARSER_S3_BUCKET_NAME")
