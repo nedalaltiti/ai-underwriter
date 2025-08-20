@@ -41,7 +41,7 @@ cd "${SCRIPT_DIR}/src"
 
 echo -e "${GREEN}⚙️  Worker Configuration:${NC}"
 echo -e "${YELLOW}📊 Input Queue: ${PARSER_INPUT_QUEUE_NAME:-uw-downloaded-docs-dev-sqs.fifo}${NC}"
-echo -e "${YELLOW}🔢 Concurrency: ${PARSER_WORKER_CONCURRENCY:-5}${NC}"
+echo -e "${YELLOW}🔢 Concurrency: ${PARSER_WORKER_CONCURRENCY:-1}${NC}"
 echo -e "${YELLOW}🤖 Gemini Model: ${PARSER_GEMINI_MODEL:-gemini-2.0-flash}${NC}"
 
 echo -e "${GREEN}🚀 Starting background worker...${NC}"

@@ -104,7 +104,7 @@ The Document Parser Service is responsible for:
 | `PARSER_ENVIRONMENT` | Environment (development/production) | `development` |
 | `PARSER_LOG_LEVEL` | Log level | `INFO` |
 | `PARSER_PORT` | Service port | `8003` |
-| `PARSER_WORKERS` | Gunicorn workers | `4` |
+| `PARSER_WORKERS` | Gunicorn workers | `1` |
 
 ### Gemini Configuration
 
@@ -118,7 +118,7 @@ The Document Parser Service is responsible for:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PARSER_WORKER_CONCURRENCY` | Worker concurrency | `5` |
+| `PARSER_WORKER_CONCURRENCY` | Worker concurrency | `1` |
 | `PARSER_MAX_FILE_SIZE_MB` | Max file size (MB) | `100` |
 | `PARSER_PROCESSING_TIMEOUT` | Processing timeout (seconds) | `600` |
 | `PARSER_MAX_RETRIES` | Max retry attempts | `3` |
@@ -327,8 +327,8 @@ Adjust concurrency based on load:
 
 ```bash
 # High throughput
-PARSER_WORKER_CONCURRENCY=10 PARSER_WORKERS=8 ./run-dev.sh
+PARSER_WORKER_CONCURRENCY=10 PARSER_WORKERS=1 ./run-dev.sh
 
 # Low latency
-PARSER_GEMINI_TEMPERATURE=0.0 PARSER_WORKERS=2 ./run-dev.sh
+PARSER_GEMINI_TEMPERATURE=0.0 PARSER_WORKERS=1 ./run-dev.sh
 ```

@@ -30,7 +30,7 @@ class ServiceConfig(BaseSettings):
     # Server configuration
     host: str = Field(default="0.0.0.0", env="PARSER_HOST")
     port: int = Field(default=8003, ge=1, le=65535, env="PARSER_PORT")
-    workers: int = Field(default=4, ge=1, le=32, env="PARSER_WORKERS")
+    workers: int = Field(default=1, ge=1, le=32, env="PARSER_WORKERS")
     max_requests: int = Field(default=1000, ge=1, env="PARSER_MAX_REQUESTS")
     max_requests_jitter: int = Field(default=100, ge=0, env="PARSER_MAX_REQUESTS_JITTER")
     timeout: int = Field(default=60, gt=0, env="PARSER_TIMEOUT")
@@ -45,7 +45,7 @@ class ServiceConfig(BaseSettings):
     output_queue_name: Optional[str] = Field(None, env="PARSER_OUTPUT_QUEUE_NAME")
     sqs_wait_time: int = Field(default=20, ge=0, le=20, env="PARSER_SQS_WAIT_TIME")
     sqs_max_messages: int = Field(default=1, ge=1, le=10, env="PARSER_SQS_MAX_MESSAGES")  # One document per worker
-    sqs_visibility_timeout: int = Field(default=300, ge=60, le=43200, env="PARSER_SQS_VISIBILITY_TIMEOUT") 
+    sqs_visibility_timeout: int = Field(default=900, ge=60, le=43200, env="PARSER_SQS_VISIBILITY_TIMEOUT") 
     
     # S3 Configuration
     s3_bucket_name: str = Field(default="contact-contracts-dev-s3-us-west-1", env="PARSER_S3_BUCKET_NAME")
@@ -74,7 +74,7 @@ class ServiceConfig(BaseSettings):
     max_concurrent_requests: int = Field(default=100, ge=1, le=1000, env="PARSER_MAX_CONCURRENT_REQUESTS")
     
     # Worker Configuration  
-    worker_concurrency: int = Field(default=5, ge=1, le=50, env="PARSER_WORKER_CONCURRENCY")
+    worker_concurrency: int = Field(default=1, ge=1, le=50, env="PARSER_WORKER_CONCURRENCY")
     worker_prefetch_count: int = Field(default=1, ge=1, le=10, env="PARSER_WORKER_PREFETCH_COUNT")
     worker_health_check_interval: int = Field(default=30, ge=10, le=300, env="PARSER_WORKER_HEALTH_CHECK_INTERVAL")
     
