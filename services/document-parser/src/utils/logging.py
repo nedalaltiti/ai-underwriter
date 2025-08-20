@@ -8,7 +8,7 @@ from config import config
 
 
 def setup_logging() -> None:
-    """Setup professional JSON logging configuration."""
+    """Setup professional logging configuration."""
     # Remove default loguru handler
     logger.remove()
     
@@ -16,7 +16,6 @@ def setup_logging() -> None:
         sys.stdout,
         format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name} | {message}",
         level=config.log_level,
-        serialize=True,  
         enqueue=True,    # Thread-safe
         catch=True       # Catch exceptions
     )
