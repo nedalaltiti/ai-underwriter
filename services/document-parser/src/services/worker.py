@@ -127,6 +127,9 @@ class DocumentWorker:
         
         while self.running:
             try:
+                # CRITICAL: Yield control to event loop (allows health checks to run)
+                await asyncio.sleep(0)
+                
                 # Get queue URL
                 queue_url = await self._get_queue_url()
                 if not queue_url:
@@ -137,13 +140,25 @@ class DocumentWorker:
                 messages = await self._receive_messages(queue_url)
                 
                 if not messages:
-                    await asyncio.sleep(1)  # Short sleep when no messages
+                    await asyncio.sleep(5)  # Use longer sleep when no messages (was 1)
                     continue
                 
                 # Process each message
                 for message in messages:
                     try:
-                        await self._process_message(message, queue_url, worker_id)
+                        # CRITICAL: Yield control between messages
+                        await asyncio.sleep(0)
+                        
+                        # Add timeout to prevent hanging
+                        await asyncio.wait_for(
+                            self._process_message(message, queue_url, worker_id),
+                            timeout=300  # 5 minutes max per document
+                        )
+                    except asyncio.TimeoutError:
+                        logger.bind(
+                            service="document-parser",
+                            worker_id=worker_id
+                        ).error("worker.processing_timeout")
                     except Exception as e:
                         logger.bind(
                             service="document-parser",
@@ -160,7 +175,11 @@ class DocumentWorker:
     async def _get_queue_url(self) -> Optional[str]:
         """Get SQS queue URL."""
         try:
-            response = self.sqs_client.get_queue_url(QueueName=config.input_queue_name)
+            # Use asyncio.to_thread to prevent blocking event loop
+            response = await asyncio.to_thread(
+                self.sqs_client.get_queue_url,
+                QueueName=config.input_queue_name
+            )
             return response['QueueUrl']
         except ClientError as e:
             if e.response['Error']['Code'] == 'AWS.SimpleQueueService.NonExistentQueue':
@@ -172,7 +191,9 @@ class DocumentWorker:
     async def _receive_messages(self, queue_url: str) -> list:
         """Receive messages from SQS queue."""
         try:
-            response = self.sqs_client.receive_message(
+            # Use asyncio.to_thread to prevent blocking event loop
+            response = await asyncio.to_thread(
+                self.sqs_client.receive_message,
                 QueueUrl=queue_url,
                 MaxNumberOfMessages=config.sqs_max_messages,
                 WaitTimeSeconds=config.sqs_wait_time,
@@ -356,7 +377,9 @@ class DocumentWorker:
     async def _delete_message(self, queue_url: str, receipt_handle: str):
         """Delete processed message from queue."""
         try:
-            self.sqs_client.delete_message(
+            # Use asyncio.to_thread to prevent blocking event loop
+            await asyncio.to_thread(
+                self.sqs_client.delete_message,
                 QueueUrl=queue_url,
                 ReceiptHandle=receipt_handle
             )
@@ -380,9 +403,13 @@ class DocumentWorker:
 
 async def main():
     """Main worker entry point."""
-    setup_logging()
+    setup_logging(
+        service_name=config.service_name,
+        log_level=config.log_level,
+        log_format="text" if config.is_development() else "json"
+    )
     
-    logger.info("🚀 Starting document-parser worker")
+    logger.info("Starting document-parser worker")
     logger.info(f"Environment: {config.environment}")
     logger.info(f"Service version: {config.service_version}")
     

@@ -47,7 +47,7 @@ class EngagementTerm(BaseUnderwritingModel):
     coclient_name: Optional[str] = Field(None, max_length=255)
     coclient_signature: Optional[str] = Field(None, max_length=255)
     coclient_signature_date: Optional[date] = None
-    initials: Optional[str] = Field(None, max_length=10)
+    initials: Optional[str] = None
     initials_count: Optional[int] = None
     is_all_initials_present: Optional[bool] = None
     page_count: Optional[int] = None
@@ -139,7 +139,7 @@ class ProgramDisclosure(BaseUnderwritingModel):
     file_id: int = Field(..., description="File identifier")
     company_name: Optional[str] = Field(None, max_length=255)
     settlement_fee_percent: Optional[Decimal] = Field(None, ge=0, le=100, decimal_places=2)
-    client_initial: Optional[str] = Field(None, max_length=10)
+    client_initial: Optional[str] = None
     is_all_initials_present: Optional[bool] = None
 
 
@@ -220,7 +220,7 @@ class PaymentGatewayBankInfo(BaseUnderwritingModel):
     authorizing_person_name: Optional[str] = Field(None, max_length=255)
     bank_name: Optional[str] = Field(None, max_length=255)
     account_number: Optional[str] = Field(None, max_length=50)
-    routing_number: Optional[str] = Field(None, max_length=9)
+    routing_number: Optional[str] = None
     account_type: Optional[Literal["checking", "savings"]] = None
     address: Optional[str] = Field(None, max_length=500)
     recurring_debit_authorization: Optional[Decimal] = None

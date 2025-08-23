@@ -132,24 +132,37 @@ class GeminiClient:
     
 
     async def extract_with_validation(self, pdf_data: Dict[str, str], file_id: int, attempts: int = 3) -> Optional[ExtractedDocumentPackage]:
-        """Extract with validation - wrapper for backwards compatibility."""
-        # Simply call extract_document_entities with retry logic
+        """Extract with validation - with lenient storage on final attempt."""
         for attempt in range(max(1, attempts)):
-            logger.info(f"Extraction attempt {attempt + 1}/{attempts}")
+            is_final_attempt = (attempt == attempts - 1)
+            logger.info(f"Extraction attempt {attempt + 1}/{attempts}, final_attempt={is_final_attempt}")
+            
             try:
-                result = await self.extract_document_entities(pdf_data, file_id)
+                # Always try normal validation first (even on final attempt)
+                result = await self.extract_document_entities(pdf_data, file_id, lenient_mode=False)
                 if result:
                     return result
             except Exception as e:
                 logger.warning(f"Attempt {attempt + 1} failed: {e}")
-                if attempt == attempts - 1:
+                if is_final_attempt:
+                    # On final attempt, if normal validation failed, try lenient storage
+                    logger.info("Final attempt with normal validation failed, trying lenient storage...")
+                    try:
+                        result = await self.extract_document_entities(pdf_data, file_id, lenient_mode=True, force_lenient=True)
+                        if result:
+                            logger.warning("Stored document with cleaned validation issues on final attempt")
+                            return result
+                    except Exception as final_e:
+                        logger.error(f"Even lenient storage failed: {final_e}")
                     raise
         return None
     
     async def extract_document_entities(
         self, 
         pdf_data: Dict[str, str],
-        file_id: int
+        file_id: int,
+        lenient_mode: bool = False,
+        force_lenient: bool = False
     ) -> Optional[ExtractedDocumentPackage]:
         """
         Extract entities from document using comprehensive extraction.
@@ -283,6 +296,19 @@ class GeminiClient:
                 return package
                 
             except Exception as e:
+                if lenient_mode or force_lenient:
+                    # On final attempt or force lenient, try to store with cleaned data
+                    logger.warning(f"Validation failed, attempting lenient storage: {e}")
+                    try:
+                        cleaned_package_data = self._clean_invalid_fields(package_data, e)
+                        package = ExtractedDocumentPackage(**cleaned_package_data)
+                        logger.warning(f"Successfully created package with lenient validation - some fields may be null")
+                        return package
+                    except Exception as lenient_e:
+                        logger.error(f"Even lenient validation failed: {lenient_e}")
+                        if force_lenient:
+                            return None
+                
                 logger.error(f"Failed to create document package: {e}")
                 logger.debug(f"Package data: {package_data}")
                 return None
@@ -304,20 +330,23 @@ class GeminiClient:
             pdf_size_estimate = len(pdf_data.get('data', '')) if 'data' in pdf_data else 0
             pdf_size_mb = pdf_size_estimate / 1024 / 1024 * 0.75  # Approximate PDF size in MB
             
-            if pdf_size_estimate > 20000000:  # >20MB base64 (~15MB PDF)
-                timeout_seconds = 600  # 10 minutes for very large files
+            if pdf_size_estimate > 40000000:  # >40MB base64 (~30MB PDF)
+                timeout_seconds = 900  # 15 minutes for extremely large files
+                logger.warning(f"Processing extremely large PDF (~{pdf_size_mb:.1f}MB), using maximum timeout")
+            elif pdf_size_estimate > 26666667:  # >26.7MB base64 (~20MB PDF)
+                timeout_seconds = 720  # 12 minutes for very large files
                 logger.warning(f"Processing very large PDF (~{pdf_size_mb:.1f}MB), using extended timeout")
-            elif pdf_size_estimate > 13333333:  # >13.3MB base64 (~10MB PDF)
-                timeout_seconds = 450  # 7.5 minutes for large files
+            elif pdf_size_estimate > 20000000:  # >20MB base64 (~15MB PDF)
+                timeout_seconds = 600  # 10 minutes for large files
                 logger.warning(f"Processing large PDF (~{pdf_size_mb:.1f}MB), using extended timeout")
+            elif pdf_size_estimate > 13333333:  # >13.3MB base64 (~10MB PDF)
+                timeout_seconds = 450  # 7.5 minutes for medium-large files
+                logger.info(f"Processing medium-large PDF (~{pdf_size_mb:.1f}MB), using extended timeout")
             elif pdf_size_estimate > 7000000:  # >7MB base64 (~5MB PDF)
                 timeout_seconds = 300  # 5 minutes for medium files
-                logger.info(f"Processing medium PDF (~{pdf_size_mb:.1f}MB), using extended timeout")
-            elif pdf_size_estimate > 3500000:  # >3.5MB base64 (~2.5MB PDF)
-                timeout_seconds = 180  # 3 minutes for small-medium files
-                logger.info(f"Processing PDF (~{pdf_size_mb:.1f}MB), using extended timeout")
+                logger.info(f"Processing medium PDF (~{pdf_size_mb:.1f}MB), using standard timeout")
             else:
-                timeout_seconds = 120  # 2 minutes for normal files
+                timeout_seconds = 180  # 3 minutes for normal files
                 logger.info(f"Processing PDF (~{pdf_size_mb:.1f}MB), using standard timeout")
             
             timeout = httpx.Timeout(float(timeout_seconds))
@@ -472,6 +501,84 @@ class GeminiClient:
                         package_data[package_key] = value
         
         return package_data
+
+    def _clean_invalid_fields(self, package_data: Dict[str, Any], validation_error: Exception) -> Dict[str, Any]:
+        """Clean invalid fields to allow lenient storage on final attempt."""
+        from pydantic import ValidationError
+        import copy
+        
+        cleaned_data = copy.deepcopy(package_data)
+        
+        if isinstance(validation_error, ValidationError):
+            for error in validation_error.errors():
+                field_path = error.get('loc', ())
+                error_type = error.get('type', '')
+                
+                logger.info(f"Cleaning validation error: {'.'.join(map(str, field_path))} - {error_type}")
+                
+                # Navigate to the problematic field and fix it
+                current = cleaned_data
+                for i, key in enumerate(field_path[:-1]):
+                    if isinstance(current, dict) and key in current:
+                        current = current[key]
+                    elif isinstance(current, list) and isinstance(key, int) and 0 <= key < len(current):
+                        current = current[key]
+                    else:
+                        break
+                
+                if len(field_path) > 0:
+                    final_key = field_path[-1]
+                    
+                    # Handle specific validation error types
+                    if error_type == 'string_too_long':
+                        # Truncate string fields that are too long
+                        if isinstance(current, dict) and final_key in current:
+                            original_value = current[final_key]
+                            if isinstance(original_value, str):
+                                # Get max length from error message if possible
+                                max_length = self._extract_max_length_from_error(error)
+                                if max_length:
+                                    current[final_key] = original_value[:max_length]
+                                    logger.info(f"Truncated {'.'.join(map(str, field_path))} from {len(original_value)} to {max_length} chars")
+                                else:
+                                    current[final_key] = None
+                                    logger.info(f"Set {'.'.join(map(str, field_path))} to null due to length issue")
+                    
+                    elif error_type in ['date_from_datetime_parsing', 'datetime_parsing']:
+                        # Set invalid dates to None
+                        if isinstance(current, dict) and final_key in current:
+                            current[final_key] = None
+                            logger.info(f"Set invalid date {'.'.join(map(str, field_path))} to null")
+                    
+                    elif error_type in ['decimal_parsing', 'int_parsing', 'float_parsing']:
+                        # Set invalid numbers to None
+                        if isinstance(current, dict) and final_key in current:
+                            current[final_key] = None
+                            logger.info(f"Set invalid number {'.'.join(map(str, field_path))} to null")
+                    
+                    elif error_type == 'model_type':
+                        # Set invalid nested models to None
+                        if isinstance(current, dict) and final_key in current:
+                            current[final_key] = None
+                            logger.info(f"Set invalid nested model {'.'.join(map(str, field_path))} to null")
+                    
+                    else:
+                        # For any other validation error, set field to None
+                        if isinstance(current, dict) and final_key in current:
+                            current[final_key] = None
+                            logger.info(f"Set field {'.'.join(map(str, field_path))} to null due to {error_type}")
+        
+        return cleaned_data
+    
+    def _extract_max_length_from_error(self, error: Dict) -> Optional[int]:
+        """Extract max length constraint from validation error message."""
+        msg = str(error.get('msg', ''))
+        # Look for patterns like "String should have at most 10 characters"
+        import re
+        match = re.search(r'at most (\d+) characters', msg)
+        if match:
+            return int(match.group(1))
+        return None
 
     def _normalize_financial_analysis_fields(self, fa: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize financial analysis dict to match model field names and fix common issues."""

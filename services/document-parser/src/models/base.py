@@ -56,7 +56,7 @@ class BankDetails(BaseModel):
     """Model for bank account information."""
     bank_name: str
     account_number: str
-    routing_number: str = Field(..., pattern="^\\d{9}$")
+    routing_number: Optional[str] = None
     account_type: AccountType
 
 

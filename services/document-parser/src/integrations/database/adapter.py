@@ -171,6 +171,16 @@ class UnderwritingDatabaseAdapter:
                     ).info("db.package_stored")
                     return True
                     
+        except asyncpg.UndefinedColumnError as e:
+            logger.bind(
+                file_id=package.file_id,
+                error="UndefinedColumnError",
+                column_name=getattr(e, 'column_name', 'unknown'),
+                table_name=getattr(e, 'table_name', 'unknown'),
+                sqlstate=getattr(e, 'sqlstate', 'unknown'),
+                detail=str(e)
+            ).error("db.package_failed schema_mismatch=true")
+            return False
         except Exception as e:
             logger.bind(
                 file_id=package.file_id,
@@ -219,6 +229,14 @@ class UnderwritingDatabaseAdapter:
     
     async def _store_financial_analysis(self, connection, entity: FinancialAnalysis):
         """Store financial analysis data."""
+        # Ensure estimated_program_length is properly cast to int
+        estimated_program_length_value = None
+        if entity.estimated_program_length is not None:
+            try:
+                estimated_program_length_value = int(entity.estimated_program_length)
+            except (ValueError, TypeError):
+                estimated_program_length_value = None
+        
         await connection.execute("""
             INSERT INTO underwriting.financial_analysis 
             (file_id, applicant_name, applicant_email, coapplicant_name, coapplicant_email,
@@ -233,7 +251,34 @@ class UnderwritingDatabaseAdapter:
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
             ON CONFLICT (file_id) DO UPDATE SET
                 applicant_name = COALESCE(EXCLUDED.applicant_name, financial_analysis.applicant_name),
+                applicant_email = COALESCE(EXCLUDED.applicant_email, financial_analysis.applicant_email),
+                coapplicant_name = COALESCE(EXCLUDED.coapplicant_name, financial_analysis.coapplicant_name),
+                coapplicant_email = COALESCE(EXCLUDED.coapplicant_email, financial_analysis.coapplicant_email),
                 draft_type = COALESCE(EXCLUDED.draft_type, financial_analysis.draft_type),
+                fixed_income = COALESCE(EXCLUDED.fixed_income, financial_analysis.fixed_income),
+                day_phone = COALESCE(EXCLUDED.day_phone, financial_analysis.day_phone),
+                evening_phone = COALESCE(EXCLUDED.evening_phone, financial_analysis.evening_phone),
+                cell_phone = COALESCE(EXCLUDED.cell_phone, financial_analysis.cell_phone),
+                program_start_date = COALESCE(EXCLUDED.program_start_date, financial_analysis.program_start_date),
+                estimated_program_start_date = COALESCE(EXCLUDED.estimated_program_start_date, financial_analysis.estimated_program_start_date),
+                lump_sum = COALESCE(EXCLUDED.lump_sum, financial_analysis.lump_sum),
+                applicant_monthly_income = COALESCE(EXCLUDED.applicant_monthly_income, financial_analysis.applicant_monthly_income),
+                coapplicant_monthly_income = COALESCE(EXCLUDED.coapplicant_monthly_income, financial_analysis.coapplicant_monthly_income),
+                applicant_expenses = COALESCE(EXCLUDED.applicant_expenses, financial_analysis.applicant_expenses),
+                coapplicant_expenses = COALESCE(EXCLUDED.coapplicant_expenses, financial_analysis.coapplicant_expenses),
+                applicant_total_net_income = COALESCE(EXCLUDED.applicant_total_net_income, financial_analysis.applicant_total_net_income),
+                coapplicant_total_net_income = COALESCE(EXCLUDED.coapplicant_total_net_income, financial_analysis.coapplicant_total_net_income),
+                total_enrolled_debt = COALESCE(EXCLUDED.total_enrolled_debt, financial_analysis.total_enrolled_debt),
+                estimated_program_length = COALESCE(EXCLUDED.estimated_program_length, financial_analysis.estimated_program_length),
+                monthly_program_deposit = COALESCE(EXCLUDED.monthly_program_deposit, financial_analysis.monthly_program_deposit),
+                estimated_program_settle_amount = COALESCE(EXCLUDED.estimated_program_settle_amount, financial_analysis.estimated_program_settle_amount),
+                fee_method = COALESCE(EXCLUDED.fee_method, financial_analysis.fee_method),
+                total_program_fees = COALESCE(EXCLUDED.total_program_fees, financial_analysis.total_program_fees),
+                estimated_program_savings = COALESCE(EXCLUDED.estimated_program_savings, financial_analysis.estimated_program_savings),
+                estimated_total_cost = COALESCE(EXCLUDED.estimated_total_cost, financial_analysis.estimated_total_cost),
+                hardship_details = COALESCE(EXCLUDED.hardship_details, financial_analysis.hardship_details),
+                client_signature = COALESCE(EXCLUDED.client_signature, financial_analysis.client_signature),
+                client_signature_date = COALESCE(EXCLUDED.client_signature_date, financial_analysis.client_signature_date),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.applicant_name, entity.applicant_email, entity.coapplicant_name,
             entity.coapplicant_email, entity.draft_type, entity.fixed_income, entity.day_phone,
@@ -241,8 +286,7 @@ class UnderwritingDatabaseAdapter:
             entity.estimated_program_start_date, entity.lump_sum, entity.applicant_monthly_income,
             entity.coapplicant_monthly_income, entity.applicant_expenses, entity.coapplicant_expenses,
             entity.applicant_total_net_income, entity.coapplicant_total_net_income,
-            entity.total_enrolled_debt, 
-            int(entity.estimated_program_length) if entity.estimated_program_length else None,
+            entity.total_enrolled_debt, estimated_program_length_value,
             entity.monthly_program_deposit, entity.estimated_program_settle_amount,
             entity.fee_method, entity.total_program_fees, entity.estimated_program_savings,
             entity.estimated_total_cost, entity.hardship_details, entity.client_signature,
@@ -259,9 +303,9 @@ class UnderwritingDatabaseAdapter:
                 
                 await connection.execute("""
                     INSERT INTO underwriting.debt_schedule 
-                    (id, file_id, creditor_name, name_on_account, account_number, current_balance, debt_type, updated_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                """, unique_id, entity.file_id, entity.creditor_name, entity.name_on_account, 
+                    (file_id, creditor_name, name_on_account, account_number, current_balance, debt_type, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """, entity.file_id, entity.creditor_name, entity.name_on_account, 
                     entity.account_number, entity.current_balance, entity.debt_type, datetime.now())
                 return  # Success
                 
@@ -403,14 +447,19 @@ class UnderwritingDatabaseAdapter:
             entity.buyer_signature, datetime.now())
     
     async def _store_payment_service_fees(self, connection, entity: PaymentGatewayServiceFees):
-        """Store payment gateway service fees with UUID-based ID."""
-        unique_id = self._generate_unique_id(entity.file_id, "fee")
+        """Store payment gateway service fees."""
+        # First, delete existing entries for this file_id to avoid duplicates
+        await connection.execute("""
+            DELETE FROM underwriting.payment_gateway_service_fees 
+            WHERE file_id = $1 AND service_type = $2 AND service_name = $3
+        """, entity.file_id, entity.service_type, entity.service_name)
         
+        # Then insert the new entry
         await connection.execute("""
             INSERT INTO underwriting.payment_gateway_service_fees 
-            (id, file_id, service_type, service_name, service_amount, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
-        """, unique_id, entity.file_id, entity.service_type, entity.service_name,
+            (file_id, service_type, service_name, service_amount, updated_at)
+            VALUES ($1, $2, $3, $4, $5)
+        """, entity.file_id, entity.service_type, entity.service_name,
             entity.service_amount, datetime.now())
     
     async def _store_payment_bank_info(self, connection, entity: PaymentGatewayBankInfo):
@@ -431,14 +480,19 @@ class UnderwritingDatabaseAdapter:
             entity.coclient_signature, entity.coclient_signature_date, datetime.now())
     
     async def _store_payment_deposit_schedule(self, connection, entity: PaymentGatewayDepositSchedule):
-        """Store payment gateway deposit schedule with UUID-based ID."""
-        unique_id = self._generate_unique_id(entity.file_id, "deposit")
+        """Store payment gateway deposit schedule."""
+        # First, delete existing entry for this file_id and payment_no to avoid duplicates
+        await connection.execute("""
+            DELETE FROM underwriting.payment_gateway_deposit_schedule 
+            WHERE file_id = $1 AND payment_no = $2
+        """, entity.file_id, entity.payment_no)
         
+        # Then insert the new entry
         await connection.execute("""
             INSERT INTO underwriting.payment_gateway_deposit_schedule 
-            (id, file_id, payment_no, process_date, amount, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
-        """, unique_id, entity.file_id, entity.payment_no, entity.process_date,
+            (file_id, payment_no, process_date, amount, updated_at)
+            VALUES ($1, $2, $3, $4, $5)
+        """, entity.file_id, entity.payment_no, entity.process_date,
             entity.amount, datetime.now())
     
     async def _store_legal_plan_agreement(self, connection, entity: LegalPlanAgreement):
@@ -500,16 +554,14 @@ class UnderwritingDatabaseAdapter:
             entity.sender_email_address, entity.sender_ip_address, entity.signers_count, datetime.now())
     
     async def _store_clixsign_signer(self, connection, entity: ClixsignCertificateSigner):
-        """Store clixsign certificate signer data with UUID-based ID."""
-        unique_id = self._generate_unique_id(entity.file_id, "signer")
-        
+        """Store clixsign certificate signer data."""
         await connection.execute("""
             INSERT INTO underwriting.clixsign_certificate_signer 
-            (id, file_id, package_id, signer_name, signer_email_address, signer_ip_address,
+            (file_id, package_id, signer_name, signer_email_address, signer_ip_address,
              signer_user_agent, package_opened_at, signature_adopted_at, package_signed_at,
              package_declined_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-        """, unique_id, entity.file_id, entity.package_id, entity.signer_name, entity.signer_email_address,
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        """, entity.file_id, entity.package_id, entity.signer_name, entity.signer_email_address,
             entity.signer_ip_address, entity.signer_user_agent, entity.package_opened_at,
             entity.signature_adopted_at, entity.package_signed_at, entity.package_declined_at,
             datetime.now())

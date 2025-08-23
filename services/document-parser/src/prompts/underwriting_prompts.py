@@ -13,16 +13,19 @@ CRITICAL EXTRACTION RULES:
 2. If information is not clearly visible, use null/empty values
 3. Do NOT infer, guess, or hallucinate any information
 4. For dates, use YYYY-MM-DD format (e.g., "2024-03-15")
-5. For monetary amounts, use decimal format without currency symbols (e.g., "1250.00")
-6. For SSNs, maintain format with dashes (e.g., "123-45-6789")
-7. For phone numbers, extract as-is from document
-8. If a field has multiple possible values, choose the most prominent one
-9. Empty signatures should be null, not placeholder text
-10. Page counts should reflect actual document pages visible
-11. Match the EXACT field names and JSON shape requested; do not invent fields
-12. If a label indicates a range, select the single value closest to the label
-13. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616")
-14. ACCOUNT NUMBER: Usually longer than 9 digits (e.g., "1200000246482")
+5. For dates split across lines (e.g., "09/28/1" on one line, "971" on next), combine them (e.g., "09/28/1971")
+6. For monetary amounts, use decimal format without currency symbols (e.g., "1250.00")
+7. For SSNs, maintain format with dashes (e.g., "123-45-6789")
+8. For phone numbers, extract as-is from document
+9. If a field has multiple possible values, choose the most prominent one
+10. Empty signatures should be null, not placeholder text
+11. Page counts should reflect actual document pages visible
+12. Match the EXACT field names and JSON shape requested; do not invent fields
+13. If a label indicates a range, select the single value closest to the label
+14. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
+15. ACCOUNT NUMBER: Usually longer than 9 digits (e.g., "1200000246482"). DO NOT confuse with routing number.
+16. BANKING FIELDS: "Número de ruta" = routing_number (9 digits), "Número de cuenta" = account_number (longer)
+17. INITIALS: Keep short (max 10 chars). If multiple initials found, use first set only (e.g., "JJCS" not "JJCS, JJCS, gges")
 """
 
 ENGAGEMENT_TERM_PROMPT = f"""
@@ -74,7 +77,7 @@ Extract the following information and return as JSON:
   "attorney_phone": "Attorney contact phone",
   "client_name": "Primary client full name",
   "client_ssn": "Client SSN (format: 123-45-6789)",
-  "client_dob": "Client date of birth (YYYY-MM-DD)",
+  "client_dob": "Client date of birth (YYYY-MM-DD). If split across lines like '09/28/1' and '971', combine to '1971-09-28'",
   "client_signature": "Client signature indicator",
   "client_signature_date": "Date client signed (YYYY-MM-DD)",
   "coclient_name": "Co-client full name if present",
@@ -239,9 +242,9 @@ Extract the following information and return as JSON:
   "members_accumulation_amount": "Member accumulation amount",
   "payment_processor_name": "Payment processor name",
   "credit_card_number": "Credit card number (if provided)",
-  "bank_account_number": "Bank account number",
+  "bank_account_number": "Bank account number (usually 10+ digits, NOT the 9-digit routing)",
   "credit_card_expiration_date": "Card expiration date (YYYY-MM-DD)",
-  "bank_routing_number": "Bank routing number",
+  "bank_routing_number": "Bank routing number (exactly 9 digits, NOT the longer account number)",
   "credit_card_name": "Name on credit card",
   "bank_institution_name": "Bank name",
   "credit_card_billing_address": "Card billing address",
@@ -454,8 +457,8 @@ You are extracting ALL underwriting entities from a multi-document package. Foll
     "file_id": null,
     "authorizing_person_name": null,
     "bank_name": null,
-    "account_number": null,
-    "routing_number": null,
+    "account_number": null,  // Bank account number (10+ digits)
+    "routing_number": null,  // Bank routing number (exactly 9 digits)
     "account_type": null,
     "address": null,
     "recurring_debit_authorization": null,

@@ -1,5 +1,5 @@
 # services/document-parser/src/integrations/database.py
-"""Database integration - backward compatibility bridge."""
+"""Database integration - backward compatibility bridge with debugging."""
 
 # Import from new modular structure
 try:
