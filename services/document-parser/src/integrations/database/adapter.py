@@ -82,6 +82,11 @@ class UnderwritingDatabaseAdapter:
     async def store_document_package(self, package: ExtractedDocumentPackage) -> bool:
         """Store complete document package with duplicate checking and UUID-based IDs."""
         try:
+            # Validate required fields
+            if not package.file_id or package.file_id <= 0:
+                logger.bind(file_id=package.file_id).error("db.package_failed invalid_file_id=true")
+                return False
+            
             # Check for duplicates first
             async with self.pool.acquire() as connection:
                 existing = await self._check_document_exists(connection, package.file_id)
@@ -96,20 +101,36 @@ class UnderwritingDatabaseAdapter:
                     
                     # Store core entities (EXACT same logic as original)
                     if package.engagement_term:
-                        await self._store_engagement_term(connection, package.engagement_term)
-                        stored_count += 1
+                        try:
+                            await self._store_engagement_term(connection, package.engagement_term)
+                            stored_count += 1
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="engagement_term", error=type(e).__name__).error("db.table_failed")
+                            raise
                         
                     if package.power_of_attorney:
-                        await self._store_power_of_attorney(connection, package.power_of_attorney)
-                        stored_count += 1
+                        try:
+                            await self._store_power_of_attorney(connection, package.power_of_attorney)
+                            stored_count += 1
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="power_of_attorney", error=type(e).__name__).error("db.table_failed")
+                            raise
                         
                     if package.payment_gateway_agreement:
-                        await self._store_payment_gateway_agreement(connection, package.payment_gateway_agreement)
-                        stored_count += 1
+                        try:
+                            await self._store_payment_gateway_agreement(connection, package.payment_gateway_agreement)
+                            stored_count += 1
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="payment_gateway_agreement", error=type(e).__name__).error("db.table_failed")
+                            raise
                         
                     if package.financial_analysis:
-                        await self._store_financial_analysis(connection, package.financial_analysis)
-                        stored_count += 1
+                        try:
+                            await self._store_financial_analysis(connection, package.financial_analysis)
+                            stored_count += 1
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="financial_analysis", error=type(e).__name__).error("db.table_failed")
+                            raise
                     
                     # Store optional entities (EXACT same logic)
                     if package.fcra_consent:
@@ -181,10 +202,22 @@ class UnderwritingDatabaseAdapter:
                 detail=str(e)
             ).error("db.package_failed schema_mismatch=true")
             return False
+        except asyncpg.NotNullViolationError as e:
+            logger.bind(
+                file_id=package.file_id,
+                error="NotNullViolationError",
+                column_name=getattr(e, 'column_name', 'unknown'),
+                table_name=getattr(e, 'table_name', 'unknown'),
+                constraint_name=getattr(e, 'constraint_name', 'unknown'),
+                sqlstate=getattr(e, 'sqlstate', 'unknown'),
+                detail=str(e)
+            ).error("db.package_failed null_constraint_violation=true")
+            return False
         except Exception as e:
             logger.bind(
                 file_id=package.file_id,
-                error=type(e).__name__
+                error=type(e).__name__,
+                detail=str(e)
             ).error("db.package_failed")
             return False
     
@@ -198,9 +231,23 @@ class UnderwritingDatabaseAdapter:
              coclient_signature_date, initials, initials_count, is_all_initials_present, page_count, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             ON CONFLICT (file_id) DO UPDATE SET
-                company_name = EXCLUDED.company_name,
-                settlement_fee = EXCLUDED.settlement_fee,
-                client_name = EXCLUDED.client_name,
+                company_name = COALESCE(EXCLUDED.company_name, engagement_term.company_name),
+                company_address = COALESCE(EXCLUDED.company_address, engagement_term.company_address),
+                company_phone = COALESCE(EXCLUDED.company_phone, engagement_term.company_phone),
+                company_type = COALESCE(EXCLUDED.company_type, engagement_term.company_type),
+                settlement_fee = COALESCE(EXCLUDED.settlement_fee, engagement_term.settlement_fee),
+                settlement_fee_percentage = COALESCE(EXCLUDED.settlement_fee_percentage, engagement_term.settlement_fee_percentage),
+                monthly_payment = COALESCE(EXCLUDED.monthly_payment, engagement_term.monthly_payment),
+                client_name = COALESCE(EXCLUDED.client_name, engagement_term.client_name),
+                client_signature = COALESCE(EXCLUDED.client_signature, engagement_term.client_signature),
+                client_signature_date = COALESCE(EXCLUDED.client_signature_date, engagement_term.client_signature_date),
+                coclient_name = COALESCE(EXCLUDED.coclient_name, engagement_term.coclient_name),
+                coclient_signature = COALESCE(EXCLUDED.coclient_signature, engagement_term.coclient_signature),
+                coclient_signature_date = COALESCE(EXCLUDED.coclient_signature_date, engagement_term.coclient_signature_date),
+                initials = COALESCE(EXCLUDED.initials, engagement_term.initials),
+                initials_count = COALESCE(EXCLUDED.initials_count, engagement_term.initials_count),
+                is_all_initials_present = COALESCE(EXCLUDED.is_all_initials_present, engagement_term.is_all_initials_present),
+                page_count = COALESCE(EXCLUDED.page_count, engagement_term.page_count),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.company_name, entity.company_address, entity.company_phone,
             entity.company_type, entity.settlement_fee, entity.settlement_fee_percentage,
