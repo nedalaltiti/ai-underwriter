@@ -391,7 +391,14 @@ class GeminiClient:
             
             # Handle specific error codes with better logging
             if status_code == 400:
-                logger.error(f"Gemini API 400 error - invalid request: {error_text}")
+                # Check for specific 400 error types
+                if "no pages" in error_text.lower():
+                    logger.error("gemini.invalid_pdf document_has_no_pages=true")
+                    # Don't retry - this is a permanent document issue
+                    from core.exceptions import NonRetryableError
+                    raise NonRetryableError(f"Document has no pages - likely corrupted PDF")
+                else:
+                    logger.error(f"Gemini API 400 error - invalid request: {error_text}")
                 # For 400 errors, don't retry immediately - it's likely a parameter issue
             elif status_code == 429:
                 logger.warning(f"Gemini API rate limit hit: {error_text}")
