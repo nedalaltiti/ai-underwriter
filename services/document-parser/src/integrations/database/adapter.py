@@ -66,6 +66,18 @@ class UnderwritingDatabaseAdapter:
             await self.pool.close()
             logger.bind(service="document-parser").info("db.pool_closed")
     
+    def _generate_composite_file_id(self, doc_id: str, contact_id: str) -> int:
+        """Generate composite file_id from doc_id + contact_id hash for per-contact uniqueness."""
+        import hashlib
+        
+        if not contact_id or not doc_id:
+            raise ValueError(f"Both doc_id and contact_id required for composite file_id: doc_id={doc_id}, contact_id={contact_id}")
+        
+        composite_key = f"{doc_id}_{contact_id}"
+        stable_hash = hashlib.sha256(composite_key.encode()).hexdigest()
+        # Convert first 8 hex chars to int to stay within PostgreSQL int range
+        return int(stable_hash[:8], 16)
+
     async def _check_document_exists(self, connection, file_id: int) -> bool:
         """Check if document was already processed."""
         result = await connection.fetchval("""
