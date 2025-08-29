@@ -33,6 +33,9 @@ You are extracting data from a Company Agreement / Engagement Term document for 
 
 {BASE_EXTRACTION_RULES}
 
+DISAMBIGUATION RULES (very important):
+- Engagement Terms typically show the debt settlement company (e.g., Clarity, Concordia, Resync, Aspire, Palisade), settlement fee/percentage, monthly program payment, and terms/conditions. They do not include bank routing/account numbers.
+
 Extract the following information and return as JSON:
 
 {{
@@ -98,6 +101,10 @@ PAYMENT_GATEWAY_AGREEMENT_PROMPT = f"""
 You are extracting data from a Payment Gateway Agreement for automated payment processing.
 
 {BASE_EXTRACTION_RULES}
+
+DISAMBIGUATION RULES (very important):
+- Payment Gateway/Account Agreements are between the customer and a payment processor (e.g., Forth, RAM, CFT)
+- Do NOT include settlement fee, settlement fee percentage, company_type, or debt-settlement company letterhead fields here. Those belong to engagement_term.
 
 Extract the following information and return as JSON:
 
@@ -271,7 +278,7 @@ You are analyzing a document to determine its type for debt settlement/underwrit
 Analyze the document and identify its type from these categories:
 - engagement_term (Company Agreement)
 - power_of_attorney 
-- payment_gateway_agreement
+- payment_gateway_agreement (Account Agreement)
 - financial_analysis (Exhibit B)
 - debt_schedule (Exhibit A)
 - fcra_consent
@@ -297,6 +304,10 @@ Look for key indicators:
 - Signature blocks and dates
 - Company names and letterheads
 - Form structure and layout
+
+INDICATOR KEYWORDS:
+- payment_gateway_agreement (Account Agreement): "Account Agreement", "Client Information Sheet", "Account ID", "ACH", "recurring debit authorization", "routing number", "account number", "payment schedule", processor names like "FORTH", "RAM", "CFT".
+- engagement_term (Company Agreement): "Engagement Terms", "Terms of Engagement", "Company Agreement", provider names like "Clarity", "Concordia", "Resync", "Aspire", "Palisade", phrases like "settlement fee", "settlement fee percentage", "monthly program payment".
 """
 
 # Comprehensive extraction prompt for unknown documents
