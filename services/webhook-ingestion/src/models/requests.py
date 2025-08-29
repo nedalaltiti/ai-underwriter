@@ -14,9 +14,9 @@ COMMA_SEPARATED_DIGITS = re.compile(r'^\d+(,\d+)*$')
 
 class WebhookSource(str, Enum):
     """Source systems for webhooks."""
-    FORTH_CRM = "forth_crm"
-    MANUAL = "manual"
-    TEST = "test"
+    CDR = "CDR"
+    ASPIRE = "ASPIRE"
+    RESYNC = "RESYNC"
 
 
 class WebhookType(str, Enum):
@@ -116,8 +116,8 @@ class WebhookRequest(BaseSchema):
         alias="correlationId" 
     )
     source: WebhookSource = Field(
-        default=WebhookSource.FORTH_CRM, 
-        description="Webhook source"
+        ..., 
+        description="Webhook source (CDR, ASPIRE, RESYNC)"
     )
     webhook_type: Optional[WebhookType] = Field(
         default=WebhookType.DOCUMENT_UPLOADED,

@@ -3,7 +3,7 @@ name = "webhook-ingestion"
 version = "1.0.0"
 description = "Webhook ingestion service for AI underwriting platform"
 authors = [{ name = "Nedal Altiti", email = "nedal.a@usclarity.com" }]
-requires-python = ">=3.11"
+requires-python = ">=3.11,<4.0"
 
 dependencies = [
     "fastapi~=0.116.1",

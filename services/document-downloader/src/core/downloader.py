@@ -32,13 +32,25 @@ class DocumentDownloader:
     def __init__(
         self,
         config: DocumentConfig,
-        forth_client: Optional[ForthAPIClient],
+        forth_client: Optional[ForthAPIClient] | Optional[Dict[str, ForthAPIClient]],
         s3_adapter: S3Adapter
     ):
         self.config = config
-        self.forth_client = forth_client
+        # Support single client or map of clients per source
+        if isinstance(forth_client, dict):
+            self.forth_clients: Dict[str, ForthAPIClient] = forth_client
+        else:
+            self.forth_clients: Dict[str, ForthAPIClient] = {}
+            if forth_client:
+                self.forth_clients["DEFAULT"] = forth_client
         self.s3_adapter = s3_adapter
         self.download_semaphore = asyncio.Semaphore(config.worker_concurrency)
+        # Reuse a single HTTP client for document downloads (keep-alive, HTTP/2)
+        self._http_client: Optional[httpx.AsyncClient] = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.config.download_timeout),
+            http2=True,
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=100)
+        )
         
         # Metrics
         self.metrics = {
@@ -96,6 +108,29 @@ class DocumentDownloader:
                         f"forth.doc_type_update contact_id={task.contact_id} doc_id={task.doc_id} from={original_doc_type} to={doc_type}"
                     )
                     
+                # Generate S3 key early (used for idempotency check)
+                s3_key = generate_s3_key(task, s3_prefix="")
+
+                # Idempotency: if file already exists in S3, skip re-download
+                try:
+                    if await self.s3_adapter.file_exists(s3_key):
+                        processing_time_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
+                        self._update_metrics(True, 0, processing_time_ms)
+                        logger.info(
+                            f"download.duplicate_skipped contact={task.contact_id} doc={task.doc_id} s3_key=\"{s3_key}\""
+                        )
+                        return DownloadResult(
+                            success=True,
+                            status=DownloadStatus.COMPLETED,
+                            s3_key=s3_key,
+                            s3_url=f"s3://{getattr(self.s3_adapter, 'bucket_name', '')}/{s3_key}",
+                            file_size=0,
+                            processing_time_ms=processing_time_ms,
+                        )
+                except Exception:
+                    # If existence check fails, proceed with normal download path
+                    pass
+
                 # Download to temp file with streaming
                 temp_file_path = await self._download_to_temp(
                     url=document_url,
@@ -104,10 +139,7 @@ class DocumentDownloader:
                 
                 # Get file info using async operations
                 file_size = await aiofiles.os.path.getsize(temp_file_path)
-                
-                # Generate S3 key with new structure: date/contact_id/doc_id/filename
-                s3_key = generate_s3_key(task, s3_prefix="")
-                
+                                
                 # Upload to S3 with sanitized metadata
                 raw_metadata = {
                     "contact_id": task.contact_id,
@@ -209,13 +241,15 @@ class DocumentDownloader:
             DocumentExcludedError: When document is excluded based on doc_type
             Exception: For other API or processing errors
         """
-        if not self.forth_client:
-            logger.error("❌ No document URL provided and Forth API not configured")
+        # Select appropriate Forth client based on webhook source
+        client = self._select_forth_client(getattr(task, 'webhook_source', None))
+        if not client:
+            logger.error("No Forth API client available for this source")
             raise Exception("Forth API client not configured")
         
         try:
             # Get both document info and doc_type in single API call
-            document_info = await self.forth_client.get_document(
+            document_info = await client.get_document(
                 contact_id=task.contact_id,
                 doc_id=task.doc_id
             )
@@ -297,25 +331,30 @@ class DocumentDownloader:
             os.close(temp_fd)  # Close the file descriptor, we'll use aiofiles
             
             max_size = self.config.get_max_file_size_bytes()
-            
-            timeout = httpx.Timeout(self.config.download_timeout)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(url, follow_redirects=True)
-                
+            if not self._http_client:
+                self._http_client = httpx.AsyncClient(
+                    timeout=httpx.Timeout(self.config.download_timeout),
+                    http2=True,
+                    limits=httpx.Limits(max_keepalive_connections=20, max_connections=100)
+                )
+
+            # Stream download to avoid buffering entire file and to reuse keep-alive
+            async with self._http_client.stream("GET", url, follow_redirects=True) as response:
                 if response.status_code != 200:
                     logger.error(f"Download failed with status {response.status_code}")
                     raise TempFileError(f"HTTP {response.status_code}: Download failed")
-                
-                # Check file size before processing
-                content_size = len(response.content)
-                if content_size > max_size:
-                    raise FileSizeExceededError(content_size, max_size)
-                
-                # Write entire content to temp file
+
+                bytes_written = 0
                 async with aiofiles.open(temp_file_path, 'wb') as f:
-                    await f.write(response.content)
-            
-            logger.debug(f"Downloaded {content_size} bytes to {temp_file_path}")
+                    async for chunk in response.aiter_bytes(chunk_size=1024 * 128):
+                        if not chunk:
+                            continue
+                        bytes_written += len(chunk)
+                        if bytes_written > max_size:
+                            raise FileSizeExceededError(bytes_written, max_size)
+                        await f.write(chunk)
+
+            logger.debug(f"Downloaded {bytes_written} bytes to {temp_file_path}")
             return temp_file_path
             
         except httpx.TimeoutException:
@@ -338,6 +377,14 @@ class DocumentDownloader:
                         logger.debug(f"Cleaned up temp file on error: {temp_file_path}")
                     except Exception as cleanup_error:
                         logger.warning(f"Failed to cleanup temp file on error: {cleanup_error}")
+
+    async def close(self) -> None:
+        """Close any HTTP resources held by the downloader."""
+        try:
+            if self._http_client:
+                await self._http_client.aclose()
+        except Exception:
+            pass
     
 
     def _update_metrics(self, success: bool, file_size: int, processing_time_ms: int):
@@ -371,10 +418,12 @@ class DocumentDownloader:
         except Exception as e:
             checks["s3"] = {"status": "unhealthy", "error": str(e)}
         
-        # Check Forth API
-        if self.forth_client:
+        # Check Forth API (simple: any available client)
+        if self.forth_clients:
             try:
-                await self.forth_client.health_check()
+                # Prefer DEFAULT if present; otherwise any one
+                client = self.forth_clients.get("DEFAULT") or next(iter(self.forth_clients.values()))
+                await client.health_check()
                 checks["forth_api"]["status"] = "healthy"
             except Exception as e:
                 checks["forth_api"] = {"status": "unhealthy", "error": str(e)}
@@ -396,3 +445,18 @@ class DocumentDownloader:
     def get_metrics(self) -> Dict[str, Any]:
         """Get current metrics."""
         return self.metrics.copy()
+
+    def _select_forth_client(self, source: Optional[str]) -> Optional[ForthAPIClient]:
+        """Pick a Forth client based on webhook source with sensible fallback."""
+        if not self.forth_clients:
+            return None
+        if source and source in self.forth_clients:
+            return self.forth_clients[source]
+        # Try uppercase key if source provided in different case
+        if source and source.upper() in self.forth_clients:
+            return self.forth_clients[source.upper()]
+        # Fallback to DEFAULT
+        if "DEFAULT" in self.forth_clients:
+            return self.forth_clients["DEFAULT"]
+        # Fallback to any
+        return next(iter(self.forth_clients.values()), None)

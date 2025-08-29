@@ -122,7 +122,6 @@ class WebhookProcessor:
             payload = self.validator.validate_webhook(webhook_data)
             
             # Bind context for this webhook processing
-            # Sanitize correlation_id to avoid Loguru formatting issues
             safe_correlation_id = correlation_id.replace("{", "(").replace("}", ")")
             webhook_logger = logger.bind(
                 contact_id=payload.contact_id,

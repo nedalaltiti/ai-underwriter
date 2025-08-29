@@ -29,6 +29,7 @@ class DownloadTask(BaseModel):
     doc_name: Optional[str] = Field(None, description="Document name/filename")
     doc_type: Optional[str] = Field(None, description="Document type")
     correlation_id: Optional[str] = Field(None, description="Correlation ID for tracing")
+    webhook_source: Optional[str] = Field(None, description="Webhook source (CDR, ASPIRE, RESYNC, etc.)")
     
     # Additional metadata from webhook
     doc_title: Optional[str] = Field(None, description="Document title")
@@ -100,6 +101,7 @@ class DownloadTask(BaseModel):
             doc_name=None,  
             doc_type=None, 
             correlation_id=message.correlation_id,
+            webhook_source=data.get("webhook_source"),
             doc_title=data.get("doc_title"),
             file_type=data.get("file_type"),
             webhook_version=data.get("webhook_version"),

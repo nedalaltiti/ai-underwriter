@@ -4,7 +4,7 @@ from datetime import datetime, UTC
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
 
-from api.dependencies import get_downloader, get_worker, get_config, get_auth_manager
+from api.dependencies import get_downloader, get_worker, get_config, get_auth_managers
 from core.downloader import DocumentDownloader
 from services.worker import DownloadWorker
 from integrations.forth_auth import ForthAuthManager
@@ -26,6 +26,7 @@ async def manual_download(
     contact_id: str,
     doc_id: str,
     doc_name: str = Query(..., description="Document filename"),
+    source: Optional[str] = Query(None, description="Webhook source (CDR, ASPIRE, RESYNC)"),
     downloader: DocumentDownloader = Depends(get_downloader)
 ) -> DownloadResult:
     """
@@ -40,7 +41,8 @@ async def manual_download(
             contact_id=contact_id,
             doc_id=doc_id,
             doc_name=doc_name,
-            correlation_id=correlation_id
+            correlation_id=correlation_id,
+            webhook_source=source
         )
         
         logger.bind(
@@ -117,24 +119,24 @@ async def get_status(
 @api_router.get(
     "/auth/token-status",
     summary="Token status",
-    description="Get current Forth API token status and refresh information"
+    description="Get per-source Forth API token status and refresh information"
 )
 async def get_token_status(
-    auth_manager: Optional[ForthAuthManager] = Depends(get_auth_manager)
+    auth_managers: Optional[dict] = Depends(get_auth_managers)
 ) -> Dict[str, Any]:
-    """Get current token status and refresh information."""
-    if not auth_manager:
-        return {
-            "service": "document-downloader",
-            "auth": {
-                "error": "Auth manager not available",
-                "status": "not_configured"
-            },
-            "timestamp": datetime.now(UTC).isoformat()
-        }
+    """Get current token status per source and refresh information."""
+    statuses: Dict[str, Any] = {}
+    if not auth_managers:
+        statuses["status"] = "not_configured"
+    else:
+        for source, manager in auth_managers.items():
+            try:
+                statuses[source] = manager.get_token_status()
+            except Exception as e:
+                statuses[source] = {"error": str(e), "status": "error"}
     
     return {
         "service": "document-downloader",
-        "auth": auth_manager.get_token_status(),
+        "auth": statuses,
         "timestamp": datetime.now(UTC).isoformat()
     }

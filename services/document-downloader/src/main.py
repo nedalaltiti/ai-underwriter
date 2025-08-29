@@ -21,6 +21,7 @@ from integrations.forth_auth import ForthAuthManager
 from libs.forth_shared.utils.logging import setup_logging
 from libs.forth_shared.utils.monitoring import setup_metrics
 from libs.forth_shared.adapters.storage import S3Adapter
+from typing import Optional
 
 # Suppress multiprocessing semaphore leak warnings
 warnings.filterwarnings("ignore", message=".*leaked semaphore objects.*", category=UserWarning)
@@ -41,20 +42,42 @@ async def lifespan(app: FastAPI):
     # Create temp directory
     Path(config.temp_dir).mkdir(parents=True, exist_ok=True)
     
-    # Initialize Forth auth manager and API client
-    forth_client = None
-    auth_manager = None
-    if config.has_forth_api_credentials():
-        auth_manager = ForthAuthManager(config)
-        await auth_manager.initialize()
-        
-        forth_client = ForthAPIClient(
-            base_url=config.forth_api_base_url,
-            auth_manager=auth_manager,
-            timeout=config.forth_api_timeout
+    # Initialize Forth auth managers and API clients per source
+    forth_clients = {}
+    auth_managers = {}
+    # Helper to init one source
+    async def init_source(source_key: str, base_url: str, client_id: Optional[str], client_secret: Optional[str]):
+        am = ForthAuthManager(
+            config,
+            base_url=base_url,
+            client_id=client_id,
+            client_secret=client_secret
         )
-        await forth_client.initialize()
-        logger.info("Forth API client and auth manager initialized successfully")
+        await am.initialize()
+        fc = ForthAPIClient(base_url=base_url, auth_manager=am, timeout=config.forth_api_timeout)
+        await fc.initialize()
+        auth_managers[source_key] = am
+        forth_clients[source_key] = fc
+        logger.info(f"Forth client initialized for {source_key}")
+
+    shared_base = config.forth_api_base_url
+    # CDR
+    if shared_base and config.forth_cdr_client_id and config.forth_cdr_client_secret:
+        await init_source("CDR", shared_base,
+                          config.forth_cdr_client_id.get_secret_value(),
+                          config.forth_cdr_client_secret.get_secret_value())
+
+    # ASPIRE
+    if shared_base and config.forth_aspire_client_id and config.forth_aspire_client_secret:
+        await init_source("ASPIRE", shared_base,
+                          config.forth_aspire_client_id.get_secret_value(),
+                          config.forth_aspire_client_secret.get_secret_value())
+
+    # RESYNC
+    if shared_base and config.forth_resync_client_id and config.forth_resync_client_secret:
+        await init_source("RESYNC", shared_base,
+                          config.forth_resync_client_id.get_secret_value(),
+                          config.forth_resync_client_secret.get_secret_value())
     
     # Initialize S3 adapter
     endpoint_url = None
@@ -67,8 +90,8 @@ async def lifespan(app: FastAPI):
         endpoint_url=endpoint_url
     )
     
-    # Initialize downloader
-    downloader = DocumentDownloader(config, forth_client, s3_adapter)
+    # Initialize downloader (pass map of clients)
+    downloader = DocumentDownloader(config, forth_clients or None, s3_adapter)
     
     # Initialize worker
     worker = DownloadWorker(config, downloader)
@@ -77,7 +100,7 @@ async def lifespan(app: FastAPI):
     app.state.downloader = downloader
     app.state.worker = worker
     app.state.config = config
-    app.state.auth_manager = auth_manager
+    app.state.auth_managers = auth_managers
     
     # Start worker in background
     worker_task = asyncio.create_task(worker.run())
@@ -99,10 +122,21 @@ async def lifespan(app: FastAPI):
         pass
     
     # Cleanup clients
-    if forth_client:
-        await forth_client.close()
-    if auth_manager:
-        await auth_manager.close()
+    try:
+        for fc in (forth_clients or {}).values():
+            await fc.close()
+    except Exception:
+        pass
+    try:
+        for am in (auth_managers or {}).values():
+            await am.close()
+    except Exception:
+        pass
+    try:
+        if hasattr(downloader, 'close'):
+            await downloader.close()
+    except Exception:
+        pass
     
     # Give a moment for all async tasks to complete
     await asyncio.sleep(0.1)
@@ -112,7 +146,6 @@ async def lifespan(app: FastAPI):
     
     # Additional cleanup for multiprocessing resources
     try:
-        # Force cleanup of any remaining multiprocessing resources
         multiprocessing.active_children()  # This forces cleanup of zombie processes
         await asyncio.sleep(0.05)  # Brief pause for cleanup
     except Exception:

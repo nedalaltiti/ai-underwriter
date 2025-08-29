@@ -186,20 +186,17 @@ class SQSAdapter(QueueAdapter):
             
             params['MessageGroupId'] = message_group_id
 
-            # Create a UNIQUE deduplication id per document/message
-            # Always include doc_id if available to ensure uniqueness
+            # Prefer contact_id-doc_id-correlation_id when available
+            correlation_id = getattr(message, 'correlation_id', None)
             if doc_id:
-                # Use doc_id + timestamp + random for guaranteed uniqueness
-                ts_ms = int(time.time() * 1000)
-                rand = uuid.uuid4().hex[:8]
-                dedup_id = f"doc-{doc_id}-{ts_ms}-{rand}"
+                base = f"{message.contact_id}-{doc_id}"
+                if correlation_id:
+                    dedup_id = f"{base}-{correlation_id}"
+                else:
+                    dedup_id = base
             else:
-                # Fallback for messages without doc_id
-                correlation_id = getattr(message, 'correlation_id', None)
-                base_id = correlation_id or message_group_id
-                ts_ms = int(time.time() * 1000)
-                rand = uuid.uuid4().hex[:8]
-                dedup_id = f"msg-{base_id}-{ts_ms}-{rand}"
+                base = correlation_id or message_group_id
+                dedup_id = f"{base}"
             
             params['MessageDeduplicationId'] = dedup_id[:128]  # AWS limit is 128 chars
 

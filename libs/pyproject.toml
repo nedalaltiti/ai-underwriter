@@ -3,7 +3,7 @@ name = "forth-shared"
 version = "1.0.0"
 description = "Shared utilities and components for AI underwriting"
 authors = [{ name = "Nedal Altiti", email = "nedal.a@usclarity.com" }]
-requires-python = ">=3.11"
+requires-python = ">=3.11,<4.0"
 
 dependencies = [
     "pydantic~=2.11.7",

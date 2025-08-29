@@ -3,7 +3,7 @@ name            = "ai-underwriting"
 version         = "1.0.0"
 description     = "Event-driven AI underwriting platform"
 authors         = [{ name = "Nedal Altiti", email = "nedal.a@usclarity.com" }]
-requires-python = ">=3.11"
+requires-python = ">=3.11,<4.0"
 
 # --- Core, shared across services ---
 dependencies = [
@@ -104,6 +104,10 @@ requires = ["setuptools>=69.0"]
 build-backend = "setuptools.build_meta"
 
 # --- Tooling configs (unchanged except for tighter paths) ---
+
+[tool.poetry]
+# Disable installing the root project as a package; use this file for dependency management only
+package-mode = false
 
 [tool.setuptools.packages.find]
 where = ["libs", "services"]

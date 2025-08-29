@@ -318,10 +318,10 @@ class HealthChecker:
             
             # Check downloader components
             issues = []
-            if not hasattr(self.downloader, 'forth_api'):
-                issues.append("Forth API client not initialized")
-            if not hasattr(self.downloader, 's3_client'):
-                issues.append("S3 client not initialized")
+            if not getattr(self.downloader, 'forth_clients', None):
+                issues.append("Forth API clients not initialized")
+            if not getattr(self.downloader, 's3_adapter', None):
+                issues.append("S3 adapter not initialized")
             
             if issues:
                 return HealthCheck(
@@ -361,11 +361,8 @@ class HealthChecker:
             if not self.config.s3_bucket_name:
                 issues.append("S3 bucket not configured")
             
-            if not self.config.forth_api_base_url:
-                issues.append("Forth API URL not configured")
-            
-            if not self.config.forth_api_key:
-                issues.append("Forth API key not configured")
+            if not getattr(self.config, 'forth_api_base_url', None):
+                issues.append("Forth API base URL not configured")
             
             if self.config.worker_concurrency <= 0:
                 issues.append("invalid worker concurrency")
@@ -475,18 +472,11 @@ class HealthChecker:
         start_time = time.perf_counter()
         
         try:
-            if not self.config.forth_api_base_url:
+            if not getattr(self.config, 'forth_api_base_url', None):
                 return HealthCheck(
                     name="forth_api",
                     status=CheckStatus.FAIL,
-                    message="Forth API URL not configured"
-                )
-            
-            if not self.config.forth_api_key:
-                return HealthCheck(
-                    name="forth_api",
-                    status=CheckStatus.FAIL,
-                    message="Forth API credentials not configured"
+                    message="Forth API base URL not configured"
                 )
             
             duration_ms = int((time.perf_counter() - start_time) * 1000)
@@ -496,7 +486,7 @@ class HealthChecker:
                 message="Forth API configuration valid",
                 duration_ms=duration_ms,
                 details={
-                    "base_url": self.config.forth_api_base_url,
+                    "base_url": getattr(self.config, 'forth_api_base_url', None),
                     "timeout": self.config.forth_api_timeout
                 }
             )

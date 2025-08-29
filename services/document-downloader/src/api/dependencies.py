@@ -23,6 +23,6 @@ def get_config(request: Request) -> DocumentConfig:
     return request.app.state.config
 
 
-def get_auth_manager(request: Request) -> Optional[ForthAuthManager]:
-    """Get auth manager instance from app state."""
-    return getattr(request.app.state, 'auth_manager', None)
+def get_auth_managers(request: Request) -> Optional[dict]:
+    """Get auth managers dict from app state (per source)."""
+    return getattr(request.app.state, 'auth_managers', None)

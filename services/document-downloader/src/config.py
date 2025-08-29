@@ -62,31 +62,54 @@ class DocumentConfig(BaseServiceConfig):
         description="S3 key prefix"
     )
     
-    # Forth API configuration
+    # Shared Forth API base URL (same for all sources)
     forth_api_base_url: Optional[str] = Field(
         default="https://api.forthcrm.com/v1",
-        description="Forth API base URL"
+        description="Forth API base URL (shared across sources)"
     )
-    
-    # Permanent credentials for token refresh
-    forth_client_secret: Optional[SecretStr] = Field(
-        default=None,
-        description="Forth API client_secret (permanent credential for token refresh)"
-    )
-    forth_client_id: Optional[SecretStr] = Field(
-        default=None,
-        description="Forth API client_id (permanent credential for token refresh)"
-    )
-    
-    # Current working API key (will be auto-refreshed)
-    forth_api_key: Optional[SecretStr] = Field(
-        default=None,
-        description="Current Forth API key (temporary, auto-refreshed every 8 days)"
-    )
-    
+
     forth_api_timeout: int = Field(
         default=30,
         description="API timeout in seconds"
+    )
+    # CDR
+    forth_cdr_api_base_url: Optional[str] = Field(
+        default=None,
+        description="Forth API base URL for CDR"
+    )
+    forth_cdr_client_secret: Optional[SecretStr] = Field(
+        default=None,
+        description="Forth API client_secret for CDR"
+    )
+    forth_cdr_client_id: Optional[SecretStr] = Field(
+        default=None,
+        description="Forth API client_id for CDR"
+    )
+    # ASPIRE
+    forth_aspire_api_base_url: Optional[str] = Field(
+        default=None,
+        description="Forth API base URL for ASPIRE"
+    )
+    forth_aspire_client_secret: Optional[SecretStr] = Field(
+        default=None,
+        description="Forth API client_secret for ASPIRE"
+    )
+    forth_aspire_client_id: Optional[SecretStr] = Field(
+        default=None,
+        description="Forth API client_id for ASPIRE"
+    )
+    # RESYNC
+    forth_resync_api_base_url: Optional[str] = Field(
+        default=None,
+        description="Forth API base URL for RESYNC"
+    )
+    forth_resync_client_secret: Optional[SecretStr] = Field(
+        default=None,
+        description="Forth API client_secret for RESYNC"
+    )
+    forth_resync_client_id: Optional[SecretStr] = Field(
+        default=None,
+        description="Forth API client_id for RESYNC"
     )
     
     # Token refresh configuration  
@@ -158,12 +181,9 @@ class DocumentConfig(BaseServiceConfig):
             if self.max_file_size_mb > 1000:  # 1GB
                 raise ValueError("Production file size limit too high (maximum 1000MB)")
             
-            # Ensure secure configuration
-            if not self.has_forth_api_credentials():
-                raise ValueError("Production requires Forth API credentials")
-            
-            if not str(self.forth_api_base_url).startswith("https://"):
-                raise ValueError("Production requires HTTPS for Forth API")
+            # Ensure secure configuration: shared base URL must be HTTPS
+            if not self.forth_api_base_url or not str(self.forth_api_base_url).startswith("https://"):
+                raise ValueError("Production requires HTTPS Forth API base URL")
         
         return self
     
@@ -181,17 +201,17 @@ class DocumentConfig(BaseServiceConfig):
         """Check if running in development environment."""
         return self.environment == Environment.DEVELOPMENT
 
-    def get_forth_api_key(self) -> Optional[str]:
-        """Safely get the Forth API key value."""
-        return self.forth_api_key.get_secret_value() if self.forth_api_key else None
-    
     def has_forth_api_credentials(self) -> bool:
-        """Check if Forth API credentials are configured (without exposing values)."""
-        has_api_key = self.forth_api_key is not None
-        has_client_creds = self.forth_client_id is not None and self.forth_client_secret is not None
-        has_base_url = self.forth_api_base_url is not None
-        
-        return has_base_url and (has_api_key or has_client_creds)
+        """Check if any per-source Forth API credentials are configured (uses shared base URL)."""
+        sources = [
+            (self.forth_cdr_client_id, self.forth_cdr_client_secret),
+            (self.forth_aspire_client_id, self.forth_aspire_client_secret),
+            (self.forth_resync_client_id, self.forth_resync_client_secret),
+        ]
+        for client_id, client_secret in sources:
+            if client_id and client_secret:
+                return True
+        return False
     
     def get_max_file_size_bytes(self) -> int:
         """Get maximum file size in bytes."""
@@ -203,6 +223,5 @@ class DocumentConfig(BaseServiceConfig):
         return (
             self.environment == Environment.PRODUCTION
             and hasattr(self, 'cors_origins') and "*" not in getattr(self, 'cors_origins', [])
-            and str(self.forth_api_base_url).startswith("https://")
             and self.has_forth_api_credentials()
         )

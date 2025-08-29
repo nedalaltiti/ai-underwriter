@@ -53,11 +53,11 @@ class TokenInfo(BaseModel):
 class ForthAuthManager:
     """Forth API authentication manager."""
     
-    def __init__(self, config: DocumentConfig):
+    def __init__(self, config: DocumentConfig, *, base_url: Optional[str] = None, client_id: Optional[str] = None, client_secret: Optional[str] = None):
         self.config = config
-        self.client_id = config.forth_client_id.get_secret_value() if config.forth_client_id else None
-        self.client_secret = config.forth_client_secret.get_secret_value() if config.forth_client_secret else None
-        self.base_url = config.forth_api_base_url
+        self.client_id = client_id or (config.forth_client_id.get_secret_value() if config.forth_client_id else None)
+        self.client_secret = client_secret or (config.forth_client_secret.get_secret_value() if config.forth_client_secret else None)
+        self.base_url = (base_url or config.forth_api_base_url)
         
         self._current_token: Optional[TokenInfo] = None
         self._refresh_task: Optional[asyncio.Task] = None
