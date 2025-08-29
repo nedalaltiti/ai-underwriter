@@ -78,8 +78,9 @@ class UnderwritingDatabaseAdapter:
         # Convert first 8 hex chars to int to stay within PostgreSQL int range
         return int(stable_hash[:8], 16)
 
-    async def _check_document_exists(self, connection, file_id: int) -> bool:
-        """Check if document was already processed."""
+    async def _check_document_exists(self, connection, file_id: int, doc_id: str = None) -> bool:
+        """Check if document was already processed (check both new composite and old simple file_id)."""
+        # Check new composite file_id first
         result = await connection.fetchval("""
             SELECT EXISTS(
                 SELECT 1 FROM underwriting.engagement_term WHERE file_id = $1
@@ -89,9 +90,27 @@ class UnderwritingDatabaseAdapter:
                 SELECT 1 FROM underwriting.payment_gateway_agreement WHERE file_id = $1
             )
         """, file_id)
+        
+        # If not found and we have doc_id, also check old simple file_id for backward compatibility
+        if not result and doc_id:
+            try:
+                old_file_id = int(doc_id)
+                if old_file_id != file_id:  # Only check if different from new file_id
+                    result = await connection.fetchval("""
+                        SELECT EXISTS(
+                            SELECT 1 FROM underwriting.engagement_term WHERE file_id = $1
+                            UNION
+                            SELECT 1 FROM underwriting.financial_analysis WHERE file_id = $1
+                            UNION
+                            SELECT 1 FROM underwriting.payment_gateway_agreement WHERE file_id = $1
+                        )
+                    """, old_file_id)
+            except (ValueError, TypeError):
+                pass  # doc_id not convertible to int
+        
         return result
     
-    async def store_document_package(self, package: ExtractedDocumentPackage) -> bool:
+    async def store_document_package(self, package: ExtractedDocumentPackage, doc_id: str = None) -> bool:
         """Store complete document package with duplicate checking and UUID-based IDs."""
         try:
             # Validate required fields
@@ -101,7 +120,7 @@ class UnderwritingDatabaseAdapter:
             
             # Check for duplicates first
             async with self.pool.acquire() as connection:
-                existing = await self._check_document_exists(connection, package.file_id)
+                existing = await self._check_document_exists(connection, package.file_id, doc_id)
                 if existing:
                     logger.bind(file_id=package.file_id).warning("db.duplicate_skip document_already_exists=true")
                     return True

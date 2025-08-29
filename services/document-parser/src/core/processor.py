@@ -68,8 +68,8 @@ class DocumentProcessor:
                 
                 await db_adapter.initialize()
                 
-                # Store complete package to database
-                success = await db_adapter.store_document_package(package)
+                # Store complete package to database  
+                success = await db_adapter.store_document_package(package, task.doc_id)
                 
                 await db_adapter.close()
                 
