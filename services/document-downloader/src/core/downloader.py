@@ -22,7 +22,8 @@ from core.exceptions import (
     DownloadTimeoutError, 
     TempFileError,
     DocumentNotFoundError,
-    DocumentExcludedError
+    DocumentExcludedError,
+    ForthAPIError
 )
 
 
@@ -206,6 +207,23 @@ class DocumentDownloader:
                 status=DownloadStatus.FAILED,
                 error_message=str(e),
                 processing_time_ms=processing_time_ms
+            )
+        except ForthAPIError as e:
+            # Map auth-related errors to permanent codes for correct DLQ handling
+            processing_time_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
+            self._update_metrics(False, 0, processing_time_ms)
+            code = None
+            if getattr(e, 'status_code', None) == 401:
+                code = "FORTH_API_UNAUTHORIZED"
+            elif getattr(e, 'status_code', None) == 403:
+                code = "FORTH_API_FORBIDDEN"
+            logger.error(f"Document download failed: {e}")
+            return DownloadResult(
+                success=False,
+                status=DownloadStatus.FAILED,
+                error_message=str(e),
+                processing_time_ms=processing_time_ms,
+                error_code=code
             )
         except Exception as e:
             processing_time_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)

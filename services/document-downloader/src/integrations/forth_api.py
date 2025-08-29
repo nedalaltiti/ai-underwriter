@@ -104,10 +104,13 @@ class ForthAPIClient:
                 raise DocumentNotFoundError(f"{contact_id}/{doc_id}")
             
             else:
+                # Log compact error without raw JSON body to avoid formatter issues
                 logger.error(
                     f"forth.error contact={contact_id} doc={doc_id} status={response.status_code}"
                 )
-                raise ForthAPIError(response.status_code, response.text)
+                # Normalize common auth errors to explicit codes upstream
+                msg = response.text
+                raise ForthAPIError(response.status_code, msg)
                 
         except httpx.TimeoutException:
             logger.warning(f"forth.timeout contact={contact_id} doc={doc_id} timeout_s={self.timeout}")
