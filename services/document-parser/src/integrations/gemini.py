@@ -778,6 +778,13 @@ class GeminiClient:
                 if key in date_fields and isinstance(value, str):
                     try:
                         cleaned = re.sub(r"\s+", "", raw_value)
+                        
+                        # Handle invalid/partial dates - set to None
+                        if len(cleaned) <= 2 and cleaned.isdigit():
+                            # Just a day number like "15" - not a valid date
+                            entity[key] = None
+                            continue
+                        
                         # Handle MM/dd/yyyy and M/d/yyyy
                         if '/' in cleaned:
                             parts = cleaned.split('/')
@@ -820,8 +827,11 @@ class GeminiClient:
                                 # Try month-first
                                 if len(parts[2]) == 4 and parts[0].isdigit() and parts[1].isdigit():
                                     entity[key] = f"{parts[2]}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"
+                        else:
+                            # Invalid date format - set to None
+                            entity[key] = None
                     except:
-                        pass  # Keep original if conversion fails
+                        entity[key] = None  # Set to None on any date parsing error
                 
                 # Fix ClixSign datetime formats - convert "MM/dd/yyyy h:mm:ss AM/PM" to ISO format
                 if key in datetime_fields and isinstance(value, str):

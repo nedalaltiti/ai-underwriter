@@ -410,7 +410,20 @@ class UnderwritingDatabaseAdapter:
             s = ''.join(re.findall(r'[A-Za-z]', s))[:10]
             return s or None
 
+        def _coerce_middle_initial(v: Any) -> Optional[str]:
+            """Coerce middle initial to single character."""
+            if v is None:
+                return None
+            s = str(v).strip()
+            if not s:
+                return None
+            # Take up to 4 characters and ensure they're letters
+            first_chars = s[:4]
+            return first_chars if first_chars.isalpha() else None
+
         client_initials_value = _coerce_client_initials(entity.client_initials)
+        client_middle_initial = _coerce_middle_initial(entity.client_middle_initial)
+        coclient_middle_initial = _coerce_middle_initial(entity.coclient_middle_initial)
         pages_count_value = None
         if entity.pages_count is not None:
             try:
@@ -432,10 +445,10 @@ class UnderwritingDatabaseAdapter:
                 client_first_name = COALESCE(EXCLUDED.client_first_name, payment_gateway_agreement.client_first_name),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.account_id, entity.client_first_name, entity.client_last_name,
-            entity.client_middle_initial, entity.client_ssn, entity.client_dob, entity.client_address,
+            client_middle_initial, entity.client_ssn, entity.client_dob, entity.client_address,
             entity.client_city, entity.client_state, entity.client_zipcode, entity.client_phone,
             entity.client_email, entity.coclient_first_name, entity.coclient_last_name,
-            entity.coclient_middle_initial, entity.coclient_ssn, entity.coclient_dob,
+            coclient_middle_initial, entity.coclient_ssn, entity.coclient_dob,
             client_initials_value, entity.client_signature, entity.client_signature_date,
             entity.coclient_signature, entity.coclient_signature_date, pages_count_value,
             datetime.now())

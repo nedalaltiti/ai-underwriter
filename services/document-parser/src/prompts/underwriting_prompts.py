@@ -316,9 +316,41 @@ You are extracting ALL underwriting entities from a multi-document package. Foll
 
 {BASE_EXTRACTION_RULES}
 
+CRITICAL DOCUMENT TYPE DISAMBIGUATION:
+- If you see "Account Agreement", "Client Information Sheet", "Account ID", bank routing numbers (9 digits), bank account numbers (longer), ACH/recurring debit authorization, payment schedules, or processor names like "FORTH", "RAM", "CFT" → put data in payment_gateway_agreement, NOT engagement_term
+- If you see debt settlement company names (Clarity, Concordia, Resync, Aspire, Palisade), settlement fees, settlement percentages, monthly program payments → put data in engagement_term, NOT payment_gateway_agreement
+- Do NOT mix these: banking/payment processor info goes to payment_gateway_agreement; debt settlement company info goes to engagement_term
+- ONLY populate entities that are actually present in the document. If no engagement term content exists, keep engagement_term as null. If no payment gateway content exists, keep payment_gateway_agreement as null.
+
 {{
   "document_type": "string",
   "confidence_score": 0.85,
+  "payment_gateway_agreement": {{
+    "file_id": null,
+    "account_id": null,
+    "client_first_name": null,
+    "client_last_name": null,
+    "client_middle_initial": null,
+    "client_ssn": null,
+    "client_dob": null,
+    "client_address": null,
+    "client_city": null,
+    "client_state": null,
+    "client_zipcode": null,
+    "client_phone": null,
+    "client_email": null,
+    "coclient_first_name": null,
+    "coclient_last_name": null,
+    "coclient_middle_initial": null,
+    "coclient_ssn": null,
+    "coclient_dob": null,
+    "client_initials": null,
+    "client_signature": null,
+    "client_signature_date": null,
+    "coclient_signature": null,
+    "coclient_signature_date": null,
+    "pages_count": null
+  }},
   "engagement_term": {{
     "file_id": null,
     "company_name": null,
@@ -431,32 +463,6 @@ You are extracting ALL underwriting entities from a multi-document package. Foll
     "cancellation_deadline": null,
     "cancellation_date": null,
     "buyer_signature": null
-  }},
-  "payment_gateway_agreement": {{
-    "file_id": null,
-    "account_id": null,
-    "client_first_name": null,
-    "client_last_name": null,
-    "client_middle_initial": null,
-    "client_ssn": null,
-    "client_dob": null,
-    "client_address": null,
-    "client_city": null,
-    "client_state": null,
-    "client_zipcode": null,
-    "client_phone": null,
-    "client_email": null,
-    "coclient_first_name": null,
-    "coclient_last_name": null,
-    "coclient_middle_initial": null,
-    "coclient_ssn": null,
-    "coclient_dob": null,
-    "client_initials": null,
-    "client_signature": null,
-    "client_signature_date": null,
-    "coclient_signature": null,
-    "coclient_signature_date": null,
-    "pages_count": null
   }},
   "payment_service_fees": [{{
     "file_id": null,

@@ -66,7 +66,6 @@ class DocumentProcessor:
                 
                 logger.info(f"Successfully extracted package for {task.doc_id}, type: {package.document_type}")
                 
-                # db_adapter already created above
                 await db_adapter.initialize()
                 
                 # Store complete package to database
