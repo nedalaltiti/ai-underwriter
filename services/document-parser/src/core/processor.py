@@ -55,9 +55,8 @@ class DocumentProcessor:
             try:
                 from integrations.database.adapter import UnderwritingDatabaseAdapter
                 
-                # Generate composite file_id for per-contact uniqueness
-                db_adapter = UnderwritingDatabaseAdapter()
-                file_id = db_adapter._generate_composite_file_id(task.doc_id, task.contact_id)
+                
+                file_id = int(task.doc_id)
                 # Use multi-attempt extraction and pick most complete result
                 package = await self.gemini_client.extract_with_validation(pdf_data, file_id, attempts=3)
                 
@@ -66,10 +65,12 @@ class DocumentProcessor:
                 
                 logger.info(f"Successfully extracted package for {task.doc_id}, type: {package.document_type}")
                 
+                # Initialize database adapter
+                db_adapter = UnderwritingDatabaseAdapter()
                 await db_adapter.initialize()
                 
                 # Store complete package to database  
-                success = await db_adapter.store_document_package(package, task.doc_id)
+                success = await db_adapter.store_document_package(package)
                 
                 await db_adapter.close()
                 
