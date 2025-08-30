@@ -144,6 +144,11 @@ class GeminiClient:
                     return result
             except Exception as e:
                 logger.warning(f"Attempt {attempt + 1} failed: {e}")
+                # Check if this is a permanent PDF issue - don't retry
+                if "no pages" in str(e).lower() or "corrupted PDF" in str(e):
+                    logger.error(f"Permanent PDF issue detected, stopping attempts: {e}")
+                    raise  # Don't retry corrupted/empty PDFs
+                    
                 if is_final_attempt:
                     # On final attempt, if normal validation failed, try lenient storage
                     logger.info("Final attempt with normal validation failed, trying lenient storage...")

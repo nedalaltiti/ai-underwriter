@@ -152,13 +152,36 @@ class DocumentWorker:
                         # Add timeout to prevent hanging
                         await asyncio.wait_for(
                             self._process_message(message, queue_url, worker_id),
-                            timeout=300  # 5 minutes max per document
+                            timeout=900  # 15 minutes max per documen
                         )
                     except asyncio.TimeoutError:
+                        # Extract contact/doc info for better logging
+                        contact_id = "unknown"
+                        doc_id = "unknown"
+                        try:
+                            body = json.loads(message.get("Body", "{}"))
+                            contact_id = body.get("contact_id", "unknown")
+                            doc_data = body.get("data", {})
+                            doc_id = doc_data.get("doc_id", "unknown")
+                        except:
+                            pass
+                        
                         logger.bind(
                             service="document-parser",
-                            worker_id=worker_id
+                            worker_id=worker_id,
+                            contact_id=contact_id,
+                            doc_id=doc_id,
+                            timeout_minutes=15
                         ).error("worker.processing_timeout")
+                        
+                        # Delete the timed-out message to prevent infinite reprocessing
+                        try:
+                            receipt_handle = message.get("ReceiptHandle")
+                            if receipt_handle:
+                                await self._delete_message(queue_url, receipt_handle)
+                                logger.bind(contact_id=contact_id, doc_id=doc_id).info("worker.timeout_deleted")
+                        except Exception as delete_error:
+                            logger.error(f"Failed to delete timed-out message: {delete_error}")
                     except Exception as e:
                         logger.bind(
                             service="document-parser",
@@ -251,6 +274,13 @@ class DocumentWorker:
                 )
                 logger.info(f"parse.start worker={worker_id} contact={body.get('contact_id', 'unknown')} doc={doc_id}")
             
+            # Extend message visibility for long processing (prevent redelivery)
+            try:
+                await self._extend_message_visibility(queue_url, receipt_handle, 900)  # 15 minutes
+                logger.bind(contact_id=task.contact_id, doc_id=task.doc_id).debug("parse.visibility_extended")
+            except Exception as e:
+                logger.warning(f"Failed to extend message visibility: {e}")
+            
             # Process document
             result = await self.processor.process_document(task)
             
@@ -264,6 +294,11 @@ class DocumentWorker:
             
             # Delete message from queue
             await self._delete_message(queue_url, receipt_handle)
+            logger.bind(
+                contact_id=task.contact_id,
+                doc_id=task.doc_id,
+                worker_id=worker_id
+            ).debug("parse.message_deleted")
             
             logger.bind(
                 service="document-parser",
@@ -285,10 +320,15 @@ class DocumentWorker:
             receive_count = int(attributes.get('ApproximateReceiveCount', '1'))
             max_retries = 3  # Configure max retries
             
-            # Check if we should retry or send to DLQ
-            if receive_count >= max_retries:
+            # Check for permanent failures that shouldn't be retried
+            permanent_errors = ["no pages", "corrupted PDF", "NonRetryableError"]
+            is_permanent = any(error_phrase in str(e) for error_phrase in permanent_errors)
+            
+            # Send to DLQ if max retries reached OR permanent error
+            if receive_count >= max_retries or is_permanent:
                 # Send to DLQ
-                logger.warning(f"parse.dlq worker={worker_id} doc={doc_id or 'unknown'} attempts={receive_count} reason=max_retries")
+                reason = "permanent_error" if is_permanent else "max_retries"
+                logger.warning(f"parse.dlq worker={worker_id} doc={doc_id or 'unknown'} attempts={receive_count} reason={reason}")
                 
                 # Create QueueMessage for DLQ
                 from libs.forth_shared.models.queue import QueueMessage, MessageType
@@ -374,6 +414,18 @@ class DocumentWorker:
             logger.error(f"db.error worker={worker_id} contact={task.contact_id} doc={task.doc_id} error={type(e).__name__}")
             # Don't raise - we don't want to fail message processing due to storage issues
     
+    async def _extend_message_visibility(self, queue_url: str, receipt_handle: str, visibility_timeout: int):
+        """Extend message visibility timeout to prevent redelivery during long processing."""
+        try:
+            await asyncio.to_thread(
+                self.sqs_client.change_message_visibility,
+                QueueUrl=queue_url,
+                ReceiptHandle=receipt_handle,
+                VisibilityTimeout=visibility_timeout
+            )
+        except Exception as e:
+            logger.error(f"Failed to extend message visibility: {e}")
+
     async def _delete_message(self, queue_url: str, receipt_handle: str):
         """Delete processed message from queue."""
         try:
