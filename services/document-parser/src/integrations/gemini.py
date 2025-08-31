@@ -361,7 +361,6 @@ class GeminiClient:
 
                 # 5. Engagement Term - ALWAYS try to extract
                 try:
-                    from prompts.underwriting_prompts import get_prompt_for_document_type
                     prompt_et = get_prompt_for_document_type('engagement_term')
                     response_et = await self._make_gemini_request(prompt_et, pdf_data)
                     if response_et:
