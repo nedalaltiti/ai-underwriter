@@ -15,7 +15,7 @@ CRITICAL EXTRACTION RULES:
 4. For dates, use YYYY-MM-DD format (e.g., "2024-03-15")
 5. For dates split across lines (e.g., "09/28/1" on one line, "971" on next), combine them (e.g., "09/28/1971")
 6. For monetary amounts, use decimal format without currency symbols (e.g., "1250.00")
-7. For SSNs, maintain format with dashes (e.g., "123-45-6789")
+7. For SSNs, maintain format with dashes (e.g., "123-45-6789"). If masked for privacy, keep as shown (e.g., "XXX-XX-6139")
 8. For phone numbers, extract as-is from document
 9. If a field has multiple possible values, choose the most prominent one
 10. Empty signatures should be null, not placeholder text
