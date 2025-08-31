@@ -322,6 +322,14 @@ CRITICAL DOCUMENT TYPE DISAMBIGUATION:
 - Do NOT mix these: banking/payment processor info goes to payment_gateway_agreement; debt settlement company info goes to engagement_term
 - ONLY populate entities that are actually present in the document. If no engagement term content exists, keep engagement_term as null. If no payment gateway content exists, keep payment_gateway_agreement as null.
 
+ENGAGEMENT TERM EXTRACTION FOCUS:
+- Look for company letterhead/logo at top of document for company_name
+- Find settlement fee percentage in main contract text (look for "%" symbols or "contingency fee" language)
+- Extract client signature blocks at end of document (name and signature date)
+- Count initials throughout document (look for repeated 2-3 letter combinations next to clauses)
+- Count total pages (usually shown at bottom of each page as "Page X of Y")
+- Look for fee structures, payment terms, and legal service obligations in main contract body
+
 {{
   "document_type": "string",
   "confidence_score": 0.85,

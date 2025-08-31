@@ -260,9 +260,13 @@ class DocumentDownloader:
             Exception: For other API or processing errors
         """
         # Select appropriate Forth client based on webhook source
-        client = self._select_forth_client(getattr(task, 'webhook_source', None))
+        webhook_source = getattr(task, 'webhook_source', None)
+        client = self._select_forth_client(webhook_source)
+        
+        logger.debug(f"forth.client_selection webhook_source={webhook_source} client_found={bool(client)} available_sources={list(self.forth_clients.keys())}")
+        
         if not client:
-            logger.error("No Forth API client available for this source")
+            logger.error(f"No Forth API client available for source={webhook_source} available={list(self.forth_clients.keys())}")
             raise Exception("Forth API client not configured")
         
         try:
