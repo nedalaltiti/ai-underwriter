@@ -301,7 +301,6 @@ class UnderwritingDatabaseAdapter:
                 coclient_ssn = COALESCE(EXCLUDED.coclient_ssn, power_of_attorney.coclient_ssn),
                 coclient_dob = COALESCE(EXCLUDED.coclient_dob, power_of_attorney.coclient_dob),
                 coclient_signature = COALESCE(EXCLUDED.coclient_signature, power_of_attorney.coclient_signature),
-                coclient_signature_date = COALESCE(EXCLUDED.coclient_signature_date, power_of_attorney.coclient_signature_date),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.company_name, entity.attorney_name, entity.attorney_address,
             entity.attorney_phone, entity.client_name, entity.client_ssn, entity.client_dob,

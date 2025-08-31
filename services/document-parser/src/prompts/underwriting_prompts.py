@@ -87,7 +87,6 @@ Extract the following information and return as JSON:
   "coclient_ssn": "Co-client SSN (format: 123-45-6789)",
   "coclient_dob": "Co-client date of birth (YYYY-MM-DD)",
   "coclient_signature": "Co-client signature indicator",
-  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)"
 }}
 
 Look for:
