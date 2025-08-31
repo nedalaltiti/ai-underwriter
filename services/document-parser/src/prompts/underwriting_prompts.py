@@ -320,6 +320,14 @@ You are extracting ALL underwriting entities from a multi-document package. Foll
 
 {BASE_EXTRACTION_RULES}
 
+CRITICAL FOR LISTS - DO NOT TRUNCATE:
+- For debt_schedule: Extract ALL debts, even if 20+ entries. COMPLETE THE ENTIRE ARRAY.
+- For payment_deposit_schedule: Extract ALL payments, even if 60+ entries. DO NOT STOP MID-LIST.
+- For payment_service_fees: Extract ALL fees from Administrative and Disbursement sections.
+- For clixsign_signers: Extract ALL signers if present.
+- LISTS ARE CRITICAL - prioritize completing arrays over optional single fields.
+- If you approach token limits, finish the current list before stopping.
+
 CRITICAL DOCUMENT TYPE DISAMBIGUATION:
 - If you see "Account Agreement", "Client Information Sheet", "Account ID", bank routing numbers (9 digits), bank account numbers (longer), ACH/recurring debit authorization, payment schedules, or processor names like "FORTH", "RAM", "CFT" → put data in payment_gateway_agreement, NOT engagement_term
 - If you see debt settlement company names (Clarity, Concordia, Resync, Aspire, Palisade), settlement fees, settlement percentages, monthly program payments → put data in engagement_term, NOT payment_gateway_agreement

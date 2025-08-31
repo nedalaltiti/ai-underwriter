@@ -21,7 +21,8 @@ from prompts.underwriting_prompts import (
     get_targeted_service_fees_prompt,
     get_targeted_disclosure_prompt,
     get_targeted_power_of_attorney_prompt,
-    get_targeted_account_agreement_prompt
+    get_targeted_account_agreement_prompt,
+    BASE_EXTRACTION_RULES
 )
 from utils.json_parser import extract_json_from_response
 
@@ -302,79 +303,259 @@ class GeminiClient:
                 except Exception as e:
                     logger.warning(f"Backfill step skipped/failed: {e}")
 
-                # Targeted extraction for service fees if missing or empty
+                # FORCE extraction for ALL entity types - don't rely on comprehensive alone
+                
+                # 1. Service fees - ALWAYS try to extract
                 try:
-                    fees = package_data.get('payment_service_fees')
-                    if not fees or (isinstance(fees, list) and len(fees) == 0):
-                        prompt_fees = get_targeted_service_fees_prompt()
-                        response_fees = await self._make_gemini_request(prompt_fees, pdf_data)
-                        if response_fees and isinstance(response_fees.get('payment_service_fees'), list):
-                            # Merge, ensuring file_id and cleaning amounts
-                            merged_fees = response_fees['payment_service_fees']
-                            for item in merged_fees:
+                    prompt_fees = get_targeted_service_fees_prompt()
+                    response_fees = await self._make_gemini_request(prompt_fees, pdf_data)
+                    if response_fees and isinstance(response_fees.get('payment_service_fees'), list):
+                        merged_fees = response_fees['payment_service_fees']
+                        for item in merged_fees:
+                            if isinstance(item, dict):
+                                item['file_id'] = file_id
+                                self._fix_entity_data_formats(item)
+                        package_data['payment_service_fees'] = merged_fees
+                        logger.info(f"Forced service fees extraction: {len(merged_fees)} fees")
+                except Exception as e:
+                    logger.warning(f"Service fees extraction failed: {e}")
+
+                # 2. Disclosure - ALWAYS try to extract
+                try:
+                    prompt_disc = get_targeted_disclosure_prompt()
+                    response_disc = await self._make_gemini_request(prompt_disc, pdf_data)
+                    disc = response_disc.get('disclosure') if response_disc else None
+                    if isinstance(disc, dict):
+                        disc['file_id'] = file_id
+                        self._fix_entity_data_formats(disc)
+                        package_data['disclosure'] = disc
+                        logger.info("Forced disclosure extraction")
+                except Exception as e:
+                    logger.warning(f"Disclosure extraction failed: {e}")
+
+                # 3. Power of Attorney - ALWAYS try to extract
+                try:
+                    prompt_poa = get_targeted_power_of_attorney_prompt()
+                    response_poa = await self._make_gemini_request(prompt_poa, pdf_data)
+                    poa = response_poa.get('power_of_attorney') if response_poa else None
+                    if isinstance(poa, dict):
+                        poa['file_id'] = file_id
+                        self._fix_entity_data_formats(poa)
+                        package_data['power_of_attorney'] = poa
+                        logger.info("Forced power of attorney extraction")
+                except Exception as e:
+                    logger.warning(f"Power of attorney extraction failed: {e}")
+
+                # 4. Account Agreement - ALWAYS try to extract
+                try:
+                    prompt_pga = get_targeted_account_agreement_prompt()
+                    response_pga = await self._make_gemini_request(prompt_pga, pdf_data)
+                    pga_new = response_pga.get('payment_gateway_agreement') if response_pga else None
+                    if isinstance(pga_new, dict):
+                        pga_new['file_id'] = file_id
+                        self._fix_entity_data_formats(pga_new)
+                        package_data['payment_gateway_agreement'] = pga_new
+                        logger.info("Forced account agreement extraction")
+                except Exception as e:
+                    logger.warning(f"Account agreement extraction failed: {e}")
+
+                # 5. Engagement Term - ALWAYS try to extract
+                try:
+                    from prompts.underwriting_prompts import get_prompt_for_document_type
+                    prompt_et = get_prompt_for_document_type('engagement_term')
+                    response_et = await self._make_gemini_request(prompt_et, pdf_data)
+                    if response_et:
+                        response_et['file_id'] = file_id
+                        self._fix_entity_data_formats(response_et)
+                        package_data['engagement_term'] = response_et
+                        logger.info("Forced engagement term extraction")
+                except Exception as e:
+                    logger.warning(f"Engagement term extraction failed: {e}")
+
+                # 6. Financial Analysis - ALWAYS try to extract
+                try:
+                    prompt_fa = get_prompt_for_document_type('financial_analysis')
+                    response_fa = await self._make_gemini_request(prompt_fa, pdf_data)
+                    if response_fa:
+                        response_fa['file_id'] = file_id
+                        self._fix_entity_data_formats(response_fa)
+                        package_data['financial_analysis'] = response_fa
+                        logger.info("Forced financial analysis extraction")
+                except Exception as e:
+                    logger.warning(f"Financial analysis extraction failed: {e}")
+
+                # 7. Debt Schedule - ALWAYS try to extract
+                try:
+                    prompt_debt = get_prompt_for_document_type('debt_schedule')
+                    response_debt = await self._make_gemini_request(prompt_debt, pdf_data)
+                    if response_debt and 'debt_schedule' in response_debt:
+                        debt_list = response_debt['debt_schedule']
+                        if isinstance(debt_list, list):
+                            for item in debt_list:
                                 if isinstance(item, dict):
                                     item['file_id'] = file_id
                                     self._fix_entity_data_formats(item)
-                            package_data['payment_service_fees'] = merged_fees
-                            package = ExtractedDocumentPackage(**package_data)
+                            package_data['debt_schedule'] = debt_list
+                            logger.info(f"Forced debt schedule extraction: {len(debt_list)} debts")
                 except Exception as e:
-                    logger.info(f"Service fees backfill skipped/failed: {e}")
+                    logger.warning(f"Debt schedule extraction failed: {e}")
 
-                # Targeted extraction for disclosure if missing
+                # 8. FCRA Consent - ALWAYS try to extract
                 try:
-                    if not package_data.get('disclosure'):
-                        prompt_disc = get_targeted_disclosure_prompt()
-                        response_disc = await self._make_gemini_request(prompt_disc, pdf_data)
-                        disc = response_disc.get('disclosure') if response_disc else None
-                        if isinstance(disc, dict) and any(disc.get(k) for k in ['client_signature','client_signature_date','coclient_signature','coclient_signature_date']):
-                            disc['file_id'] = file_id
-                            self._fix_entity_data_formats(disc)
-                            package_data['disclosure'] = disc
-                            package = ExtractedDocumentPackage(**package_data)
+                    prompt_fcra = f"""Extract FCRA Consumer Report Consent fields. Look for consent language and signature blocks.
+                    
+                    {BASE_EXTRACTION_RULES}
+                    
+                    Return JSON: {{"fcra_consent": {{"file_id": null, "company_name": null, "client_name": null, "client_signature": null, "client_signature_date": null}}}}"""
+                    response_fcra = await self._make_gemini_request(prompt_fcra, pdf_data)
+                    fcra = response_fcra.get('fcra_consent') if response_fcra else None
+                    if isinstance(fcra, dict):
+                        fcra['file_id'] = file_id
+                        self._fix_entity_data_formats(fcra)
+                        package_data['fcra_consent'] = fcra
+                        logger.info("Forced FCRA consent extraction")
                 except Exception as e:
-                    logger.info(f"Disclosure backfill skipped/failed: {e}")
+                    logger.warning(f"FCRA consent extraction failed: {e}")
 
-                # Targeted extraction for power_of_attorney if missing
+                # 9. High Interest Disclosure - ALWAYS try to extract
                 try:
-                    if not package_data.get('power_of_attorney'):
-                        prompt_poa = get_targeted_power_of_attorney_prompt()
-                        response_poa = await self._make_gemini_request(prompt_poa, pdf_data)
-                        poa = response_poa.get('power_of_attorney') if response_poa else None
-                        if isinstance(poa, dict) and any(poa.get(k) for k in ['client_name', 'client_ssn', 'client_dob', 'client_signature','client_signature_date','coclient_name','coclient_ssn','coclient_dob','coclient_signature']):
-                            poa['file_id'] = file_id
-                            self._fix_entity_data_formats(poa)
-                            package_data['power_of_attorney'] = poa
-                            package = ExtractedDocumentPackage(**package_data)
+                    prompt_hid = f"""Extract High Interest Creditor Disclosure fields. Look for disclosure sections and signature blocks.
+                    
+                    {BASE_EXTRACTION_RULES}
+                    
+                    Return JSON: {{"high_interest_disclosure": {{"file_id": null, "company_name": null, "client_name": null, "client_signature": null, "client_signature_date": null, "coclient_name": null, "coclient_signature": null, "coclient_signature_date": null}}}}"""
+                    response_hid = await self._make_gemini_request(prompt_hid, pdf_data)
+                    hid = response_hid.get('high_interest_disclosure') if response_hid else None
+                    if isinstance(hid, dict):
+                        hid['file_id'] = file_id
+                        self._fix_entity_data_formats(hid)
+                        package_data['high_interest_disclosure'] = hid
+                        logger.info("Forced high interest disclosure extraction")
                 except Exception as e:
-                    logger.info(f"Power of attorney backfill skipped/failed: {e}")
+                    logger.warning(f"High interest disclosure extraction failed: {e}")
 
-                # Targeted extraction for payment_gateway_agreement if missing or critical fields null
+                # 10. Program Disclosure - ALWAYS try to extract
                 try:
-                    need_pga_backfill = False
-                    pga = package_data.get('payment_gateway_agreement')
-                    critical_pga_fields = ['client_first_name','client_last_name','client_dob','client_signature','client_signature_date','client_email','coclient_first_name','coclient_last_name','coclient_dob','coclient_signature','coclient_signature_date']
-                    if not pga:
-                        need_pga_backfill = True
-                    elif isinstance(pga, dict):
-                        for k in critical_pga_fields:
-                            if pga.get(k) in (None, "", "null"):
-                                need_pga_backfill = True
-                                break
-                    if need_pga_backfill:
-                        prompt_pga = get_targeted_account_agreement_prompt()
-                        response_pga = await self._make_gemini_request(prompt_pga, pdf_data)
-                        pga_new = response_pga.get('payment_gateway_agreement') if response_pga else None
-                        if isinstance(pga_new, dict):
-                            merged = dict(pga or {})
-                            for k, v in pga_new.items():
-                                if k not in merged or merged.get(k) in (None, "", "null"):
-                                    merged[k] = v
-                            merged['file_id'] = file_id
-                            self._fix_entity_data_formats(merged)
-                            package_data['payment_gateway_agreement'] = merged
-                            package = ExtractedDocumentPackage(**package_data)
+                    prompt_pd = f"""Extract Program Disclosure fields. Look for program disclosure sections and settlement fee percentages.
+                    
+                    {BASE_EXTRACTION_RULES}
+                    
+                    Return JSON: {{"program_disclosure": {{"file_id": null, "company_name": null, "settlement_fee_percent": null, "client_initial": null, "is_all_initials_present": null}}}}"""
+                    response_pd = await self._make_gemini_request(prompt_pd, pdf_data)
+                    pd = response_pd.get('program_disclosure') if response_pd else None
+                    if isinstance(pd, dict):
+                        pd['file_id'] = file_id
+                        self._fix_entity_data_formats(pd)
+                        package_data['program_disclosure'] = pd
+                        logger.info("Forced program disclosure extraction")
                 except Exception as e:
-                    logger.info(f"Account agreement backfill skipped/failed: {e}")
+                    logger.warning(f"Program disclosure extraction failed: {e}")
+
+                # 11. Cancellation Notice - ALWAYS try to extract
+                try:
+                    prompt_cn = f"""Extract Cancellation Notice fields. Look for cancellation deadlines and buyer signature blocks.
+                    
+                    {BASE_EXTRACTION_RULES}
+                    
+                    Return JSON: {{"cancellation_notice": {{"file_id": null, "cancellation_deadline": null, "cancellation_date": null, "buyer_signature": null}}}}"""
+                    response_cn = await self._make_gemini_request(prompt_cn, pdf_data)
+                    cn = response_cn.get('cancellation_notice') if response_cn else None
+                    if isinstance(cn, dict):
+                        cn['file_id'] = file_id
+                        self._fix_entity_data_formats(cn)
+                        package_data['cancellation_notice'] = cn
+                        logger.info("Forced cancellation notice extraction")
+                except Exception as e:
+                    logger.warning(f"Cancellation notice extraction failed: {e}")
+
+                # 12. Payment Bank Info - ALWAYS try to extract
+                try:
+                    prompt_pbi = f"""Extract Payment Gateway Bank Info. Look for bank authorization, routing numbers, account numbers.
+                    
+                    {BASE_EXTRACTION_RULES}
+                    
+                    Return JSON: {{"payment_bank_info": {{"file_id": null, "authorizing_person_name": null, "bank_name": null, "account_number": null, "routing_number": null, "account_type": null, "address": null, "recurring_debit_authorization": null, "first_debit_date": null, "client_signature": null, "client_signature_date": null, "coclient_signature": null, "coclient_signature_date": null}}}}"""
+                    response_pbi = await self._make_gemini_request(prompt_pbi, pdf_data)
+                    pbi = response_pbi.get('payment_bank_info') if response_pbi else None
+                    if isinstance(pbi, dict):
+                        pbi['file_id'] = file_id
+                        self._fix_entity_data_formats(pbi)
+                        package_data['payment_bank_info'] = pbi
+                        logger.info("Forced payment bank info extraction")
+                except Exception as e:
+                    logger.warning(f"Payment bank info extraction failed: {e}")
+
+                # 13. Payment Deposit Schedule - ALWAYS try to extract
+                try:
+                    prompt_pds = f"""Extract Payment Gateway Deposit Schedule. Look for payment schedules with dates and amounts.
+                    
+                    {BASE_EXTRACTION_RULES}
+                    
+                    Return JSON: {{"payment_deposit_schedule": [{{"file_id": null, "payment_no": null, "process_date": null, "amount": null}}]}}"""
+                    response_pds = await self._make_gemini_request(prompt_pds, pdf_data)
+                    if response_pds and 'payment_deposit_schedule' in response_pds:
+                        pds_list = response_pds['payment_deposit_schedule']
+                        if isinstance(pds_list, list):
+                            for item in pds_list:
+                                if isinstance(item, dict):
+                                    item['file_id'] = file_id
+                                    self._fix_entity_data_formats(item)
+                            package_data['payment_deposit_schedule'] = pds_list
+                            logger.info(f"Forced payment deposit schedule extraction: {len(pds_list)} payments")
+                except Exception as e:
+                    logger.warning(f"Payment deposit schedule extraction failed: {e}")
+
+                # 14. Legal Plan Agreement - ALWAYS try to extract
+                try:
+                    prompt_lpa = get_prompt_for_document_type('legal_plan_agreement')
+                    response_lpa = await self._make_gemini_request(prompt_lpa, pdf_data)
+                    if response_lpa:
+                        response_lpa['file_id'] = file_id
+                        self._fix_entity_data_formats(response_lpa)
+                        package_data['legal_plan_agreement'] = response_lpa
+                        logger.info("Forced legal plan agreement extraction")
+                except Exception as e:
+                    logger.warning(f"Legal plan agreement extraction failed: {e}")
+
+                # 15. Clixsign Sender - ALWAYS try to extract
+                try:
+                    prompt_cs = f"""Extract Clixsign Certificate Sender info. Look for package details and sender information.
+                    
+                    {BASE_EXTRACTION_RULES}
+                    
+                    Return JSON: {{"clixsign_sender": {{"file_id": null, "package_id": null, "package_title": null, "final_status": null, "final_status_date": null, "sending_entity": null, "sender_name": null, "sender_email_address": null, "sender_ip_address": null, "signers_count": null}}}}"""
+                    response_cs = await self._make_gemini_request(prompt_cs, pdf_data)
+                    cs = response_cs.get('clixsign_sender') if response_cs else None
+                    if isinstance(cs, dict):
+                        cs['file_id'] = file_id
+                        self._fix_entity_data_formats(cs)
+                        package_data['clixsign_sender'] = cs
+                        logger.info("Forced clixsign sender extraction")
+                except Exception as e:
+                    logger.warning(f"Clixsign sender extraction failed: {e}")
+
+                # 16. Clixsign Signers - ALWAYS try to extract
+                try:
+                    prompt_csi = f"""Extract Clixsign Certificate Signers. Look for signer details and signature timestamps.
+                    
+                    {BASE_EXTRACTION_RULES}
+                    
+                    Return JSON: {{"clixsign_signers": [{{"file_id": null, "package_id": null, "signer_name": null, "signer_email_address": null, "signer_ip_address": null, "signer_user_agent": null, "package_opened_at": null, "signature_adopted_at": null, "package_signed_at": null, "package_declined_at": null}}]}}"""
+                    response_csi = await self._make_gemini_request(prompt_csi, pdf_data)
+                    if response_csi and 'clixsign_signers' in response_csi:
+                        csi_list = response_csi['clixsign_signers']
+                        if isinstance(csi_list, list):
+                            for item in csi_list:
+                                if isinstance(item, dict):
+                                    item['file_id'] = file_id
+                                    self._fix_entity_data_formats(item)
+                            package_data['clixsign_signers'] = csi_list
+                            logger.info(f"Forced clixsign signers extraction: {len(csi_list)} signers")
+                except Exception as e:
+                    logger.warning(f"Clixsign signers extraction failed: {e}")
+
+                # Recreate package with ALL forced extractions
+                package = ExtractedDocumentPackage(**package_data)
                 return package
                 
             except Exception as e:

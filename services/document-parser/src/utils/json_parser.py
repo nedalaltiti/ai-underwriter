@@ -77,7 +77,28 @@ def extract_json_from_response(text: str) -> Optional[Dict[str, Any]]:
         except json.JSONDecodeError:
             continue
     
-    # Strategy 6: Clean common issues and retry
+    # Strategy 6: Handle truncated JSON by attempting repair
+    try:
+        # Look for incomplete JSON that might be repairable
+        if '{' in text and text.count('{') > text.count('}'):
+            # Find the main JSON block
+            start_idx = text.find('{')
+            if start_idx >= 0:
+                json_part = text[start_idx:]
+                # Add missing closing braces
+                missing_braces = json_part.count('{') - json_part.count('}')
+                if missing_braces > 0 and missing_braces <= 5:  # Reasonable limit
+                    repaired = json_part + '}' * missing_braces
+                    try:
+                        result = json.loads(repaired)
+                        logger.warning(f"Repaired truncated JSON by adding {missing_braces} closing braces")
+                        return result
+                    except json.JSONDecodeError:
+                        pass
+    except Exception:
+        pass
+
+    # Strategy 7: Clean common issues and retry
     cleaned_text = clean_json_text(text)
     if cleaned_text != text:
         try:
