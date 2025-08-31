@@ -20,7 +20,8 @@ from prompts.underwriting_prompts import (
     get_targeted_financial_analysis_prompt,
     get_targeted_service_fees_prompt,
     get_targeted_disclosure_prompt,
-    get_targeted_power_of_attorney_prompt
+    get_targeted_power_of_attorney_prompt,
+    get_targeted_account_agreement_prompt
 )
 from utils.json_parser import extract_json_from_response
 
@@ -339,13 +340,41 @@ class GeminiClient:
                         prompt_poa = get_targeted_power_of_attorney_prompt()
                         response_poa = await self._make_gemini_request(prompt_poa, pdf_data)
                         poa = response_poa.get('power_of_attorney') if response_poa else None
-                        if isinstance(poa, dict) and any(poa.get(k) for k in ['client_name','client_signature','client_signature_date','coclient_name','coclient_signature']):
+                        if isinstance(poa, dict) and any(poa.get(k) for k in ['client_name', 'client_ssn', 'client_dob', 'client_signature','client_signature_date','coclient_name','coclient_ssn','coclient_dob','coclient_signature']):
                             poa['file_id'] = file_id
                             self._fix_entity_data_formats(poa)
                             package_data['power_of_attorney'] = poa
                             package = ExtractedDocumentPackage(**package_data)
                 except Exception as e:
                     logger.info(f"Power of attorney backfill skipped/failed: {e}")
+
+                # Targeted extraction for payment_gateway_agreement if missing or critical fields null
+                try:
+                    need_pga_backfill = False
+                    pga = package_data.get('payment_gateway_agreement')
+                    critical_pga_fields = ['client_first_name','client_last_name','client_dob','client_signature','client_signature_date','client_email','coclient_first_name','coclient_last_name','coclient_dob','coclient_signature','coclient_signature_date']
+                    if not pga:
+                        need_pga_backfill = True
+                    elif isinstance(pga, dict):
+                        for k in critical_pga_fields:
+                            if pga.get(k) in (None, "", "null"):
+                                need_pga_backfill = True
+                                break
+                    if need_pga_backfill:
+                        prompt_pga = get_targeted_account_agreement_prompt()
+                        response_pga = await self._make_gemini_request(prompt_pga, pdf_data)
+                        pga_new = response_pga.get('payment_gateway_agreement') if response_pga else None
+                        if isinstance(pga_new, dict):
+                            merged = dict(pga or {})
+                            for k, v in pga_new.items():
+                                if k not in merged or merged.get(k) in (None, "", "null"):
+                                    merged[k] = v
+                            merged['file_id'] = file_id
+                            self._fix_entity_data_formats(merged)
+                            package_data['payment_gateway_agreement'] = merged
+                            package = ExtractedDocumentPackage(**package_data)
+                except Exception as e:
+                    logger.info(f"Account agreement backfill skipped/failed: {e}")
                 return package
                 
             except Exception as e:

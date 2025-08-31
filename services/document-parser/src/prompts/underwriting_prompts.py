@@ -86,7 +86,8 @@ Extract the following information and return as JSON:
   "coclient_name": "Co-client full name if present",
   "coclient_ssn": "Co-client SSN (format: 123-45-6789)",
   "coclient_dob": "Co-client date of birth (YYYY-MM-DD)",
-  "coclient_signature": "Co-client signature indicator"
+  "coclient_signature": "Co-client signature indicator",
+  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)"
 }}
 
 Look for:
@@ -728,4 +729,47 @@ Return STRICT JSON with exactly this shape:
 Rules:
 - Normalize dates to YYYY-MM-DD; combine split dates correctly.
 - If a signature line is blank, keep signature null.
+"""
+
+def get_targeted_account_agreement_prompt() -> str:
+    """Prompt to extract Account Agreement (payment gateway agreement) fields."""
+    return f"""
+You are extracting ONLY the Account Agreement / Client Information Sheet fields (payment processor section). Look for titles like "Account Agreement", references to FORTH, ACH authorization, routing/account numbers, and the client/co-client information grid.
+
+{BASE_EXTRACTION_RULES}
+
+Return STRICT JSON with exactly this shape:
+{{
+  "payment_gateway_agreement": {{
+    "file_id": null,
+    "account_id": null,
+    "client_first_name": null,
+    "client_last_name": null,
+    "client_middle_initial": null,
+    "client_ssn": null,
+    "client_dob": null,
+    "client_address": null,
+    "client_city": null,
+    "client_state": null,
+    "client_zipcode": null,
+    "client_phone": null,
+    "client_email": null,
+    "coclient_first_name": null,
+    "coclient_last_name": null,
+    "coclient_middle_initial": null,
+    "coclient_ssn": null,
+    "coclient_dob": null,
+    "client_initials": null,
+    "client_signature": null,
+    "client_signature_date": null,
+    "coclient_signature": null,
+    "coclient_signature_date": null,
+    "pages_count": null
+  }}
+}}
+
+Rules:
+- Use the information grid under "Client Information" and "Co-Client Information" and any signature blocks. Also look for client initials in the document. 
+- Normalize dates to YYYY-MM-DD; SSN can retain separators.
+- If a field is not visible, keep it null.
 """
