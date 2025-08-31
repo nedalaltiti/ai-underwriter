@@ -48,7 +48,7 @@ class ServiceConfig(BaseSettings):
     sqs_visibility_timeout: int = Field(default=900, ge=60, le=43200, env="PARSER_SQS_VISIBILITY_TIMEOUT") 
     
     # S3 Configuration
-    s3_bucket_name: str = Field(default="contact-contracts-dev-s3-us-west-1", env="PARSER_S3_BUCKET_NAME")
+    s3_bucket_name: str = Field(default="uw-contact-files-dev-s3-us-west-1", env="PARSER_S3_BUCKET_NAME")
     s3_prefix: str = Field(default="", env="PARSER_S3_PREFIX")
     
     # Database Configuration (PostgreSQL)
