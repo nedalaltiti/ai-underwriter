@@ -674,3 +674,58 @@ Rules:
 - service_amount: strip currency symbols and commas; use a plain number like 10.95; if not numeric, keep null.
 - Only include rows that visibly show a fee value. Ignore headings.
 """
+
+def get_targeted_disclosure_prompt() -> str:
+    """Prompt to extract Disclosure signatures and dates."""
+    return f"""
+You are extracting ONLY the Disclosure (Exhibit C) signature fields. Look for sections labeled "Disclosure", "Exhibit C", or acknowledgement blocks with lines like "Client Signature", "Co-Client Signature", and their dates.
+
+{BASE_EXTRACTION_RULES}
+
+Return STRICT JSON with exactly this shape:
+{{
+  "disclosure": {{
+    "file_id": null,
+    "client_signature": "Signature text/indicator if present",
+    "client_signature_date": "YYYY-MM-DD or null",
+    "coclient_signature": "Co-client signature indicator if present",
+    "coclient_signature_date": "YYYY-MM-DD or null"
+  }}
+}}
+
+Rules:
+- If signature lines are blank, keep signature fields null.
+- Normalize dates to YYYY-MM-DD; if you see split dates (e.g., 09/28/1 and 971), combine correctly.
+"""
+
+def get_targeted_power_of_attorney_prompt() -> str:
+    """Prompt to extract Power of Attorney core fields succinctly."""
+    return f"""
+You are extracting ONLY the core Power of Attorney fields from a page titled or indicating "POWER OF ATTORNEY". Focus near the bottom signature blocks and the paragraph identifying the principal and the law firm.
+
+{BASE_EXTRACTION_RULES}
+
+Return STRICT JSON with exactly this shape:
+{{
+  "power_of_attorney": {{
+    "file_id": null,
+    "company_name": "Law firm or company name (e.g., Aspire Law Group, PLLC)",
+    "attorney_name": null,
+    "attorney_address": null,
+    "attorney_phone": null,
+    "client_name": "Primary client name (e.g., Abdul Baten)",
+    "client_ssn": null,
+    "client_dob": "YYYY-MM-DD or null",
+    "client_signature": "Client signature indicator if present",
+    "client_signature_date": "YYYY-MM-DD or null",
+    "coclient_name": "Co-client name if present (e.g., Aklima Akter)",
+    "coclient_ssn": null,
+    "coclient_dob": "YYYY-MM-DD or null",
+    "coclient_signature": "Co-client signature indicator if present"
+  }}
+}}
+
+Rules:
+- Normalize dates to YYYY-MM-DD; combine split dates correctly.
+- If a signature line is blank, keep signature null.
+"""

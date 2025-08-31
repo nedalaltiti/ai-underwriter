@@ -18,7 +18,9 @@ from prompts.underwriting_prompts import (
     get_prompt_for_document_type, 
     get_validation_prompt,
     get_targeted_financial_analysis_prompt,
-    get_targeted_service_fees_prompt
+    get_targeted_service_fees_prompt,
+    get_targeted_disclosure_prompt,
+    get_targeted_power_of_attorney_prompt
 )
 from utils.json_parser import extract_json_from_response
 
@@ -316,6 +318,34 @@ class GeminiClient:
                             package = ExtractedDocumentPackage(**package_data)
                 except Exception as e:
                     logger.info(f"Service fees backfill skipped/failed: {e}")
+
+                # Targeted extraction for disclosure if missing
+                try:
+                    if not package_data.get('disclosure'):
+                        prompt_disc = get_targeted_disclosure_prompt()
+                        response_disc = await self._make_gemini_request(prompt_disc, pdf_data)
+                        disc = response_disc.get('disclosure') if response_disc else None
+                        if isinstance(disc, dict) and any(disc.get(k) for k in ['client_signature','client_signature_date','coclient_signature','coclient_signature_date']):
+                            disc['file_id'] = file_id
+                            self._fix_entity_data_formats(disc)
+                            package_data['disclosure'] = disc
+                            package = ExtractedDocumentPackage(**package_data)
+                except Exception as e:
+                    logger.info(f"Disclosure backfill skipped/failed: {e}")
+
+                # Targeted extraction for power_of_attorney if missing
+                try:
+                    if not package_data.get('power_of_attorney'):
+                        prompt_poa = get_targeted_power_of_attorney_prompt()
+                        response_poa = await self._make_gemini_request(prompt_poa, pdf_data)
+                        poa = response_poa.get('power_of_attorney') if response_poa else None
+                        if isinstance(poa, dict) and any(poa.get(k) for k in ['client_name','client_signature','client_signature_date','coclient_name','coclient_signature']):
+                            poa['file_id'] = file_id
+                            self._fix_entity_data_formats(poa)
+                            package_data['power_of_attorney'] = poa
+                            package = ExtractedDocumentPackage(**package_data)
+                except Exception as e:
+                    logger.info(f"Power of attorney backfill skipped/failed: {e}")
                 return package
                 
             except Exception as e:
