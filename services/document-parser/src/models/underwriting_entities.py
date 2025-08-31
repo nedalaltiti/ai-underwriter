@@ -42,14 +42,16 @@ class EngagementTerm(BaseUnderwritingModel):
     settlement_fee_percentage: Optional[Decimal] = None
     monthly_payment: Optional[Decimal] = None
     client_name: Optional[str] = Field(None, max_length=255)
+    client_address: Optional[str] = Field(None, max_length=500)
     client_signature: Optional[str] = Field(None, max_length=255)
     client_signature_date: Optional[date] = None
     coclient_name: Optional[str] = Field(None, max_length=255)
     coclient_signature: Optional[str] = Field(None, max_length=255)
     coclient_signature_date: Optional[date] = None
-    initials: Optional[str] = Field(None, max_length=10)
-    initials_count: Optional[int] = None
-    is_all_initials_present: Optional[bool] = None
+    client_initials: Optional[str] = Field(None, max_length=10)
+    client_initials_count: Optional[int] = None
+    coclient_initials: Optional[str] = Field(None, max_length=10)
+    coclient_initials_count: Optional[int] = None
     page_count: Optional[int] = None
 
 
@@ -160,9 +162,7 @@ class PowerOfAttorney(BaseUnderwritingModel):
     coclient_ssn: Optional[str] = None
     coclient_dob: Optional[date] = None
     coclient_signature: Optional[str] = Field(None, max_length=255)
-
-    # SSN validation removed - store whatever is extracted
-    # Validation will be handled by separate validation service
+    coclient_signature_date: Optional[datetime] = None
 
 
 class CancellationNotice(BaseUnderwritingModel):
@@ -171,7 +171,10 @@ class CancellationNotice(BaseUnderwritingModel):
     file_id: int = Field(..., description="File identifier")
     cancellation_deadline: Optional[date] = None
     cancellation_date: Optional[date] = None
-    buyer_signature: Optional[str] = Field(None, max_length=255)
+    client_signature: Optional[str] = Field(None, max_length=255)
+    client_signature_date: Optional[datetime] = None
+    coclient_signature: Optional[str] = Field(None, max_length=255)
+    coclient_signature_date: Optional[datetime] = None
 
 
 class PaymentGatewayAgreement(BaseUnderwritingModel):

@@ -251,8 +251,9 @@ class UnderwritingDatabaseAdapter:
             (file_id, company_name, company_address, company_phone, company_type,
              settlement_fee, settlement_fee_percentage, monthly_payment, client_name,
              client_signature, client_signature_date, coclient_name, coclient_signature,
-             coclient_signature_date, initials, initials_count, is_all_initials_present, page_count, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+             coclient_signature_date, client_initials, client_initials_count, coclient_initials,
+             coclient_initials_count, page_count, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             ON CONFLICT (file_id) DO UPDATE SET
                 company_name = COALESCE(EXCLUDED.company_name, engagement_term.company_name),
                 company_address = COALESCE(EXCLUDED.company_address, engagement_term.company_address),
@@ -262,22 +263,25 @@ class UnderwritingDatabaseAdapter:
                 settlement_fee_percentage = COALESCE(EXCLUDED.settlement_fee_percentage, engagement_term.settlement_fee_percentage),
                 monthly_payment = COALESCE(EXCLUDED.monthly_payment, engagement_term.monthly_payment),
                 client_name = COALESCE(EXCLUDED.client_name, engagement_term.client_name),
+                client_address = COALESCE(EXCLUDED.client_address, engagement_term.client_address),
                 client_signature = COALESCE(EXCLUDED.client_signature, engagement_term.client_signature),
                 client_signature_date = COALESCE(EXCLUDED.client_signature_date, engagement_term.client_signature_date),
                 coclient_name = COALESCE(EXCLUDED.coclient_name, engagement_term.coclient_name),
                 coclient_signature = COALESCE(EXCLUDED.coclient_signature, engagement_term.coclient_signature),
                 coclient_signature_date = COALESCE(EXCLUDED.coclient_signature_date, engagement_term.coclient_signature_date),
-                initials = COALESCE(EXCLUDED.initials, engagement_term.initials),
-                initials_count = COALESCE(EXCLUDED.initials_count, engagement_term.initials_count),
-                is_all_initials_present = COALESCE(EXCLUDED.is_all_initials_present, engagement_term.is_all_initials_present),
+                client_initials = COALESCE(EXCLUDED.client_initials, engagement_term.client_initials),
+                client_initials_count = COALESCE(EXCLUDED.client_initials_count, engagement_term.client_initials_count),
+                coclient_initials = COALESCE(EXCLUDED.coclient_initials, engagement_term.coclient_initials),
+                coclient_initials_count = COALESCE(EXCLUDED.coclient_initials_count, engagement_term.coclient_initials_count),
                 page_count = COALESCE(EXCLUDED.page_count, engagement_term.page_count),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.company_name, entity.company_address, entity.company_phone,
             entity.company_type, entity.settlement_fee, entity.settlement_fee_percentage,
             entity.monthly_payment, entity.client_name, entity.client_signature,
             entity.client_signature_date, entity.coclient_name, entity.coclient_signature,
-            entity.coclient_signature_date, entity.initials, entity.initials_count,
-            entity.is_all_initials_present, entity.page_count, datetime.now())
+            entity.coclient_signature_date, entity.client_initials, entity.client_initials_count,
+            entity.coclient_initials, entity.coclient_initials_count,
+            entity.page_count, datetime.now())
     
     async def _store_power_of_attorney(self, connection, entity: PowerOfAttorney):
         """Store power of attorney data."""
@@ -285,8 +289,8 @@ class UnderwritingDatabaseAdapter:
             INSERT INTO underwriting.power_of_attorney 
             (file_id, company_name, attorney_name, attorney_address, attorney_phone,
              client_name, client_ssn, client_dob, client_signature, client_signature_date,
-             coclient_name, coclient_ssn, coclient_dob, coclient_signature, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+             coclient_name, coclient_ssn, coclient_dob, coclient_signature, coclient_signature_date, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             ON CONFLICT (file_id) DO UPDATE SET
                 company_name = COALESCE(EXCLUDED.company_name, power_of_attorney.company_name),
                 attorney_name = COALESCE(EXCLUDED.attorney_name, power_of_attorney.attorney_name),
@@ -301,11 +305,13 @@ class UnderwritingDatabaseAdapter:
                 coclient_ssn = COALESCE(EXCLUDED.coclient_ssn, power_of_attorney.coclient_ssn),
                 coclient_dob = COALESCE(EXCLUDED.coclient_dob, power_of_attorney.coclient_dob),
                 coclient_signature = COALESCE(EXCLUDED.coclient_signature, power_of_attorney.coclient_signature),
+                coclient_signature_date = COALESCE(EXCLUDED.coclient_signature_date, power_of_attorney.coclient_signature_date),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.company_name, entity.attorney_name, entity.attorney_address,
             entity.attorney_phone, entity.client_name, entity.client_ssn, entity.client_dob,
             entity.client_signature, entity.client_signature_date, entity.coclient_name,
-            entity.coclient_ssn, entity.coclient_dob, entity.coclient_signature, datetime.now())
+            entity.coclient_ssn, entity.coclient_dob, entity.coclient_signature,
+            entity.coclient_signature_date, datetime.now())
     
     async def _store_financial_analysis(self, connection, entity: FinancialAnalysis):
         """Store financial analysis data."""
@@ -552,17 +558,16 @@ class UnderwritingDatabaseAdapter:
         """Store cancellation notice data."""
         await connection.execute("""
             INSERT INTO underwriting.cancellation_notice 
-            (file_id, cancellation_deadline, cancellation_date, buyer_signature, updated_at)
-            VALUES ($1, $2, $3, $4, $5)
+            (file_id, cancellation_deadline, cancellation_date, client_signature, client_signature_date, coclient_signature, coclient_signature_date, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (file_id) DO UPDATE SET
                 cancellation_deadline = COALESCE(EXCLUDED.cancellation_deadline, cancellation_notice.cancellation_deadline),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.cancellation_deadline, entity.cancellation_date,
-            entity.buyer_signature, datetime.now())
+            entity.client_signature, entity.client_signature_date, entity.coclient_signature, entity.coclient_signature_date, datetime.now())
     
     async def _store_payment_service_fees(self, connection, entity: PaymentGatewayServiceFees):
         """Store payment gateway service fees."""
-        # First, delete existing entries for this file_id to avoid duplicates
         await connection.execute("""
             DELETE FROM underwriting.payment_gateway_service_fees 
             WHERE file_id = $1 AND service_type = $2 AND service_name = $3

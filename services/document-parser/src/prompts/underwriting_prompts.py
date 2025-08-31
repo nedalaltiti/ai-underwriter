@@ -48,13 +48,16 @@ Extract the following information and return as JSON:
   "settlement_fee_percentage": "Settlement fee as percentage (e.g., 25.00 for 25%)",
   "monthly_payment": "Monthly payment amount",
   "client_name": "Primary client full name",
+  "client_address": "Client street address",
   "client_signature": "Client signature text/indicator",
   "client_signature_date": "Date client signed (YYYY-MM-DD)",
   "coclient_name": "Co-client full name if present",
   "coclient_signature": "Co-client signature text/indicator",
   "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)",
-  "initials": "Client initials found in document",
-  "initials_count": "Number of initial marks/signatures",
+  "client_initials": "Client initials found in document",
+  "client_initials_count": "Number of initial marks/signatures",
+  "coclient_initials": "Co-client initials found in document",
+  "coclient_initials_count": "Number of co-client initial marks/signatures",
   "page_count": "Total number of pages in document"
 }}
 
@@ -87,6 +90,7 @@ Extract the following information and return as JSON:
   "coclient_ssn": "Co-client SSN (format: 123-45-6789)",
   "coclient_dob": "Co-client date of birth (YYYY-MM-DD)",
   "coclient_signature": "Co-client signature indicator",
+  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)"
 }}
 
 Look for:
@@ -369,15 +373,17 @@ ENGAGEMENT TERM EXTRACTION FOCUS:
     "settlement_fee_percentage": null,
     "monthly_payment": null,
     "client_name": null,
+    "client_address": null,
     "client_signature": null,
     "client_signature_date": null,
     "coclient_name": null,
     "coclient_signature": null,
     "coclient_signature_date": null,
-    "initials": null,
-    "initials_count": null,
+    "client_initials": null,
+    "client_initials_count": null,
+    "coclient_initials": null,
+    "coclient_initials_count": null,
     "page_count": null,
-    "is_all_initials_present": null
   }},
   "fcra_consent": {{
     "file_id": null,
@@ -464,13 +470,17 @@ ENGAGEMENT TERM EXTRACTION FOCUS:
     "coclient_name": null,
     "coclient_ssn": null,
     "coclient_dob": null,
-    "coclient_signature": null
+    "coclient_signature": null,
+    "coclient_signature_date": null
   }},
   "cancellation_notice": {{
     "file_id": null,
     "cancellation_deadline": null,
     "cancellation_date": null,
-    "buyer_signature": null
+    "client_signature": null,
+    "client_signature_date": null,
+    "coclient_signature": null,
+    "coclient_signature_date": null
   }},
   "payment_service_fees": [{{
     "file_id": null,
@@ -709,19 +719,20 @@ Return STRICT JSON with exactly this shape:
 {{
   "power_of_attorney": {{
     "file_id": null,
-    "company_name": "Law firm or company name (e.g., Aspire Law Group, PLLC)",
+    "company_name": "Law firm or company name",
     "attorney_name": null,
     "attorney_address": null,
     "attorney_phone": null,
-    "client_name": "Primary client name (e.g., Abdul Baten)",
+    "client_name": "Primary client name",
     "client_ssn": null,
     "client_dob": "YYYY-MM-DD or null",
     "client_signature": "Client signature indicator if present",
     "client_signature_date": "YYYY-MM-DD or null",
-    "coclient_name": "Co-client name if present (e.g., Aklima Akter)",
+    "coclient_name": "Co-client name",
     "coclient_ssn": null,
     "coclient_dob": "YYYY-MM-DD or null",
-    "coclient_signature": "Co-client signature indicator if present"
+    "coclient_signature": "Co-client signature indicator if present",
+    "coclient_signature_date": "YYYY-MM-DD or null"
   }}
 }}
 
