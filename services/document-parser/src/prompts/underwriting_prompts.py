@@ -26,6 +26,7 @@ CRITICAL EXTRACTION RULES:
 15. ACCOUNT NUMBER: Usually longer than 9 digits (e.g., "1200000246482"). DO NOT confuse with routing number.
 16. BANKING FIELDS: "Número de ruta" = routing_number (9 digits), "Número de cuenta" = account_number (longer)
 17. INITIALS: Keep short (max 10 chars). If multiple initials found, use first set only (e.g., "JJCS" not "JJCS, JJCS, gges")
+18. INITIAL ACCURACY: Look carefully at handwritten initials - they are ALWAYS 2-4 CAPITAL LETTERS. Common patterns: "CW","AA","JJCS", "MJRP".
 """
 
 ENGAGEMENT_TERM_PROMPT = f"""
@@ -41,22 +42,22 @@ Extract the following information and return as JSON:
 {{
   "file_id": null,
   "company_name": "Name of the debt settlement company",
-  "company_address": "Complete company address",
+  "company_address": "Complete company address from letterhead",
   "company_phone": "Company phone number",
   "company_type": "Type of company (LLC, Corp, etc.)",
   "settlement_fee": "Total settlement fee amount",
   "settlement_fee_percentage": "Settlement fee as percentage (e.g., 25.00 for 25%)",
   "monthly_payment": "Monthly payment amount",
   "client_name": "Primary client full name",
-  "client_address": "Client street address",
+  "client_address": "Client address (look under client name section, highlighted areas, signature blocks)",
   "client_signature": "Client signature text/indicator",
   "client_signature_date": "Date client signed (YYYY-MM-DD)",
   "coclient_name": "Co-client full name if present",
   "coclient_signature": "Co-client signature text/indicator",
   "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)",
-  "client_initials": "Client initials found in document",
+  "client_initials": "Client initials found in document (ALWAYS CAPITAL LETTERS like JJCS)",
   "client_initials_count": "Number of initial marks/signatures",
-  "coclient_initials": "Co-client initials found in document",
+  "coclient_initials": "Co-client initials found in document (ALWAYS CAPITAL LETTERS)",
   "coclient_initials_count": "Number of co-client initial marks/signatures",
   "page_count": "Total number of pages in document"
 }}
@@ -65,6 +66,7 @@ Focus on sections containing:
 - Company information and letterhead
 - Fee structures and payment terms
 - Client and co-client signature blocks
+- Client address information (often appears under client name, in highlighted sections, or near signature blocks)
 - Terms and conditions sections
 """
 
@@ -280,7 +282,7 @@ You are analyzing a document to determine its type for debt settlement/underwrit
 {BASE_EXTRACTION_RULES}
 
 Analyze the document and identify its type from these categories:
-- engagement_term (Company Agreement)
+- engagement_term (Company Agreement, Client Services Agreement)
 - power_of_attorney 
 - payment_gateway_agreement (Account Agreement)
 - financial_analysis (Exhibit B)
@@ -311,7 +313,7 @@ Look for key indicators:
 
 INDICATOR KEYWORDS:
 - payment_gateway_agreement (Account Agreement): "Account Agreement", "Client Information Sheet", "Account ID", "ACH", "recurring debit authorization", "routing number", "account number", "payment schedule", processor names like "FORTH", "RAM", "CFT".
-- engagement_term (Company Agreement): "Engagement Terms", "Terms of Engagement", "Company Agreement", provider names like "Clarity", "Concordia", "Resync", "Aspire", "Palisade", phrases like "settlement fee", "settlement fee percentage", "monthly program payment".
+- engagement_term (Company Agreement, Client Services Agreement): "Engagement Terms", "Terms of Engagement", "Company Agreement", provider names like "Clarity", "Concordia", "Resync", "Aspire", "Palisade", phrases like "settlement fee", "settlement fee percentage", "monthly program payment".
 """
 
 # Comprehensive extraction prompt for unknown documents
@@ -338,7 +340,7 @@ ENGAGEMENT TERM EXTRACTION FOCUS:
 - Look for company letterhead/logo at top of document for company_name
 - Find settlement fee percentage in main contract text (look for "%" symbols or "contingency fee" language)
 - Extract client signature blocks at end of document (name and signature date)
-- Count initials throughout document (look for repeated 2-3 letter combinations next to clauses)
+- Count initials throughout document (look for repeated 2-4 letter combinations next to clauses)
 - Count total pages (usually shown at bottom of each page as "Page X of Y")
 - Look for fee structures, payment terms, and legal service obligations in main contract body
 
