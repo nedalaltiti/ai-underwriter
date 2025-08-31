@@ -99,13 +99,39 @@ class UnderwritingDatabaseAdapter:
                 logger.bind(file_id=package.file_id).error("db.package_failed invalid_file_id=true")
                 return False
             
-            # Check for duplicates first
-            async with self.pool.acquire() as connection:
-                existing = await self._check_document_exists(connection, package.file_id)
-                if existing:
-                    logger.bind(file_id=package.file_id).warning("db.duplicate_skip document_already_exists=true")
-                    return True
+            # Always process - no duplicate checking (overwrite mode)
+            logger.bind(file_id=package.file_id).info("db.package_processing")
             
+            # Log package summary before storage for debugging
+            entity_summary = []
+            list_summary = []
+            
+            # Count single entities
+            single_entities = ['engagement_term', 'power_of_attorney', 'payment_gateway_agreement', 
+                             'financial_analysis', 'fcra_consent', 'disclosure', 'high_interest_disclosure',
+                             'program_disclosure', 'cancellation_notice', 'payment_bank_info', 
+                             'legal_plan_agreement', 'clixsign_sender']
+            for entity_name in single_entities:
+                if getattr(package, entity_name, None):
+                    entity_summary.append(entity_name)
+            
+            # Count list entities
+            list_entities = [
+                ('debt_schedule', package.debt_schedule),
+                ('payment_service_fees', package.payment_service_fees),
+                ('payment_deposit_schedule', package.payment_deposit_schedule),
+                ('clixsign_signers', package.clixsign_signers)
+            ]
+            for name, lst in list_entities:
+                if lst and len(lst) > 0:
+                    list_summary.append(f"{name}={len(lst)}")
+            
+            logger.bind(
+                file_id=package.file_id,
+                entities=entity_summary,
+                lists=list_summary
+            ).info("db.package_summary")
+
             # Store all entities in one transaction (keeping original behavior)
             stored_count = 0
             transaction_success = False

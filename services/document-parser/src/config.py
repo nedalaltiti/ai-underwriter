@@ -14,7 +14,7 @@ class GeminiConfig(BaseModel):
     temperature: float = Field(default=0.1, ge=0.0, le=2.0, env="PARSER_GEMINI_TEMPERATURE")
     top_k: int = Field(default=40, ge=1, le=100, env="PARSER_GEMINI_TOP_K")
     top_p: float = Field(default=0.95, ge=0.0, le=1.0, env="PARSER_GEMINI_TOP_P")
-    max_output_tokens: int = Field(default=8192, ge=1, env="PARSER_GEMINI_MAX_TOKENS")
+    max_output_tokens: int = Field(default=16384, ge=1, env="PARSER_GEMINI_MAX_TOKENS")
     timeout: int = Field(default=300, gt=0, env="PARSER_GEMINI_TIMEOUT")
 
 

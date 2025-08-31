@@ -217,7 +217,8 @@ class DocumentDownloader:
                 code = "FORTH_API_UNAUTHORIZED"
             elif getattr(e, 'status_code', None) == 403:
                 code = "FORTH_API_FORBIDDEN"
-            logger.error(f"Document download failed: {e}")
+            error_msg = str(e).replace("{", "{{").replace("}", "}}")
+            logger.error(f"Document download failed: {error_msg}")
             return DownloadResult(
                 success=False,
                 status=DownloadStatus.FAILED,
@@ -229,7 +230,8 @@ class DocumentDownloader:
             processing_time_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
             self._update_metrics(False, 0, processing_time_ms)
             
-            logger.error(f"Document download failed: {e}")
+            error_msg = str(e).replace("{", "{{").replace("}", "}}")
+            logger.error(f"Document download failed: {error_msg}")
             return DownloadResult(
                 success=False,
                 status=DownloadStatus.FAILED,
@@ -321,10 +323,12 @@ class DocumentDownloader:
             # Re-raise our custom exceptions
             raise
         except Exception as e:
+            # Escape braces in error message to prevent Loguru format issues
+            error_msg = str(e).replace("{", "{{").replace("}", "}}")
             logger.bind(
                 contact_id=task.contact_id,
                 doc_id=task.doc_id
-            ).error(f"Failed to get document info from Forth API: {e}")
+            ).error(f"Failed to get document info from Forth API: {error_msg}")
             raise
     
     async def get_document_url(self, task: DownloadTask) -> Optional[str]:
