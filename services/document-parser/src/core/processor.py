@@ -189,7 +189,17 @@ class DocumentProcessor:
                 ).debug("parse.url_download")
                 
                 start_time = time.time()
-                result = self._download_from_url(task.document_url)
+                # Handle s3:// URLs directly via S3 client
+                if task.document_url.startswith('s3://'):
+                    from urllib.parse import urlparse
+                    from integrations.s3 import S3Client
+                    parsed = urlparse(task.document_url)
+                    bucket = parsed.netloc
+                    key = parsed.path.lstrip('/')
+                    s3_client = S3Client()
+                    result = s3_client.download_document_from_s3(key, bucket_override=bucket)
+                else:
+                    result = self._download_from_url(task.document_url)
                 download_time = int((time.time() - start_time) * 1000)
                 
                 logger.bind(

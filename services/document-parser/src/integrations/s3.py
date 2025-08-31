@@ -38,7 +38,7 @@ class S3Client:
             logger.error(f"Failed to initialize S3 client: {e}")
             raise DocumentDownloadError(f"S3 client initialization failed: {e}")
     
-    def download_document_from_s3(self, s3_key: str) -> Dict[str, str]:
+    def download_document_from_s3(self, s3_key: str, bucket_override: Optional[str] = None) -> Dict[str, str]:
         """
         Download document from S3 and return base64 encoded data.
         
@@ -54,10 +54,11 @@ class S3Client:
                 temp_path = Path(temp_file.name)
             
             # Download from S3
-            logger.info(f"Downloading document from S3: s3://{self.bucket_name}/{s3_key}")
+            bucket = bucket_override or self.bucket_name
+            logger.info(f"Downloading document from S3: s3://{bucket}/{s3_key}")
             
             self.s3_client.download_file(
-                Bucket=self.bucket_name,
+                Bucket=bucket,
                 Key=s3_key,
                 Filename=str(temp_path)
             )
@@ -93,7 +94,7 @@ class S3Client:
             if error_code == 'NoSuchKey':
                 raise DocumentDownloadError(f"Document not found in S3: {s3_key}")
             elif error_code == 'NoSuchBucket':
-                raise DocumentDownloadError(f"S3 bucket not found: {self.bucket_name}")
+                raise DocumentDownloadError(f"S3 bucket not found: {bucket}")
             else:
                 raise DocumentDownloadError(f"S3 error ({error_code}): {e}")
         except Exception as e:
