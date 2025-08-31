@@ -17,7 +17,8 @@ from models.underwriting_entities import ExtractedDocumentPackage
 from prompts.underwriting_prompts import (
     get_prompt_for_document_type, 
     get_validation_prompt,
-    get_targeted_financial_analysis_prompt
+    get_targeted_financial_analysis_prompt,
+    get_targeted_service_fees_prompt
 )
 from utils.json_parser import extract_json_from_response
 
@@ -144,7 +145,6 @@ class GeminiClient:
                     return result
             except Exception as e:
                 logger.warning(f"Attempt {attempt + 1} failed: {e}")
-                # Check if this is a permanent PDF issue - don't retry
                 if "no pages" in str(e).lower() or "corrupted PDF" in str(e):
                     logger.error(f"Permanent PDF issue detected, stopping attempts: {e}")
                     raise  # Don't retry corrupted/empty PDFs
@@ -298,6 +298,24 @@ class GeminiClient:
                             logger.info("Applied targeted backfill for missing financial analysis fields")
                 except Exception as e:
                     logger.warning(f"Backfill step skipped/failed: {e}")
+
+                # Targeted extraction for service fees if missing or empty
+                try:
+                    fees = package_data.get('payment_service_fees')
+                    if not fees or (isinstance(fees, list) and len(fees) == 0):
+                        prompt_fees = get_targeted_service_fees_prompt()
+                        response_fees = await self._make_gemini_request(prompt_fees, pdf_data)
+                        if response_fees and isinstance(response_fees.get('payment_service_fees'), list):
+                            # Merge, ensuring file_id and cleaning amounts
+                            merged_fees = response_fees['payment_service_fees']
+                            for item in merged_fees:
+                                if isinstance(item, dict):
+                                    item['file_id'] = file_id
+                                    self._fix_entity_data_formats(item)
+                            package_data['payment_service_fees'] = merged_fees
+                            package = ExtractedDocumentPackage(**package_data)
+                except Exception as e:
+                    logger.info(f"Service fees backfill skipped/failed: {e}")
                 return package
                 
             except Exception as e:

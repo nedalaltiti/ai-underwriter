@@ -650,3 +650,27 @@ Hints:
 - Company-related fields appear in headers/letterheads.
 - Initials counts and page counts are often at the bottom or on summary pages.
 """
+
+def get_targeted_service_fees_prompt() -> str:
+    """Prompt to extract Service Fees table (Administrative/Disbursement)."""
+    return f"""
+You are extracting ONLY the Service Fees table from a document. Look for headings like "Service Fees", "Administrative", "Disbursement" and rows like "Setup Fee", "Monthly Service Fee", "ACH Debit / Check by Phone".
+
+{BASE_EXTRACTION_RULES}
+
+Return STRICT JSON with exactly this shape:
+{{
+  "payment_service_fees": [
+    {{
+      "file_id": null,
+      "service_type": "Administrative or Disbursement",
+      "service_name": "Row label e.g., Monthly Service Fee",
+      "service_amount": "Decimal like 10.95"
+    }}
+  ]
+}}
+
+Rules:
+- service_amount: strip currency symbols and commas; use a plain number like 10.95; if not numeric, keep null.
+- Only include rows that visibly show a fee value. Ignore headings.
+"""
