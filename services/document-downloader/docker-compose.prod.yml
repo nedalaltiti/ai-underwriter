@@ -36,7 +36,7 @@ services:
       AWS_DEFAULT_REGION: ${DOCUMENT_AWS_REGION:-us-west-1}
       
       # S3 Configuration
-      DOCUMENT_S3_BUCKET_NAME: ${DOCUMENT_S3_BUCKET_NAME:-contact-contracts-dev-s3-us-west-1}
+      DOCUMENT_S3_BUCKET_NAME: ${DOCUMENT_S3_BUCKET_NAME:-uw-contact-files-dev-s3-us-west-1}
       DOCUMENT_S3_PREFIX: ${DOCUMENT_S3_PREFIX:-}
       
       # SQS Configuration

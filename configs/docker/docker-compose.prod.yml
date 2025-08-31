@@ -17,7 +17,7 @@ DOCUMENT_PARSE_QUEUE=document-parse-queue
 VALIDATION_COMPLETE_QUEUE=validation-complete-queue
 
 # S3 Configuration
-S3_BUCKET_NAME=contact-contracts-dev-s3-us-west-1
+S3_BUCKET_NAME=uw-contact-files-dev-s3-us-west-1
 
 # Database
 
