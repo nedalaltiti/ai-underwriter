@@ -78,6 +78,9 @@ class ServiceConfig(BaseSettings):
     worker_prefetch_count: int = Field(default=1, ge=1, le=10, env="PARSER_WORKER_PREFETCH_COUNT")
     worker_health_check_interval: int = Field(default=30, ge=10, le=300, env="PARSER_WORKER_HEALTH_CHECK_INTERVAL")
     
+    # Extraction optimization settings
+    enable_parallel_extraction: bool = Field(default=True, env="PARSER_ENABLE_PARALLEL_EXTRACTION")
+    
     # Observability
     enable_metrics: bool = Field(default=True, env="PARSER_ENABLE_METRICS")
     enable_tracing: bool = Field(default=True, env="PARSER_ENABLE_TRACING")

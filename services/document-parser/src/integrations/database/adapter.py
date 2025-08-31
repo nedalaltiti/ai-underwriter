@@ -712,14 +712,6 @@ class UnderwritingDatabaseAdapter:
             ON CONFLICT (id) DO UPDATE SET
                 package_id = EXCLUDED.package_id,
                 signer_name = EXCLUDED.signer_name,
-                signer_email_address = EXCLUDED.signer_email_address,
-                signer_ip_address = EXCLUDED.signer_ip_address,
-                signer_user_agent = EXCLUDED.signer_user_agent,
-                package_opened_at = EXCLUDED.package_opened_at,
-                signature_adopted_at = EXCLUDED.signature_adopted_at,
-                package_signed_at = EXCLUDED.package_signed_at,
-                package_declined_at = EXCLUDED.package_declined_at,
-                updated_at = EXCLUDED.updated_at
         """, unique_id, entity.file_id, entity.package_id, entity.signer_name, entity.signer_email_address,
             entity.signer_ip_address, entity.signer_user_agent, entity.package_opened_at,
             entity.signature_adopted_at, entity.package_signed_at, entity.package_declined_at,

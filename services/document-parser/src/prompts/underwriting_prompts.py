@@ -10,64 +10,55 @@ from typing import Dict, Any
 BASE_EXTRACTION_RULES = """
 CRITICAL EXTRACTION RULES:
 1. ONLY extract information that is EXPLICITLY visible in the document
-2. If information is not clearly visible, use null/empty values
+2. If information is not clearly visible, use null - do NOT skip the field
 3. Do NOT infer, guess, or hallucinate any information
-4. For dates, use YYYY-MM-DD format (e.g., "2024-03-15")
+4. ALL fields in the schema are REQUIRED - return null if not found
+5. For dates, use YYYY-MM-DD format (e.g., "2024-03-15")
 5. For dates split across lines (e.g., "09/28/1" on one line, "971" on next), combine them (e.g., "09/28/1971")
 6. For monetary amounts, use decimal format without currency symbols (e.g., "1250.00")
-7. For SSNs, maintain format with dashes (e.g., "123-45-6789"). If masked for privacy, keep as shown (e.g., "XXX-XX-6139")
-8. For phone numbers, extract as-is from document
-9. If a field has multiple possible values, choose the most prominent one
-10. Empty signatures should be null, not placeholder text
-11. Page counts should reflect actual document pages visible
-12. Match the EXACT field names and JSON shape requested; do not invent fields
-13. If a label indicates a range, select the single value closest to the label
-14. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
-15. ACCOUNT NUMBER: Usually longer than 9 digits (e.g., "1200000246482"). DO NOT confuse with routing number.
-16. BANKING FIELDS: "Número de ruta" = routing_number (9 digits), "Número de cuenta" = account_number (longer)
-17. INITIALS: Keep short (max 10 chars). If multiple initials found, use first set only (e.g., "JJCS" not "JJCS, JJCS, gges")
-18. INITIAL ACCURACY: Look carefully at handwritten initials - they are ALWAYS 2-4 CAPITAL LETTERS. Common patterns: "CW","AA","JJCS", "MJRP".
+
+7. For SSNs, maintain format with dashes (e.g., "123-45-6789" or "XXX-XX-6789" if masked)
+8. For initials, look for 2-4 capital letters (e.g., "JJCS", "AA", "CW")
+9. Match the EXACT field names and JSON shape requested
+10. Process systematically: don't jump around, extract section by section
+11. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
 """
 
 ENGAGEMENT_TERM_PROMPT = f"""
-You are extracting data from a Company Agreement / Engagement Term document for debt settlement services.
+You are extracting data from a Company Agreement / Engagement Term document.
 
 {BASE_EXTRACTION_RULES}
 
-DISAMBIGUATION RULES (very important):
-- Engagement Terms typically show the debt settlement company (e.g., Clarity, Concordia, Resync, Aspire, Palisade), settlement fee/percentage, monthly program payment, and terms/conditions. They do not include bank routing/account numbers.
+KEY IDENTIFIERS:
+- Company names: Clarity, Concordia, Resync, Aspire, Palisade
+- Look for: settlement fee percentage, monthly program payment
 
-Extract the following information and return as JSON:
+Extract ALL these fields (use null if not found):
 
 {{
   "file_id": null,
-  "company_name": "Name of the debt settlement company",
-  "company_address": "Complete company address from letterhead",
+  "company_name": "Debt settlement company name",
+  "company_address": "Complete company address",
   "company_phone": "Company phone number",
   "company_type": "Type of company (LLC, Corp, etc.)",
   "settlement_fee": "Total settlement fee amount",
   "settlement_fee_percentage": "Settlement fee as percentage (e.g., 25.00 for 25%)",
   "monthly_payment": "Monthly payment amount",
   "client_name": "Primary client full name",
-  "client_address": "Client address (look under client name section, highlighted areas, signature blocks)",
+  "client_address": "Client address",
   "client_signature": "Client signature text/indicator",
-  "client_signature_date": "Date client signed (YYYY-MM-DD)",
-  "coclient_name": "Co-client full name if present",
+  "client_signature_date": "Date signed (YYYY-MM-DD)",
+  "coclient_name": "Co-client name if present",
   "coclient_signature": "Co-client signature text/indicator",
-  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)",
-  "client_initials": "Client initials found in document (ALWAYS CAPITAL LETTERS like JJCS)",
-  "client_initials_count": "Number of initial marks/signatures",
-  "coclient_initials": "Co-client initials found in document (ALWAYS CAPITAL LETTERS)",
-  "coclient_initials_count": "Number of co-client initial marks/signatures",
-  "page_count": "Total number of pages in document"
+  "coclient_signature_date": "Co-client date if present",
+  "client_initials": "Client initials (e.g., JJCS)",
+  "client_initials_count": "Number of initial marks",
+  "coclient_initials": "Co-client initials",
+  "coclient_initials_count": "Number of co-client initials",
+  "page_count": "Total pages"
 }}
 
-Focus on sections containing:
-- Company information and letterhead
-- Fee structures and payment terms
-- Client and co-client signature blocks
-- Client address information (often appears under client name, in highlighted sections, or near signature blocks)
-- Terms and conditions sections
+Focus on: Company letterhead, fee structures, signature blocks, initials throughout document
 """
 
 POWER_OF_ATTORNEY_PROMPT = f"""
@@ -104,123 +95,130 @@ Look for:
 """
 
 PAYMENT_GATEWAY_AGREEMENT_PROMPT = f"""
-You are extracting data from a Payment Gateway Agreement for automated payment processing.
+You are extracting data from a Payment Gateway/Account Agreement.
 
 {BASE_EXTRACTION_RULES}
 
-DISAMBIGUATION RULES (very important):
-- Payment Gateway/Account Agreements are between the customer and a payment processor (e.g., Forth, RAM, CFT)
-- Do NOT include settlement fee, settlement fee percentage, company_type, or debt-settlement company letterhead fields here. Those belong to engagement_term.
+KEY IDENTIFIERS:
+- Processor names: FORTH, RAM, CFT
+- Look for: Account Agreement, Client Information Sheet
 
-Extract the following information and return as JSON:
+Extract ALL these fields (use null if not found):
 
 {{
   "file_id": null,
-  "account_id": "Payment account identifier",
-  "client_first_name": "Client first name",
-  "client_last_name": "Client last name", 
-  "client_middle_initial": "Client middle initial (single letter)",
-  "client_ssn": "Client SSN (format: 123-45-6789)",
-  "client_dob": "Client date of birth (YYYY-MM-DD)",
-  "client_address": "Client street address",
-  "client_city": "Client city",
-  "client_state": "Client state (2-letter code)",
-  "client_zipcode": "Client ZIP code",
-  "client_phone": "Client phone number",
-  "client_email": "Client email address",
+  "account_id": "Account ID if visible",
+  "client_first_name": "First name",
+  "client_last_name": "Last name",
+  "client_middle_initial": "Middle initial",
+  "client_ssn": "SSN (123-45-6789 format)",
+  "client_dob": "Date of birth (YYYY-MM-DD)",
+  "client_address": "Street address",
+  "client_city": "City",
+  "client_state": "State (2-letter code)",
+  "client_zipcode": "ZIP code",
+  "client_phone": "Phone number",
+  "client_email": "Email address",
   "coclient_first_name": "Co-client first name",
   "coclient_last_name": "Co-client last name",
   "coclient_middle_initial": "Co-client middle initial",
-  "coclient_ssn": "Co-client SSN (format: 123-45-6789)",
-  "coclient_dob": "Co-client date of birth (YYYY-MM-DD)",
-  "client_initials": "Client initials in document",
+  "coclient_ssn": "Co-client SSN",
+  "coclient_dob": "Co-client date of birth",
+  "client_initials": "Client initials",
   "client_signature": "Client signature indicator",
-  "client_signature_date": "Date client signed (YYYY-MM-DD)",
+  "client_signature_date": "Date client signed",
   "coclient_signature": "Co-client signature indicator",
-  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)",
-  "pages_count": "Total pages in document"
+  "coclient_signature_date": "Date co-client signed",
+  "pages_count": "Total pages"
 }}
 
-Focus on:
-- Client personal information sections
-- Payment authorization details
-- Signature blocks and dates
-- Contact information
+Focus on: Client Information section, signatures
 """
 
 FINANCIAL_ANALYSIS_PROMPT = f"""
-You are extracting data from a Financial Analysis document (Exhibit B) for debt settlement evaluation.
+You are extracting data from a Financial Analysis (Exhibit B).
 
 {BASE_EXTRACTION_RULES}
 
-Extract the following information and return as JSON:
+Extract ALL these financial fields (use null if not found):
 
 {{
   "file_id": null,
-  "applicant_name": "Primary applicant full name",
+  "applicant_name": "Primary applicant name",
   "applicant_email": "Primary applicant email",
-  "coapplicant_name": "Co-applicant full name",
+  "coapplicant_name": "Co-applicant name",
   "coapplicant_email": "Co-applicant email",
   "draft_type": "Type of payment draft/method",
   "fixed_income": "Fixed income amount",
-  "day_phone": "Daytime phone number",
-  "evening_phone": "Evening phone number", 
-  "cell_phone": "Cell phone number",
+  "day_phone": "Daytime phone",
+  "evening_phone": "Evening phone",
+  "cell_phone": "Cell phone",
   "program_start_date": "Program start date (YYYY-MM-DD)",
   "estimated_program_start_date": "Estimated start date (YYYY-MM-DD)",
-  "lump_sum": "Available lump sum amount",
-  "applicant_monthly_income": "Primary applicant monthly income",
+  "lump_sum": "Available lump sum",
+  "applicant_monthly_income": "Applicant monthly income",
   "coapplicant_monthly_income": "Co-applicant monthly income",
-  "applicant_expenses": "Primary applicant monthly expenses",
+  "applicant_expenses": "Applicant monthly expenses",
   "coapplicant_expenses": "Co-applicant monthly expenses",
-  "applicant_total_net_income": "Primary applicant net income",
+  "applicant_total_net_income": "Applicant net income",
   "coapplicant_total_net_income": "Co-applicant net income",
-  "total_enrolled_debt": "Total debt enrolled in program",
-  "estimated_program_length": "Program duration in months",
+  "total_enrolled_debt": "Total debt amount",
+  "estimated_program_length": "Program length in months",
   "monthly_program_deposit": "Monthly deposit amount",
-  "estimated_program_settle_amount": "Estimated settlement total",
+  "estimated_program_settle_amount": "Settlement amount",
   "fee_method": "Fee calculation method",
-  "total_program_fees": "Total fees for program",
-  "estimated_program_savings": "Estimated total savings",
-  "estimated_total_cost": "Estimated total program cost",
-  "hardship_details": "Detailed description of hardship",
+  "total_program_fees": "Total program fees",
+  "estimated_program_savings": "Estimated savings",
+  "estimated_total_cost": "Estimated total cost",
+  "hardship_details": "Hardship description",
   "client_signature": "Client signature indicator",
-  "client_signature_date": "Date client signed (YYYY-MM-DD)"
+  "client_signature_date": "Date signed (YYYY-MM-DD)"
 }}
 
-Look for:
-- Income and expense tables
-- Program cost calculations
-- Financial hardship descriptions
-- Contact information
-- Program timeline estimates
+Look for: Income/expense tables, Program Details section, hardship explanations
 """
 
 DEBT_SCHEDULE_PROMPT = f"""
-You are extracting creditor information from a Debt Schedule (Exhibit A) document.
+You are extracting creditor information from a Debt Schedule (Exhibit A).
 
 {BASE_EXTRACTION_RULES}
 
-This document contains a table/list of debts. Extract each debt as a separate entry in an array:
+Extract ALL fields for each debt (use null if not found):
 
 {{
   "debt_schedule": [
     {{
       "file_id": null,
-      "creditor_name": "Name of creditor/lender",
-      "account_name": "Account name or type",
-      "current_balance": "Current outstanding balance",
+      "creditor_name": "Creditor/lender name",
+      "name_on_account": "Account holder name",
+      "account_number": "Account number",
+      "current_balance": "Balance amount",
       "debt_type": "Type of debt (credit card, loan, etc.)"
     }}
   ]
 }}
 
-Look for:
-- Tables with creditor listings
-- Account balances and types
-- Credit card companies, banks, lenders
-- Medical debts, personal loans
-- Current balance amounts
+Look for: Tables with creditor listings, account details, balances
+"""
+
+CANCELLATION_NOTICE_PROMPT = f"""
+You are extracting data from a Cancellation Notice document.
+
+{BASE_EXTRACTION_RULES}
+
+Extract ALL these fields (use null if not found):
+
+{{
+  "file_id": null,
+  "cancellation_deadline": "Cancellation deadline date (YYYY-MM-DD)",
+  "cancellation_date": "Actual cancellation date (YYYY-MM-DD)",
+  "client_signature": "Client signature indicator",
+  "client_signature_date": "Date client signed (YYYY-MM-DD)",
+  "coclient_signature": "Co-client signature indicator",
+  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)"
+}}
+
+Look for: Cancellation terms, deadlines, signature lines
 """
 
 LEGAL_PLAN_AGREEMENT_PROMPT = f"""
@@ -255,9 +253,9 @@ Extract the following information and return as JSON:
   "members_accumulation_amount": "Member accumulation amount",
   "payment_processor_name": "Payment processor name",
   "credit_card_number": "Credit card number (if provided)",
-  "bank_account_number": "Bank account number (usually 10+ digits, NOT the 9-digit routing)",
+  "bank_account_number": "Bank account number",
   "credit_card_expiration_date": "Card expiration date (YYYY-MM-DD)",
-  "bank_routing_number": "Bank routing number (exactly 9 digits, NOT the longer account number)",
+  "bank_routing_number": "Bank routing number (exactly 9 digits)",
   "credit_card_name": "Name on credit card",
   "bank_institution_name": "Bank name",
   "credit_card_billing_address": "Card billing address",
@@ -331,18 +329,12 @@ CRITICAL FOR LISTS - DO NOT TRUNCATE:
 - If you approach token limits, finish the current list before stopping.
 
 CRITICAL DOCUMENT TYPE DISAMBIGUATION:
-- If you see "Account Agreement", "Client Information Sheet", "Account ID", bank routing numbers (9 digits), bank account numbers (longer), ACH/recurring debit authorization, payment schedules, or processor names like "FORTH", "RAM", "CFT" → put data in payment_gateway_agreement, NOT engagement_term
+- If you see "Account Agreement", "Client Information Sheet", "Account ID", bank routing numbers (9 digits), bank account numbers, ACH/recurring debit authorization, payment schedules, or processor names like "FORTH", "RAM", "CFT" → put data in payment_gateway_agreement, NOT engagement_term
 - If you see debt settlement company names (Clarity, Concordia, Resync, Aspire, Palisade), settlement fees, settlement percentages, monthly program payments → put data in engagement_term, NOT payment_gateway_agreement
 - Do NOT mix these: banking/payment processor info goes to payment_gateway_agreement; debt settlement company info goes to engagement_term
 - ONLY populate entities that are actually present in the document. If no engagement term content exists, keep engagement_term as null. If no payment gateway content exists, keep payment_gateway_agreement as null.
 
-ENGAGEMENT TERM EXTRACTION FOCUS:
-- Look for company letterhead/logo at top of document for company_name
-- Find settlement fee percentage in main contract text (look for "%" symbols or "contingency fee" language)
-- Extract client signature blocks at end of document (name and signature date)
-- Count initials throughout document (look for repeated 2-4 letter combinations next to clauses)
-- Count total pages (usually shown at bottom of each page as "Page X of Y")
-- Look for fee structures, payment terms, and legal service obligations in main contract body
+Return this simplified structure:
 
 {{
   "document_type": "string",
@@ -543,10 +535,19 @@ ENGAGEMENT TERM EXTRACTION FOCUS:
     "debt_relief_program_duration": null,
     "members_accumulation_amount": null,
     "payment_processor_name": null,
+    "credit_card_number": null,
+    "bank_account_number": null,
+    "credit_card_expiration_date": null,
+    "bank_routing_number": null,
+    "credit_card_name": null,
+    "bank_institution_name": null,
+    "credit_card_billing_address": null,
+    "account_holder_name": null,
+    "initials_count": null,
+    "is_all_initials_present": null,
     "client_signature": null,
     "signature_date": null,
-    "pages_count": null,
-    "is_all_initials_present": null
+    "pages_count": null
   }},
   "clixsign_sender": {{
     "file_id": null,
@@ -573,7 +574,13 @@ ENGAGEMENT TERM EXTRACTION FOCUS:
   }}]
 }}
 
-Extract everything visible across the package. If an entity is not present, return it as null or empty array as shown.
+EXTRACTION STRATEGY:
+1. First identify which document types are present
+2. For each identified type, extract ALL its fields
+3. Use null for fields that are not visible
+4. Do NOT skip any fields - they are all required
+
+IMPORTANT: ALL entities above are required parts of the underwriting package.
 """
 
 def get_prompt_for_document_type(document_type: str) -> str:
@@ -585,6 +592,7 @@ def get_prompt_for_document_type(document_type: str) -> str:
         'payment_gateway_agreement': PAYMENT_GATEWAY_AGREEMENT_PROMPT,
         'financial_analysis': FINANCIAL_ANALYSIS_PROMPT,
         'debt_schedule': DEBT_SCHEDULE_PROMPT,
+        'cancellation_notice': CANCELLATION_NOTICE_PROMPT,
         'legal_plan_agreement': LEGAL_PLAN_AGREEMENT_PROMPT,
         'document_detection': DOCUMENT_TYPE_DETECTION_PROMPT,
         'comprehensive': COMPREHENSIVE_EXTRACTION_PROMPT
