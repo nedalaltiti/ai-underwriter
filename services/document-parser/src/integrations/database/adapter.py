@@ -709,6 +709,7 @@ class UnderwritingDatabaseAdapter:
              signer_user_agent, package_opened_at, signature_adopted_at, package_signed_at,
              package_declined_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (id) DO UPDATE SET
         """, unique_id, entity.file_id, entity.package_id, entity.signer_name, entity.signer_email_address,
             entity.signer_ip_address, entity.signer_user_agent, entity.package_opened_at,
             entity.signature_adopted_at, entity.package_signed_at, entity.package_declined_at,
