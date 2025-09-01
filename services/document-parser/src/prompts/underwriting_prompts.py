@@ -22,7 +22,8 @@ CRITICAL EXTRACTION RULES:
 9. For initials, look for 2-4 capital letters (e.g., "JJCS", "AA", "CW")
 10. Match the EXACT field names and JSON shape requested
 11. Process systematically: don't jump around, extract section by section
-12. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
+12. For initial counts: scan only the relevant document section until the signature page for that section, not the entire multi-document package
+13. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
 """
 
 ENGAGEMENT_TERM_PROMPT = f"""
@@ -63,20 +64,22 @@ Extract ALL these fields (use null if not found):
   "coclient_signature": "Co-client signature text/indicator",
   "coclient_signature_date": "Co-client date if present",
   "client_initials": "Client initials found in document (e.g., JD, ABC, JJCS)",
-  "client_initials_count": "Total count of how many times client initials appear throughout document",
+  "client_initials_count": "Total count of client initials from page 1 through ALL pages until client signature (including unnumbered pages)",
   "coclient_initials": "Co-client initials if present (e.g., MJ, XYZ)",
   "coclient_initials_count": "Total count of how many times co-client initials appear throughout document",
-  "page_count": "Total pages"
+  "page_count": "Total pages in engagement term section"
 }}
 
 Focus on: Company letterhead, fee structures, signature blocks, initials throughout document
 
 INITIAL COUNTING INSTRUCTIONS:
-1. Scan EVERY page of the document for client initials
-2. Count each individual occurrence (not just unique instances)
-3. Initials are typically 2-4 capital letters written by the client
-4. Common locations: next to paragraphs, at section breaks, near signature lines
-5. If initials appear 3 times on page 1 and 2 times on page 2, total count = 5
+1. Scan ONLY the Engagement Term section pages for client initials (typically pages 0-6)
+2. Do NOT count initials from other document sections (Financial Analysis, Debt Schedule, etc.)
+3. Count each individual occurrence within the engagement term section only
+4. Stop counting when you reach the end of the engagement term section (usually marked by "Page X of Y")
+5. Initials are typically 2-4 capital letters written by the client (e.g., "JD", "ABC", "JJCS")
+6. Common locations within engagement term: next to paragraphs, at section breaks, near signature lines
+7. Example: If engagement term section has 6 pages and initials appear 8 times, count = 8
 """
 
 POWER_OF_ATTORNEY_PROMPT = f"""

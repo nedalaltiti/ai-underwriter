@@ -64,14 +64,26 @@ class ParallelDocumentExtractor:
             # Process results
             for i, (entity_type, _) in enumerate(extraction_tasks):
                 if not isinstance(results[i], Exception) and results[i]:
+                    result_data = results[i]
+                    
                     if entity_type == 'engagement_term':
-                        package_data['engagement_term'] = self._clean_entity(results[i])
+                        if isinstance(result_data, dict):
+                            package_data['engagement_term'] = self._clean_entity(result_data)
                     elif entity_type == 'payment_gateway':
-                        package_data['payment_gateway_agreement'] = self._clean_entity(results[i])
+                        if isinstance(result_data, dict):
+                            package_data['payment_gateway_agreement'] = self._clean_entity(result_data)
                     elif entity_type == 'financial_analysis':
-                        package_data['financial_analysis'] = self._clean_entity(results[i])
+                        if isinstance(result_data, dict):
+                            package_data['financial_analysis'] = self._clean_entity(result_data)
                     elif entity_type == 'debt_schedule':
-                        package_data['debt_schedule'] = results[i].get('debt_schedule', [])
+                        if isinstance(result_data, dict):
+                            package_data['debt_schedule'] = result_data.get('debt_schedule', [])
+                        elif isinstance(result_data, list):
+                            package_data['debt_schedule'] = result_data
+                        else:
+                            package_data['debt_schedule'] = []
+                    else:
+                        logger.warning(f"Unknown entity type: {entity_type}")
         
         # Add file_id to all entities
         self._add_file_ids(package_data, file_id)
@@ -127,13 +139,19 @@ Extract ALL fields from the Engagement Terms/Company Agreement:
   "coclient_signature": "Co-client signature",
   "coclient_signature_date": "Co-client date",
   "client_initials": "Client initials",
-  "client_initials_count": "Number of initials",
+  "client_initials_count": "Total count of client initials throughout ENTIRE document until signature page",
   "coclient_initials": "Co-client initials",
-  "coclient_initials_count": "Co-client initial count",
+  "coclient_initials_count": "Total count of co-client initials throughout ENTIRE document until signature page",
   "page_count": "Total pages"
 }
 
 Return null for missing fields. ALL fields are required.
+
+CRITICAL: For initial counts, scan ONLY the Engagement Term section:
+- Typically pages 0-6 or until you see "Page X of Y" 
+- Do NOT count initials from other sections (Financial Analysis, Debt Schedule, etc.)
+- Count EVERY occurrence of client initials within the engagement term section only
+- Stop when you reach the end of the engagement term section
 """
         return await self.gemini_client._make_gemini_request(prompt, pdf_data)
     
