@@ -254,10 +254,20 @@ class UnderwritingDatabaseAdapter:
                         signers_stored = 0
                         for signer in package.clixsign_signers:
                             try:
+                                logger.bind(
+                                    file_id=package.file_id,
+                                    signer_name=getattr(signer, 'signer_name', 'unknown'),
+                                    signer_email=getattr(signer, 'signer_email_address', 'unknown')
+                                ).debug("db.storing_clixsign_signer")
                                 await self._store_clixsign_signer(connection, signer)
                                 signers_stored += 1
+                                logger.bind(file_id=package.file_id).debug("db.clixsign_signer_stored")
                             except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError) as e:
-                                logger.bind(file_id=package.file_id, signer_email=getattr(signer, 'signer_email_address', 'unknown')).warning("db.signer_skipped")
+                                logger.bind(
+                                    file_id=package.file_id, 
+                                    signer_email=getattr(signer, 'signer_email_address', 'unknown'),
+                                    error=str(e)
+                                ).error("db.signer_failed")
                         stored_count += signers_stored
                         logger.bind(file_id=package.file_id, stored=signers_stored).debug("db.clixsign_signers_complete")
                     
@@ -459,46 +469,51 @@ class UnderwritingDatabaseAdapter:
             entity.client_signature_date, datetime.now())
     
     async def _store_debt_schedule(self, connection, entity: DebtSchedule):
-        """Store debt schedule entry with UUID-based collision-free ID."""
-        max_retries = 3
+        """Store debt schedule entry with duplicate prevention."""
+        # First, check if this exact debt already exists
+        existing_id = await connection.fetchval("""
+            SELECT id FROM underwriting.debt_schedule 
+            WHERE file_id = $1 AND creditor_name = $2 AND name_on_account = $3 AND account_number = $4
+        """, entity.file_id, entity.creditor_name, entity.name_on_account, entity.account_number)
         
-        for attempt in range(max_retries):
-            try:
-                # Generate UUID-based unique ID (collision-free)
-                unique_id = self._generate_unique_id(entity.file_id, "debt")
-                
-                await connection.execute("""
-                    INSERT INTO underwriting.debt_schedule 
-                    (id, file_id, creditor_name, name_on_account, account_number, current_balance, debt_type, updated_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                """, unique_id, entity.file_id, entity.creditor_name, entity.name_on_account, 
-                    entity.account_number, entity.current_balance, entity.debt_type, datetime.now())
-                return  # Success
-                
-            except asyncpg.UniqueViolationError as e:
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(0.1 * (2 ** attempt))
-                    logger.bind(
-                        file_id=entity.file_id,
-                        attempt=attempt + 2,
-                        creditor=entity.creditor_name
-                    ).debug("db.debt_retry uuid_collision=true")
-                else:
-                    # Check if content already exists
-                    existing = await connection.fetchval("""
-                        SELECT id FROM underwriting.debt_schedule 
-                        WHERE file_id = $1 AND creditor_name = $2 AND name_on_account = $3
-                    """, entity.file_id, entity.creditor_name, entity.name_on_account)
-                    
-                    if existing:
-                        logger.bind(
-                            file_id=entity.file_id,
-                            existing_id=existing,
-                            creditor=entity.creditor_name
-                        ).info("db.debt_exists content_duplicate=true")
-                        return
-                    else:
-                        raise e
+        if existing_id:
+            # Update existing record with latest data
+            await connection.execute("""
+                UPDATE underwriting.debt_schedule 
+                SET current_balance = $5, debt_type = $6, updated_at = $7
+                WHERE id = $1 AND file_id = $2 AND creditor_name = $3 AND name_on_account = $4
+            """, existing_id, entity.file_id, entity.creditor_name, entity.name_on_account,
+                entity.current_balance, entity.debt_type, datetime.now())
+            
+            logger.bind(
+                file_id=entity.file_id,
+                existing_id=existing_id,
+                creditor=entity.creditor_name
+            ).debug("db.debt_updated")
+            return
+        
+        # No existing record found, insert new one
+        unique_id = self._generate_unique_id(entity.file_id, "debt")
+        
+        try:
+            await connection.execute("""
+                INSERT INTO underwriting.debt_schedule 
+                (id, file_id, creditor_name, name_on_account, account_number, current_balance, debt_type, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            """, unique_id, entity.file_id, entity.creditor_name, entity.name_on_account, 
+                entity.account_number, entity.current_balance, entity.debt_type, datetime.now())
+            
+            logger.bind(
+                file_id=entity.file_id,
+                creditor=entity.creditor_name
+            ).debug("db.debt_inserted")
+            
+        except asyncpg.UniqueViolationError:
+            # Race condition - another process inserted the same debt
+            logger.bind(
+                file_id=entity.file_id,
+                creditor=entity.creditor_name
+            ).debug("db.debt_race_condition")
     
     async def _store_payment_gateway_agreement(self, connection, entity: PaymentGatewayAgreement):
         """Store payment gateway agreement data."""
@@ -602,6 +617,9 @@ class UnderwritingDatabaseAdapter:
             VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (file_id) DO UPDATE SET
                 client_signature = COALESCE(EXCLUDED.client_signature, disclosure.client_signature),
+                client_signature_date = COALESCE(EXCLUDED.client_signature_date, disclosure.client_signature_date),
+                coclient_signature = COALESCE(EXCLUDED.coclient_signature, disclosure.coclient_signature),
+                coclient_signature_date = COALESCE(EXCLUDED.coclient_signature_date, disclosure.coclient_signature_date),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.client_signature, entity.client_signature_date,
             entity.coclient_signature, entity.coclient_signature_date, datetime.now())
@@ -671,7 +689,8 @@ class UnderwritingDatabaseAdapter:
             file_id=entity.file_id,
             bank_name=entity.bank_name,
             account_number=entity.account_number,
-            routing_number=entity.routing_number
+            routing_number=entity.routing_number,
+            recurring_debit_authorization=entity.recurring_debit_authorization
         ).debug("db.payment_bank_info_details")
         
         await connection.execute("""

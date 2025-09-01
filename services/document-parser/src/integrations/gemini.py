@@ -271,9 +271,9 @@ class GeminiClient:
                 'high interest': ('high_interest_disclosure', self._extract_high_interest),
                 'fcra consent': ('fcra_consent', self._extract_fcra),
                 'cancellation notice': ('cancellation_notice', self._extract_cancellation),
-                'clixsign certificate': ('clixsign', self._extract_clixsign_data),
-                'clixsign signers': ('clixsign', self._extract_clixsign_data),
-                'clixsign sender': ('clixsign', self._extract_clixsign_data),
+                'clixsign certificate': ('clixsign_all', self._extract_clixsign_data),
+                'clixsign signers': ('clixsign_all', self._extract_clixsign_data),
+                'clixsign sender': ('clixsign_all', self._extract_clixsign_data),
                 'program disclosure': ('program_disclosure', self._extract_program_disclosure)
             }
             
@@ -298,7 +298,7 @@ class GeminiClient:
                                     else:
                                         package_data[entity_name].append(result)
                                 # Handle clixsign specially (has sender and signers)
-                                elif entity_name == 'clixsign':
+                                elif entity_name == 'clixsign_all':
                                     if isinstance(result, dict):
                                         if 'clixsign_sender' in result:
                                             package_data['clixsign_sender'] = result['clixsign_sender']
@@ -1499,7 +1499,11 @@ class GeminiClient:
         if result and isinstance(result, dict):
             result['file_id'] = file_id
             self._fix_entity_data_formats(result)
-            logger.bind(file_id=file_id, bank_name=result.get('bank_name')).debug("payment_bank_info.extracted")
+            logger.bind(
+                file_id=file_id, 
+                bank_name=result.get('bank_name'),
+                recurring_debit_authorization=result.get('recurring_debit_authorization')
+            ).debug("payment_bank_info.extracted")
             return result
         logger.bind(file_id=file_id).warning("payment_bank_info.not_found")
         return None  
@@ -1616,9 +1620,18 @@ class GeminiClient:
             
             # Process signers
             if 'clixsign_signers' in result and isinstance(result['clixsign_signers'], list):
-                for signer in result['clixsign_signers']:
+                logger.bind(file_id=file_id, signer_count=len(result['clixsign_signers'])).debug("clixsign_signers.processing")
+                for i, signer in enumerate(result['clixsign_signers']):
                     signer['file_id'] = file_id
                     self._fix_entity_data_formats(signer)
+                    logger.bind(
+                        file_id=file_id,
+                        signer_index=i,
+                        signer_name=signer.get('signer_name'),
+                        signer_email=signer.get('signer_email_address')
+                    ).debug("clixsign_signer.processed")
+            else:
+                logger.bind(file_id=file_id).warning("clixsign_signers.not_found_in_result")
             
             return result
         return None

@@ -40,7 +40,9 @@ SPECIFIC EXTRACTION GUIDANCE:
 - Settlement fee percentage often appears as "25%" or "25.00%" 
 - Monthly payment amounts are in program details
 - Client signatures appear at the bottom
-- Initial counts refer to client initials throughout the document
+- Initials: Look for 2-4 capital letters (e.g., "JD", "ABC", "JJCS") written by client throughout document
+- Initial counts: Count EVERY occurrence of client initials on each page (not just unique initials)
+- Example: If "JD" appears 5 times throughout document, client_initials_count = 5
 
 Extract ALL these fields (use null if not found):
 
@@ -60,14 +62,21 @@ Extract ALL these fields (use null if not found):
   "coclient_name": "Co-client name if present",
   "coclient_signature": "Co-client signature text/indicator",
   "coclient_signature_date": "Co-client date if present",
-  "client_initials": "Client initials (e.g., JJCS)",
-  "client_initials_count": "Number of initial marks",
-  "coclient_initials": "Co-client initials",
-  "coclient_initials_count": "Number of co-client initials",
+  "client_initials": "Client initials found in document (e.g., JD, ABC, JJCS)",
+  "client_initials_count": "Total count of how many times client initials appear throughout document",
+  "coclient_initials": "Co-client initials if present (e.g., MJ, XYZ)",
+  "coclient_initials_count": "Total count of how many times co-client initials appear throughout document",
   "page_count": "Total pages"
 }}
 
 Focus on: Company letterhead, fee structures, signature blocks, initials throughout document
+
+INITIAL COUNTING INSTRUCTIONS:
+1. Scan EVERY page of the document for client initials
+2. Count each individual occurrence (not just unique instances)
+3. Initials are typically 2-4 capital letters written by the client
+4. Common locations: next to paragraphs, at section breaks, near signature lines
+5. If initials appear 3 times on page 1 and 2 times on page 2, total count = 5
 """
 
 POWER_OF_ATTORNEY_PROMPT = f"""
@@ -829,7 +838,7 @@ def get_payment_bank_info_prompt() -> str:
     - "Account Type" ("Checking" or "Savings")
     - "Authorizing Person's Name (as it appears on check)" 
     - "Address (as it appears on check)", "City", "State", "Zip"
-    - "Recurring Debit Authorization" (dollar amount like "$651.57")
+    - "Recurring Debit Authorization" (dollar amount like "$651.57", "$631.23")
     - "Date of First Debit" (e.g., "Sep 15, 2025")
     - "Client Signature" and "Date" lines at bottom
 
@@ -855,7 +864,7 @@ def get_payment_bank_info_prompt() -> str:
     - Extract EXACTLY what you see in the labeled fields
     - routing_number: Must be exactly 9 digits (e.g., "043000096")
     - account_type: Must be "checking" or "savings" (lowercase)
-    - recurring_debit_authorization: Amount without $ symbol (e.g., 651.57)
+    - recurring_debit_authorization: Extract the dollar amount from "Recurring Debit Authorization" field, remove $ symbol (e.g., 651.57, 631.23)
     - first_debit_date: Format as YYYY-MM-DD
     - address: Combine Address + City + State + Zip into one field
     - If a field is blank or not visible, keep it null

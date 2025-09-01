@@ -64,7 +64,14 @@ class DocumentWorker:
             logger.info("AWS clients initialized successfully")
             
         except NoCredentialsError:
-            logger.error("AWS credentials not found")
+            logger.error("AWS credentials not found - check AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables")
+            raise
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            if error_code == 'InvalidClientTokenId':
+                logger.error("AWS credentials are invalid or expired - check AWS credentials configuration")
+            else:
+                logger.error(f"AWS client error ({error_code}): {e}")
             raise
         except Exception as e:
             logger.error(f"Failed to initialize AWS clients: {e}")
@@ -205,10 +212,15 @@ class DocumentWorker:
             )
             return response['QueueUrl']
         except ClientError as e:
-            if e.response['Error']['Code'] == 'AWS.SimpleQueueService.NonExistentQueue':
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            if error_code == 'AWS.SimpleQueueService.NonExistentQueue':
                 logger.error(f"Queue does not exist: {config.input_queue_name}")
+            elif error_code == 'InvalidClientTokenId':
+                logger.error(f"AWS credentials invalid/expired when accessing queue: {config.input_queue_name}")
+            elif error_code == 'AccessDenied':
+                logger.error(f"AWS permissions denied for queue: {config.input_queue_name}")
             else:
-                logger.error(f"Failed to get queue URL: {e}")
+                logger.error(f"Failed to get queue URL ({error_code}): {e}")
             return None
     
     async def _receive_messages(self, queue_url: str) -> list:
