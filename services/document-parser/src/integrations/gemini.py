@@ -137,16 +137,22 @@ class GeminiClient:
     
 
     async def extract_with_validation(self, pdf_data: Dict[str, str], file_id: int, attempts: int = 3) -> Optional[ExtractedDocumentPackage]:
-        """Extract with validation - using parallel extraction for performance."""
+        """Extract with validation - using staged extraction for better accuracy."""
         
-        # Check if we should use parallel extraction based on PDF size
+        # Try staged extraction first (most accurate)
+        try:
+            logger.info(f"Using staged extraction approach for file {file_id}")
+            result = await self.extract_with_staged_approach(pdf_data, file_id)
+            if result:
+                return result
+        except Exception as e:
+            logger.warning(f"Staged extraction failed, falling back to parallel: {e}")
+        
+        # Fallback to parallel extraction
         pdf_size_estimate = len(pdf_data.get('data', '')) if 'data' in pdf_data else 0
         pdf_size_mb = pdf_size_estimate / 1024 / 1024 * 0.75
         
-        # Use parallel extraction for documents > 1MB or if explicitly enabled
-        use_parallel = pdf_size_mb > 1.0 or getattr(self.config, 'enable_parallel_extraction', True)
-        
-        if use_parallel:
+        if pdf_size_mb > 1.0 or getattr(self.config, 'enable_parallel_extraction', True):
             try:
                 logger.info(f"Using parallel extraction for {pdf_size_mb:.1f}MB document")
                 from core.parallel_extractor import ParallelDocumentExtractor
@@ -185,6 +191,151 @@ class GeminiClient:
                         logger.error(f"Even lenient storage failed: {final_e}")
                     raise
         return None
+    
+    async def extract_with_staged_approach(self, pdf_data: Dict[str, str], file_id: int) -> Optional[ExtractedDocumentPackage]:
+        """Extract documents using a staged approach for better accuracy."""
+        
+        # Stage 1: Document detection and sectioning
+        detection_prompt = """
+        Identify ALL document sections in this PDF. List each distinct section/form you see:
+        Return JSON: {"sections": ["section_name1", "section_name2", ...]}
+        
+        Look for:
+        - Account Agreement / Client Information Sheet
+        - Primary Account Information (bank details section)
+        - Company Agreement / Engagement Terms
+        - Power of Attorney
+        - Financial Analysis (Exhibit B)
+        - Financial Budget
+        - Debt Schedule (Exhibit A)
+        - Service Fees table
+        - Deposit Schedule table
+        - Disclosure sections (Exhibit C)
+        - Legal Plan Agreement
+        - High Interest Disclosure
+        - FCRA Consent
+        - Cancellation Notice
+        - Clixsign Certificate
+        - Clixsign Signers
+        - Clixsign Sender
+        - Payment Bank Info
+        - Program Disclosure
+        
+        IMPORTANT: If you see bank information (bank name, routing number, account number, account type), 
+        always include "Primary Account Information" in your sections list.
+        """
+        
+        try:
+            detection_result = await self._make_gemini_request(detection_prompt, pdf_data)
+            detected_sections = detection_result.get('sections', []) if detection_result else []
+            
+            logger.info(f"Detected sections: {detected_sections}")
+            
+            # Stage 2: Extract each section individually with focused prompts
+            package_data = {
+                'file_id': file_id,
+                'document_type': 'comprehensive',
+                'confidence_score': 0.95,
+                'extraction_metadata': {
+                    'extraction_time': datetime.now().isoformat(),
+                    'model': self.model_name,
+                    'temperature': self.temperature,
+                    'extraction_method': 'staged'
+                }
+            }
+            
+            # Map sections to extraction functions
+            extraction_map = {
+                'account agreement': ('payment_gateway_agreement', self._extract_payment_gateway),
+                'client information': ('payment_gateway_agreement', self._extract_payment_gateway),
+                'payment bank info': ('payment_bank_info', self._extract_payment_bank_info),
+                'primary account': ('payment_bank_info', self._extract_payment_bank_info),
+                'bank information': ('payment_bank_info', self._extract_payment_bank_info),
+                'ach authorization': ('payment_bank_info', self._extract_payment_bank_info),
+                'company agreement': ('engagement_term', self._extract_engagement_term),
+                'engagement terms': ('engagement_term', self._extract_engagement_term),
+                'limited scope retainer': ('engagement_term', self._extract_engagement_term),
+                'retainer agreement': ('engagement_term', self._extract_engagement_term),
+                'terms of engagement': ('engagement_term', self._extract_engagement_term),
+                'power of attorney': ('power_of_attorney', self._extract_power_of_attorney),
+                'financial analysis': ('financial_analysis', self._extract_financial_analysis),
+                'financial budget': ('financial_analysis', self._extract_financial_analysis),
+                'exhibit b': ('financial_analysis', self._extract_financial_analysis),
+                'debt schedule': ('debt_schedule', self._extract_debt_schedule),
+                'exhibit a': ('debt_schedule', self._extract_debt_schedule),
+                'service fees': ('payment_service_fees', self._extract_service_fees),
+                'deposit schedule': ('payment_deposit_schedule', self._extract_deposit_schedule),
+                'disclosure': ('disclosure', self._extract_disclosure),
+                'exhibit c': ('disclosure', self._extract_disclosure),
+                'legal plan': ('legal_plan_agreement', self._extract_legal_plan),
+                'high interest': ('high_interest_disclosure', self._extract_high_interest),
+                'fcra consent': ('fcra_consent', self._extract_fcra),
+                'cancellation notice': ('cancellation_notice', self._extract_cancellation),
+                'clixsign certificate': ('clixsign', self._extract_clixsign_data),
+                'clixsign signers': ('clixsign', self._extract_clixsign_data),
+                'clixsign sender': ('clixsign', self._extract_clixsign_data),
+                'program disclosure': ('program_disclosure', self._extract_program_disclosure)
+            }
+            
+            # Track what we've already extracted to avoid duplicates
+            extracted_entities = set()
+            
+            # Extract each detected section
+            for section in detected_sections:
+                section_lower = section.lower()
+                for key, (entity_name, extractor) in extraction_map.items():
+                    if key in section_lower and entity_name not in extracted_entities:
+                        try:
+                            logger.info(f"Extracting {entity_name} from section: {section}")
+                            result = await extractor(pdf_data, file_id)
+                            if result:
+                                # Handle list entities differently
+                                if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
+                                    if entity_name not in package_data:
+                                        package_data[entity_name] = []
+                                    if isinstance(result, list):
+                                        package_data[entity_name].extend(result)
+                                    else:
+                                        package_data[entity_name].append(result)
+                                # Handle clixsign specially (has sender and signers)
+                                elif entity_name == 'clixsign':
+                                    if isinstance(result, dict):
+                                        if 'clixsign_sender' in result:
+                                            package_data['clixsign_sender'] = result['clixsign_sender']
+                                        if 'clixsign_signers' in result:
+                                            package_data['clixsign_signers'] = result['clixsign_signers']
+                                else:
+                                    package_data[entity_name] = result
+                                extracted_entities.add(entity_name)
+                        except Exception as e:
+                            logger.warning(f"Failed to extract {entity_name}: {e}")
+            
+            # Add file_id to all entities
+            self._add_file_id_to_entities(package_data, file_id)
+            
+            # Fix data formats
+            self._fix_null_strings(package_data)
+            
+            # Stage 3: Validate and create package
+            try:
+                package = ExtractedDocumentPackage(**package_data)
+                logger.info(f"Successfully created package via staged extraction")
+                return package
+            except Exception as e:
+                logger.error(f"Package creation failed in staged extraction: {e}")
+                # Try lenient cleaning
+                try:
+                    cleaned_data = self._clean_invalid_fields(package_data, e)
+                    package = ExtractedDocumentPackage(**cleaned_data)
+                    logger.warning(f"Created package with lenient validation in staged extraction")
+                    return package
+                except Exception as lenient_e:
+                    logger.error(f"Even lenient package creation failed: {lenient_e}")
+                    return None
+                    
+        except Exception as e:
+            logger.error(f"Staged extraction failed: {e}")
+            return None
     
     async def extract_document_entities(
         self, 
@@ -229,9 +380,9 @@ class GeminiClient:
                                 detected_sections.append('power_of_attorney')
                             elif 'account agreement' in indicator_lower or 'client information' in indicator_lower:
                                 detected_sections.append('payment_gateway_agreement')
-                            elif 'engagement' in indicator_lower or 'client service' in indicator_lower:
+                            elif 'engagement' in indicator_lower or 'client service' in indicator_lower or 'retainer' in indicator_lower or 'company agreement' in indicator_lower:
                                 detected_sections.append('engagement_term')
-                            elif 'financial analysis' in indicator_lower or 'exhibit b' in indicator_lower:
+                            elif 'financial analysis' in indicator_lower or 'exhibit b' in indicator_lower or 'financial budget' in indicator_lower:
                                 detected_sections.append('financial_analysis')
                             elif 'debt schedule' in indicator_lower or 'exhibit a' in indicator_lower:
                                 detected_sections.append('debt_schedule')
@@ -259,7 +410,13 @@ class GeminiClient:
                                 detected_sections.append('clixsign_signers')
                             elif 'clixsign sender' in indicator_lower:
                                 detected_sections.append('clixsign_sender')
-            
+                            elif 'primary account' in indicator_lower:
+                                detected_sections.append('payment_bank_info')
+                            elif 'bank information' in indicator_lower:
+                                detected_sections.append('payment_bank_info')
+                            elif 'ach authorization' in indicator_lower:
+                                detected_sections.append('payment_bank_info')
+                                
             logger.info(f"Detected document sections: {detected_sections}")
             
             # Use comprehensive extraction prompt directly
@@ -1117,6 +1274,16 @@ class GeminiClient:
                     if numeric.isdigit():
                         entity[key] = int(numeric)
                 
+                # Clean up address formatting issues
+                address_fields = ['client_address', 'coclient_address', 'address', 'attorney_address', 'company_address', 'credit_card_billing_address']
+                if key in address_fields:
+                    # Remove curly braces, trailing commas, and clean up formatting
+                    cleaned_address = value.replace('{', '').replace('}', '').strip()
+                    if cleaned_address.endswith(','):
+                        cleaned_address = cleaned_address[:-1].strip()
+                    entity[key] = cleaned_address if cleaned_address else None
+                    continue
+                
                 # Clean up empty strings and placeholders to None for optional fields
                 if value.strip() == '' or value.lower() in ['null', 'none', 'n/a', 'na']:
                     entity[key] = None
@@ -1140,7 +1307,7 @@ class GeminiClient:
                 entity[key] = str(value)
 
         # Normalize SSN-like fields specifically after general cleanup
-        ssn_fields = {'client_ssn', 'coclient_ssn', 'member_ssn'}
+        ssn_fields = {'client_ssn', 'coclient_ssn', 'member_ssn', 'coapplicant_ssn'}
         for f in ssn_fields:
             if f in entity and isinstance(entity[f], str):
                 raw = re.sub(r"\s+", "", entity[f])
@@ -1148,11 +1315,31 @@ class GeminiClient:
                 # Handle masked SSNs (XXX-XX-1234 format)
                 if raw.startswith('XXX-XX-') or raw.startswith('xxx-xx-'):
                     entity[f] = raw.upper()  # Keep masked format, ensure uppercase
+                elif 'XXX' in raw.upper() and len(raw) >= 7:
+                    # Handle variations like "XXX-XX-1072" or "XXXXX1072"
+                    if '-' in raw:
+                        entity[f] = raw.upper()  # Keep existing format
+                    else:
+                        # Format as XXX-XX-#### if unformatted masked SSN
+                        digits = re.sub(r"[^0-9]", "", raw)
+                        if len(digits) == 4:  # Only last 4 digits
+                            entity[f] = f"XXX-XX-{digits}"
+                        else:
+                            entity[f] = raw.upper()
                 else:
-                    # Handle full SSNs
+                    # Handle full SSNs - but check if this should be masked based on document
                     digits = re.sub(r"[^0-9]", "", raw)
                     if len(digits) == 9:
-                        entity[f] = f"{digits[0:3]}-{digits[3:5]}-{digits[5:9]}"
+                        # Check if original value suggests masking (e.g., contains X)
+                        if 'X' in entity[f].upper():
+                            # Extract last 4 digits and mask the rest
+                            last_four = digits[-4:]
+                            entity[f] = f"XXX-XX-{last_four}"
+                        else:
+                            entity[f] = f"{digits[0:3]}-{digits[3:5]}-{digits[5:9]}"
+                    elif len(digits) == 4:
+                        # Only last 4 digits provided - assume masked
+                        entity[f] = f"XXX-XX-{digits}"
                     else:
                         # leave as-is; validator may null it
                         entity[f] = raw
@@ -1172,6 +1359,298 @@ class GeminiClient:
             elif isinstance(value, dict):
                 # Recursively fix nested objects
                 self._fix_null_strings(value)
+
+    async def _extract_payment_gateway(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract payment gateway agreement data."""
+        prompt = get_prompt_for_document_type('payment_gateway_agreement')
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result:
+            result['file_id'] = file_id
+            self._fix_entity_data_formats(result)
+        return result
+    
+    async def _extract_engagement_term(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract engagement term data."""
+        prompt = get_prompt_for_document_type('engagement_term')
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result:
+            result['file_id'] = file_id
+            self._fix_entity_data_formats(result)
+        return result
+    
+    async def _extract_power_of_attorney(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract power of attorney data."""
+        prompt = get_prompt_for_document_type('power_of_attorney')
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result:
+            result['file_id'] = file_id
+            self._fix_entity_data_formats(result)
+        return result
+    
+    async def _extract_financial_analysis(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract financial analysis data."""
+        prompt = get_prompt_for_document_type('financial_analysis')
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result:
+            result['file_id'] = file_id
+            self._fix_entity_data_formats(result)
+            # Apply normalization for financial analysis
+            result = self._normalize_financial_analysis_fields(result)
+        return result
+    
+    async def _extract_debt_schedule(self, pdf_data: Dict[str, str], file_id: int) -> Optional[List]:
+        """Extract debt schedule data."""
+        prompt = get_prompt_for_document_type('debt_schedule')
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result and 'debt_schedule' in result:
+            debts = result['debt_schedule']
+            if isinstance(debts, list):
+                for debt in debts:
+                    debt['file_id'] = file_id
+                    self._fix_entity_data_formats(debt)
+                return debts
+        return None
+    
+    async def _extract_service_fees(self, pdf_data: Dict[str, str], file_id: int) -> Optional[List]:
+        """Extract service fees data."""
+        from prompts.underwriting_prompts import get_targeted_service_fees_prompt
+        prompt = get_targeted_service_fees_prompt()
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result and 'payment_service_fees' in result:
+            fees = result['payment_service_fees']
+            if isinstance(fees, list):
+                valid_fees = []
+                for fee in fees:
+                    if isinstance(fee, dict) and fee.get('service_amount'):
+                        fee['file_id'] = file_id
+                        self._fix_entity_data_formats(fee)
+                        valid_fees.append(fee)
+                return valid_fees if valid_fees else None
+        return None
+    
+    async def _extract_deposit_schedule(self, pdf_data: Dict[str, str], file_id: int) -> Optional[List]:
+        """Extract deposit schedule data."""
+        prompt = """
+        Extract the Payment Deposit Schedule table. Look for payment numbers, dates, and amounts.
+        
+        Return JSON:
+        {
+          "payment_deposit_schedule": [
+            {
+              "payment_no": "1",
+              "process_date": "2025-01-15",
+              "amount": "250.00"
+            }
+          ]
+        }
+        """
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result and 'payment_deposit_schedule' in result:
+            deposits = result['payment_deposit_schedule']
+            if isinstance(deposits, list):
+                for deposit in deposits:
+                    deposit['file_id'] = file_id
+                    self._fix_entity_data_formats(deposit)
+                return deposits
+        return None
+
+    async def _extract_payment_bank_info(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract Primary Account Information / Payment Bank Info."""
+        prompt = """
+        Find the "Primary Account Information" section. Look for a form layout with labeled fields:
+        
+        EXACT FIELDS TO EXTRACT:
+        - Bank Name field (e.g., "PNC BANK, NATIONAL ASSOCIATION", "JPMORGAN CHASE BANK, NA")
+        - Account Number field (e.g., "1036582879", "3134029178")  
+        - Routing Number field (9 digits, e.g., "043000096", "322271627")
+        - Account Type field ("Checking" or "Savings")
+        - "Authorizing Person's Name (as it appears on check)" field
+        - Address, City, State, Zip fields
+        - "Recurring Debit Authorization" amount (e.g., "$651.57", "$631.23")
+        - "Date of First Debit" (e.g., "Sep 15, 2025", "Sep 03, 2025")
+        - Client Signature line and Date
+        
+        CRITICAL: Extract ONLY what is visibly filled in these specific labeled fields.
+        
+        Return JSON:
+        {
+          "payment_bank_info": {
+            "file_id": null,
+            "authorizing_person_name": "Exact name from the Authorizing Person field",
+            "bank_name": "Exact bank name from Bank Name field",
+            "account_number": "Exact account number from Account Number field",
+            "routing_number": "Exact routing number from Routing Number field",
+            "account_type": "checking or savings (lowercase)",
+            "address": "Full address from Address/City/State/Zip fields",
+            "recurring_debit_authorization": "Amount without $ symbol (e.g., 651.57)",
+            "first_debit_date": "Date in YYYY-MM-DD format",
+            "client_signature": "Client signature text if present",
+            "client_signature_date": "Signature date in YYYY-MM-DD format",
+            "coclient_signature": null,
+            "coclient_signature_date": null
+          }
+        }
+        """
+        # Use the dedicated prompt function which returns flat structure
+        from prompts.underwriting_prompts import get_payment_bank_info_prompt
+        prompt = get_payment_bank_info_prompt()
+        
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result and isinstance(result, dict):
+            result['file_id'] = file_id
+            self._fix_entity_data_formats(result)
+            logger.bind(file_id=file_id, bank_name=result.get('bank_name')).debug("payment_bank_info.extracted")
+            return result
+        logger.bind(file_id=file_id).warning("payment_bank_info.not_found")
+        return None  
+    async def _extract_disclosure(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract disclosure data."""
+        from prompts.underwriting_prompts import get_targeted_disclosure_prompt
+        prompt = get_targeted_disclosure_prompt()
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result and 'disclosure' in result:
+            disc = result['disclosure']
+            if isinstance(disc, dict):
+                disc['file_id'] = file_id
+                self._fix_entity_data_formats(disc)
+                return disc
+        return None
+    
+    async def _extract_legal_plan(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract legal plan agreement data."""
+        prompt = get_prompt_for_document_type('legal_plan_agreement')
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result:
+            result['file_id'] = file_id
+            self._fix_entity_data_formats(result)
+        return result
+    
+    async def _extract_high_interest(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract high interest disclosure data."""
+        prompt = """
+        Extract High Interest Creditor Disclosure information.
+        
+        Return JSON:
+        {
+          "company_name": null,
+          "client_name": null,
+          "client_signature": null,
+          "client_signature_date": null,
+          "coclient_name": null,
+          "coclient_signature": null,
+          "coclient_signature_date": null
+        }
+        """
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result:
+            result['file_id'] = file_id
+            self._fix_entity_data_formats(result)
+        return result
+    
+    async def _extract_fcra(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract FCRA consent data."""
+        prompt = """
+        Extract FCRA Consumer Report Consent information.
+        
+        Return JSON:
+        {
+          "company_name": null,
+          "client_name": null,
+          "client_signature": null,
+          "client_signature_date": null
+        }
+        """
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result:
+            result['file_id'] = file_id
+            self._fix_entity_data_formats(result)
+        return result
+    
+    async def _extract_cancellation(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract cancellation notice data."""
+        prompt = get_prompt_for_document_type('cancellation_notice')
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result:
+            result['file_id'] = file_id
+            self._fix_entity_data_formats(result)
+        return result
+    
+    async def _extract_clixsign_data(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract ClixSign certificate data."""
+        prompt = """
+        Extract ClixSign Certificate information.
+        
+        Return JSON:
+        {
+          "clixsign_sender": {
+            "package_id": null,
+            "package_title": null,
+            "final_status": null,
+            "final_status_date": null,
+            "sending_entity": null,
+            "sender_name": null,
+            "sender_email_address": null,
+            "sender_ip_address": null,
+            "signers_count": null
+          },
+          "clixsign_signers": [
+            {
+              "package_id": null,
+              "signer_name": null,
+              "signer_email_address": null,
+              "signer_ip_address": null,
+              "signer_user_agent": null,
+              "package_opened_at": null,
+              "signature_adopted_at": null,
+              "package_signed_at": null
+            }
+          ]
+        }
+        """
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result:
+            # Process sender
+            if 'clixsign_sender' in result and result['clixsign_sender']:
+                result['clixsign_sender']['file_id'] = file_id
+                self._fix_entity_data_formats(result['clixsign_sender'])
+            
+            # Process signers
+            if 'clixsign_signers' in result and isinstance(result['clixsign_signers'], list):
+                for signer in result['clixsign_signers']:
+                    signer['file_id'] = file_id
+                    self._fix_entity_data_formats(signer)
+            
+            return result
+        return None
+    
+    async def _extract_program_disclosure(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract program disclosure data."""
+        prompt = """
+        Extract Program Disclosure information.
+        
+        Return JSON:
+        {
+          "company_name": null,
+          "settlement_fee_percent": null,
+          "client_initial": null,
+          "is_all_initials_present": null
+        }
+        """
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result:
+            result['file_id'] = file_id
+            self._fix_entity_data_formats(result)
+        return result
+    
+    async def _extract_payment_gateway(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract payment gateway data."""
+        prompt = get_prompt_for_document_type('payment_gateway_agreement')
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result:
+            result['file_id'] = file_id
+            self._fix_entity_data_formats(result)
+        return result
+    
 
     def health_check(self) -> bool:
         """Check if Gemini client is healthy."""

@@ -55,7 +55,7 @@ class ServiceConfig(BaseSettings):
     database_url: str = Field(..., env="PARSER_DATABASE_URL")
     database_pool_size: int = Field(default=10, ge=1, le=50, env="PARSER_DATABASE_POOL_SIZE")
     database_max_overflow: int = Field(default=20, ge=0, le=100, env="PARSER_DATABASE_MAX_OVERFLOW")
-    database_timeout: int = Field(default=30, ge=5, le=300, env="PARSER_DATABASE_TIMEOUT")
+    database_timeout: int = Field(default=120, ge=5, le=600, env="PARSER_DATABASE_TIMEOUT")
     database_retry_attempts: int = Field(default=3, ge=1, le=10, env="PARSER_DATABASE_RETRY_ATTEMPTS")
     
     # Gemini Configuration

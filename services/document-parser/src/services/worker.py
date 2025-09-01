@@ -289,8 +289,7 @@ class DocumentWorker:
                 validation_results = self.validator.validate_document(result.extracted_document)
                 logger.debug(f"parse.validated contact={task.contact_id} doc={task.doc_id} checks={len(validation_results)}")
             
-            # Store results in database
-            await self._store_processing_result(task, result, worker_id)
+            await self._log_processing_result(task, result, worker_id)
             
             # Delete message from queue
             await self._delete_message(queue_url, receipt_handle)
@@ -372,47 +371,26 @@ class DocumentWorker:
                 logger.info(f"parse.retry worker={worker_id} doc={doc_id or 'unknown'} attempt={receive_count}/{max_retries}")
                 # Don't delete message - let it be retried when visibility timeout expires
     
-    async def _store_processing_result(self, task: ProcessingTask, result, worker_id: str):
-        """Store processing result to database."""
+    async def _log_processing_result(self, task: ProcessingTask, result, worker_id: str):
+        """Log processing result (storage already handled by processor)."""
         try:
-            from integrations.database.adapter import UnderwritingDatabaseAdapter
-            
-            # Initialize database adapter with config
-            db_adapter = UnderwritingDatabaseAdapter(config)
-            await db_adapter.initialize()
-            
-            try:
-                # Check if processing was successful and we have extracted data
-                if result.status.value == "completed" and hasattr(result, 'extracted_document') and result.extracted_document:
-                    # If we have an ExtractedDocumentPackage, store it directly
-                    if hasattr(result.extracted_document, 'file_id'):
-                        success = await db_adapter.store_document_package(result.extracted_document)
-                        
-                        if success:
-                            logger.bind(
-                                service="document-parser",
-                                worker_id=worker_id,
-                                contact_id=task.contact_id,
-                                doc_id=task.doc_id,
-                            ).info("db.stored")
-                        else:
-                            logger.bind(
-                                service="document-parser",
-                                worker_id=worker_id,
-                                contact_id=task.contact_id,
-                                doc_id=task.doc_id,
-                            ).error("db.store_failed")
-                    else:
-                        logger.warning(f"parse.invalid_package worker={worker_id} contact={task.contact_id} doc={task.doc_id}")
+            # Check if processing was successful and we have extracted data
+            if result.status.value == "completed" and hasattr(result, 'extracted_document') and result.extracted_document:
+                # If we have an ExtractedDocumentPackage, log success
+                if hasattr(result.extracted_document, 'file_id'):
+                    logger.bind(
+                        service="document-parser",
+                        worker_id=worker_id,
+                        contact_id=task.contact_id,
+                        doc_id=task.doc_id,
+                    ).info("worker.processing_success")
                 else:
-                    logger.warning(f"parse.no_data worker={worker_id} contact={task.contact_id} doc={task.doc_id} status={result.status.value}")
-                    
-            finally:
-                await db_adapter.close()
+                    logger.warning(f"parse.invalid_package worker={worker_id} contact={task.contact_id} doc={task.doc_id}")
+            else:
+                logger.warning(f"parse.no_data worker={worker_id} contact={task.contact_id} doc={task.doc_id} status={result.status.value}")
                 
         except Exception as e:
-            logger.error(f"db.error worker={worker_id} contact={task.contact_id} doc={task.doc_id} error={type(e).__name__}")
-            # Don't raise - we don't want to fail message processing due to storage issues
+            logger.error(f"worker.log_error worker={worker_id} contact={task.contact_id} doc={task.doc_id} error={type(e).__name__}")
     
     async def _extend_message_visibility(self, queue_url: str, receipt_handle: str, visibility_timeout: int):
         """Extend message visibility timeout to prevent redelivery during long processing."""

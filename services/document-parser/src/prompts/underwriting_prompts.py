@@ -18,10 +18,11 @@ CRITICAL EXTRACTION RULES:
 6. For monetary amounts, use decimal format without currency symbols (e.g., "1250.00")
 
 7. For SSNs, maintain format with dashes (e.g., "123-45-6789" or "XXX-XX-6789" if masked)
-8. For initials, look for 2-4 capital letters (e.g., "JJCS", "AA", "CW")
-9. Match the EXACT field names and JSON shape requested
-10. Process systematically: don't jump around, extract section by section
-11. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
+8. For addresses, extract as clean text without brackets, braces, or trailing commas
+9. For initials, look for 2-4 capital letters (e.g., "JJCS", "AA", "CW")
+10. Match the EXACT field names and JSON shape requested
+11. Process systematically: don't jump around, extract section by section
+12. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
 """
 
 ENGAGEMENT_TERM_PROMPT = f"""
@@ -31,7 +32,15 @@ You are extracting data from a Company Agreement / Engagement Term document.
 
 KEY IDENTIFIERS:
 - Company names: Clarity, Concordia, Resync, Aspire, Palisade
-- Look for: settlement fee percentage, monthly program payment
+- Document titles: "Limited Scope Retainer Agreement", "Company Agreement", "Engagement Terms", "Terms of Engagement"
+- Look for: settlement fee percentage, monthly program payment, retainer terms
+
+SPECIFIC EXTRACTION GUIDANCE:
+- Company info usually appears in letterhead/header
+- Settlement fee percentage often appears as "25%" or "25.00%" 
+- Monthly payment amounts are in program details
+- Client signatures appear at the bottom
+- Initial counts refer to client initials throughout the document
 
 Extract ALL these fields (use null if not found):
 
@@ -111,7 +120,7 @@ Extract ALL these fields (use null if not found):
   "client_first_name": "First name",
   "client_last_name": "Last name",
   "client_middle_initial": "Middle initial",
-  "client_ssn": "SSN (123-45-6789 format)",
+  "client_ssn": "SSN - if masked (XXX-XX-1234), keep masked format",
   "client_dob": "Date of birth (YYYY-MM-DD)",
   "client_address": "Street address",
   "client_city": "City",
@@ -122,7 +131,7 @@ Extract ALL these fields (use null if not found):
   "coclient_first_name": "Co-client first name",
   "coclient_last_name": "Co-client last name",
   "coclient_middle_initial": "Co-client middle initial",
-  "coclient_ssn": "Co-client SSN",
+  "coclient_ssn": "Co-client SSN - if masked, keep masked format",
   "coclient_dob": "Co-client date of birth",
   "client_initials": "Client initials",
   "client_signature": "Client signature indicator",
@@ -136,7 +145,7 @@ Focus on: Client Information section, signatures
 """
 
 FINANCIAL_ANALYSIS_PROMPT = f"""
-You are extracting data from a Financial Analysis (Exhibit B).
+You are extracting data from a Financial Analysis (Exhibit B) or Financial Budget.
 
 {BASE_EXTRACTION_RULES}
 
@@ -283,7 +292,7 @@ Analyze the document and identify its type from these categories:
 - engagement_term (Company Agreement, Client Services Agreement)
 - power_of_attorney 
 - payment_gateway_agreement (Account Agreement)
-- financial_analysis (Exhibit B)
+- financial_analysis (Exhibit B, Financial Budget)
 - debt_schedule (Exhibit A)
 - fcra_consent
 - disclosure (Exhibit C)
@@ -316,25 +325,31 @@ INDICATOR KEYWORDS:
 
 # Comprehensive extraction prompt for unknown documents
 COMPREHENSIVE_EXTRACTION_PROMPT = f"""
-You are extracting ALL underwriting entities from a multi-document package. Follow the schema EXACTLY. Use null for missing fields. Do not invent fields. Return ONLY valid JSON.
+You are extracting ALL underwriting entities from a multi-document package. This is a SINGLE COMPREHENSIVE extraction - extract everything in ONE pass. Use null for missing fields. Return ONLY valid JSON.
 
 {BASE_EXTRACTION_RULES}
 
-CRITICAL FOR LISTS - DO NOT TRUNCATE:
-- For debt_schedule: Extract ALL debts, even if 20+ entries. COMPLETE THE ENTIRE ARRAY.
-- For payment_deposit_schedule: Extract ALL payments, even if 60+ entries. DO NOT STOP MID-LIST.
-- For payment_service_fees: Extract ALL fees from Administrative and Disbursement sections.
-- For clixsign_signers: Extract ALL signers if present.
-- LISTS ARE CRITICAL - prioritize completing arrays over optional single fields.
-- If you approach token limits, finish the current list before stopping.
+CRITICAL SUCCESS FACTORS:
+1. EXTRACT EVERYTHING in this single request - no follow-up extractions will be made
+2. Be thorough and systematic - scan the ENTIRE document for all entity types
+3. For lists (debt_schedule, payment_service_fees, etc.), extract ALL entries completely
+4. Use null for missing fields but ensure you check the entire document first
 
-CRITICAL DOCUMENT TYPE DISAMBIGUATION:
-- If you see "Account Agreement", "Client Information Sheet", "Account ID", bank routing numbers (9 digits), bank account numbers, ACH/recurring debit authorization, payment schedules, or processor names like "FORTH", "RAM", "CFT" → put data in payment_gateway_agreement, NOT engagement_term
-- If you see debt settlement company names (Clarity, Concordia, Resync, Aspire, Palisade), settlement fees, settlement percentages, monthly program payments → put data in engagement_term, NOT payment_gateway_agreement
-- Do NOT mix these: banking/payment processor info goes to payment_gateway_agreement; debt settlement company info goes to engagement_term
-- ONLY populate entities that are actually present in the document. If no engagement term content exists, keep engagement_term as null. If no payment gateway content exists, keep payment_gateway_agreement as null.
+DOCUMENT TYPE DISAMBIGUATION:
+- Account Agreement/Client Information Sheet/Bank Info → payment_gateway_agreement
+- Debt settlement companies (Clarity, Concordia, etc.) → engagement_term  
+- Financial tables/Exhibit B/Financial Budget → financial_analysis
+- Creditor lists/Exhibit A → debt_schedule
+- Legal plan enrollment → legal_plan_agreement
+- Digital signatures/ClixSign → clixsign_sender/clixsign_signers
 
-Return this simplified structure:
+EXTRACTION STRATEGY:
+1. First pass: Identify ALL document types present
+2. Second pass: Extract ALL fields for each identified type
+3. Third pass: Verify completeness of lists and critical fields
+4. Return complete JSON with ALL entities populated
+
+Return this complete structure:
 
 {{
   "document_type": "string",
@@ -494,7 +509,7 @@ Return this simplified structure:
     "file_id": null,
     "authorizing_person_name": null,
     "bank_name": null,
-    "account_number": null,  // Bank account number (10+ digits)
+    "account_number": null,  // Bank account number
     "routing_number": null,  // Bank routing number (exactly 9 digits)
     "account_type": null,
     "address": null,
@@ -590,6 +605,7 @@ def get_prompt_for_document_type(document_type: str) -> str:
         'engagement_term': ENGAGEMENT_TERM_PROMPT,
         'power_of_attorney': POWER_OF_ATTORNEY_PROMPT,
         'payment_gateway_agreement': PAYMENT_GATEWAY_AGREEMENT_PROMPT,
+        'payment_bank_info': get_payment_bank_info_prompt(),
         'financial_analysis': FINANCIAL_ANALYSIS_PROMPT,
         'debt_schedule': DEBT_SCHEDULE_PROMPT,
         'cancellation_notice': CANCELLATION_NOTICE_PROMPT,
@@ -762,42 +778,85 @@ Rules:
 def get_targeted_account_agreement_prompt() -> str:
     """Prompt to extract Account Agreement (payment gateway agreement) fields."""
     return f"""
-You are extracting ONLY the Account Agreement / Client Information Sheet fields (payment processor section). Look for titles like "Account Agreement", references to FORTH, ACH authorization, routing/account numbers, and the client/co-client information grid.
+    You are extracting ONLY the Account Agreement / Client Information Sheet fields (payment processor section). Look for titles like "Account Agreement", references to FORTH, ACH authorization, routing/account numbers, and the client/co-client information grid.
 
-{BASE_EXTRACTION_RULES}
+    {BASE_EXTRACTION_RULES}
 
-Return STRICT JSON with exactly this shape:
-{{
-  "payment_gateway_agreement": {{
-    "file_id": null,
-    "account_id": null,
-    "client_first_name": null,
-    "client_last_name": null,
-    "client_middle_initial": null,
-    "client_ssn": null,
-    "client_dob": null,
-    "client_address": null,
-    "client_city": null,
-    "client_state": null,
-    "client_zipcode": null,
-    "client_phone": null,
-    "client_email": null,
-    "coclient_first_name": null,
-    "coclient_last_name": null,
-    "coclient_middle_initial": null,
-    "coclient_ssn": null,
-    "coclient_dob": null,
-    "client_initials": null,
-    "client_signature": null,
-    "client_signature_date": null,
-    "coclient_signature": null,
-    "coclient_signature_date": null,
-    "pages_count": null
-  }}
-}}
+    Return STRICT JSON with exactly this shape:
+    {{
+      "payment_gateway_agreement": {{
+        "file_id": null,
+        "account_id": null,
+        "client_first_name": null,
+        "client_last_name": null,
+        "client_middle_initial": null,
+        "client_ssn": null,
+        "client_dob": null,
+        "client_address": null,
+        "client_city": null,
+        "client_state": null,
+        "client_zipcode": null,
+        "client_phone": null,
+        "client_email": null,
+        "coclient_first_name": null,
+        "coclient_last_name": null,
+        "coclient_middle_initial": null,
+        "coclient_ssn": null,
+        "coclient_dob": null,
+        "client_initials": null,
+        "client_signature": null,
+        "client_signature_date": null,
+        "coclient_signature": null,
+        "coclient_signature_date": null,
+        "pages_count": null
+      }}
+    }}
 
-Rules:
-- Use the information grid under "Client Information" and "Co-Client Information" and any signature blocks. Also look for client initials in the document. 
-- Normalize dates to YYYY-MM-DD; SSN can retain separators.
-- If a field is not visible, keep it null.
-"""
+    Rules:
+    - Use the information grid under "Client Information" and "Co-Client Information" and any signature blocks. Also look for client initials in the document. 
+    - Normalize dates to YYYY-MM-DD; SSN can retain separators.
+    - If a field is not visible, keep it null.
+    """
+
+def get_payment_bank_info_prompt() -> str:
+    """Prompt to extract Payment Bank Info fields."""
+    return f"""
+    You are extracting ONLY the "Primary Account Information" section. Look for a form with these exact field labels:
+    
+    - "Bank Name" (e.g., "PNC BANK, NATIONAL ASSOCIATION", "JPMORGAN CHASE BANK, NA")
+    - "Account Number" (e.g., "1036582879", "3134029178")  
+    - "Routing Number" (9 digits, e.g., "043000096", "322271627")
+    - "Account Type" ("Checking" or "Savings")
+    - "Authorizing Person's Name (as it appears on check)" 
+    - "Address (as it appears on check)", "City", "State", "Zip"
+    - "Recurring Debit Authorization" (dollar amount like "$651.57")
+    - "Date of First Debit" (e.g., "Sep 15, 2025")
+    - "Client Signature" and "Date" lines at bottom
+
+    {BASE_EXTRACTION_RULES}
+
+    Return STRICT JSON with exactly this shape:
+    {{
+      "authorizing_person_name": null,
+      "bank_name": null,
+      "account_number": null,
+      "routing_number": null,
+      "account_type": null,
+      "address": null,
+      "recurring_debit_authorization": null,
+      "first_debit_date": null,
+      "client_signature": null,
+      "client_signature_date": null,
+      "coclient_signature": null,
+      "coclient_signature_date": null
+    }}
+
+    Rules:
+    - Extract EXACTLY what you see in the labeled fields
+    - routing_number: Must be exactly 9 digits (e.g., "043000096")
+    - account_type: Must be "checking" or "savings" (lowercase)
+    - recurring_debit_authorization: Amount without $ symbol (e.g., 651.57)
+    - first_debit_date: Format as YYYY-MM-DD
+    - address: Combine Address + City + State + Zip into one field
+    - If a field is blank or not visible, keep it null
+    """

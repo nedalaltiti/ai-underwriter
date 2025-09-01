@@ -78,6 +78,9 @@ class ParallelDocumentExtractor:
         
         # Create package
         try:
+            # Clean date formats before creating package
+            self._clean_date_formats(package_data)
+            
             package = ExtractedDocumentPackage(**package_data)
             logger.info(f"Successfully created package via parallel extraction")
             return package
@@ -253,3 +256,58 @@ Extract ALL creditors in the table. Focus on: creditor names and balances.
                 for item in value:
                     if isinstance(item, dict):
                         item['file_id'] = file_id
+    
+    def _clean_date_formats(self, data: Dict[str, Any]) -> None:
+        """Clean date formats to prevent Pydantic validation errors."""
+        import re
+        
+        def clean_date_string(date_str: str) -> str:
+            """Convert MM/dd/yyyy or M/d/yyyy to YYYY-MM-DD format."""
+            if not isinstance(date_str, str) or not date_str.strip():
+                return None
+                
+            cleaned = re.sub(r"\s+", "", date_str)
+            
+            # Handle MM/dd/yyyy and M/d/yyyy
+            if '/' in cleaned:
+                parts = cleaned.split('/')
+                if len(parts) == 3:
+                    m, d, y = parts[0], parts[1], parts[2]
+                    
+                    # Handle 2-digit years
+                    if len(y) == 2:
+                        year_int = int(y)
+                        if year_int < 50:
+                            y = f"20{y}"
+                        else:
+                            y = f"19{y}"
+                    
+                    if len(y) == 4 and m.isdigit() and d.isdigit():
+                        return f"{y}-{m.zfill(2)}-{d.zfill(2)}"
+            
+            return None
+        
+        # Date fields that need cleaning
+        date_fields = [
+            'client_dob', 'coclient_dob', 'member_dob', 'coapplicant_dob',
+            'signature_date', 'client_signature_date', 'coclient_signature_date',
+            'cancellation_deadline', 'cancellation_date',
+            'first_payment_date', 'process_date', 'first_debit_date', 
+            'program_start_date', 'estimated_program_start_date',
+            'credit_card_expiration_date', 'monthly_recurring_date'
+        ]
+        
+        # Clean dates recursively
+        def clean_entity_dates(entity):
+            if isinstance(entity, dict):
+                for field, value in entity.items():
+                    if field in date_fields and isinstance(value, str):
+                        cleaned = clean_date_string(value)
+                        entity[field] = cleaned
+                    elif isinstance(value, dict):
+                        clean_entity_dates(value)
+                    elif isinstance(value, list):
+                        for item in value:
+                            clean_entity_dates(item)
+        
+        clean_entity_dates(data)

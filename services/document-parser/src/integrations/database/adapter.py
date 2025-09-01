@@ -41,6 +41,8 @@ class UnderwritingDatabaseAdapter:
         id_value = abs(hash(str(unique_uuid))) % (2**63 - 1)
         return id_value if id_value != 0 else 1
     
+
+    
     async def initialize(self):
         """Initialize database connection pool."""
         try:
@@ -136,10 +138,12 @@ class UnderwritingDatabaseAdapter:
             stored_count = 0
             transaction_success = False
             async with self.pool.acquire() as connection:
+                # Set a longer timeout for this specific transaction
+                await connection.execute("SET statement_timeout = '300s'")  # 5 minutes
                 async with connection.transaction():
                     stored_count = 0
                     
-                    # Store core entities (EXACT same logic as original)
+                    # Store core entities 
                     if package.engagement_term:
                         try:
                             await self._store_engagement_term(connection, package.engagement_term)
@@ -172,7 +176,6 @@ class UnderwritingDatabaseAdapter:
                             logger.bind(file_id=package.file_id, table="financial_analysis", error=type(e).__name__).error("db.table_failed")
                             raise
                     
-                    # Store optional entities (EXACT same logic)
                     if package.fcra_consent:
                         await self._store_fcra_consent(connection, package.fcra_consent)
                         stored_count += 1
@@ -194,12 +197,21 @@ class UnderwritingDatabaseAdapter:
                         stored_count += 1
                         
                     if package.payment_bank_info:
-                        await self._store_payment_bank_info(connection, package.payment_bank_info)
-                        stored_count += 1
+                        try:
+                            logger.bind(file_id=package.file_id, bank_name=getattr(package.payment_bank_info, 'bank_name', 'unknown')).debug("db.storing_payment_bank_info")
+                            await self._store_payment_bank_info(connection, package.payment_bank_info)
+                            stored_count += 1
+                            logger.bind(file_id=package.file_id).debug("db.payment_bank_info_stored")
+                        except asyncpg.InvalidColumnReferenceError as e:
+                            logger.bind(file_id=package.file_id, table="payment_bank_info", error=str(e)).warning("db.constraint_error_skipped")
+                            
                         
                     if package.legal_plan_agreement:
-                        await self._store_legal_plan_agreement(connection, package.legal_plan_agreement)
-                        stored_count += 1
+                        try:
+                            await self._store_legal_plan_agreement(connection, package.legal_plan_agreement)
+                            stored_count += 1
+                        except asyncpg.InvalidColumnReferenceError as e:
+                            logger.bind(file_id=package.file_id, table="legal_plan_agreement", error=str(e)).warning("db.constraint_error_skipped")
                         
                     if package.clixsign_sender:
                         await self._store_clixsign_sender(connection, package.clixsign_sender)
@@ -207,24 +219,47 @@ class UnderwritingDatabaseAdapter:
                     
                     # Store list entities with UUID-based IDs
                     if package.debt_schedule:
+                        logger.bind(file_id=package.file_id, count=len(package.debt_schedule)).debug("db.storing_debt_schedule")
                         for debt in package.debt_schedule:
                             await self._store_debt_schedule(connection, debt)
                         stored_count += len(package.debt_schedule)
+                        logger.bind(file_id=package.file_id).debug("db.debt_schedule_complete")
                         
                     if package.payment_service_fees:
+                        logger.bind(file_id=package.file_id, count=len(package.payment_service_fees)).debug("db.storing_service_fees")
+                        fees_stored = 0
                         for fee in package.payment_service_fees:
-                            await self._store_payment_service_fees(connection, fee)
-                        stored_count += len(package.payment_service_fees)
+                            try:
+                                await self._store_payment_service_fees(connection, fee)
+                                fees_stored += 1
+                            except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError) as e:
+                                logger.bind(file_id=package.file_id, service_name=getattr(fee, 'service_name', 'unknown')).warning("db.service_fee_skipped")
+                        stored_count += fees_stored
+                        logger.bind(file_id=package.file_id, stored=fees_stored).debug("db.service_fees_complete")
                         
                     if package.payment_deposit_schedule:
+                        logger.bind(file_id=package.file_id, count=len(package.payment_deposit_schedule)).debug("db.storing_deposit_schedule")
+                        deposits_stored = 0
                         for deposit in package.payment_deposit_schedule:
-                            await self._store_payment_deposit_schedule(connection, deposit)
-                        stored_count += len(package.payment_deposit_schedule)
+                            try:
+                                await self._store_payment_deposit_schedule(connection, deposit)
+                                deposits_stored += 1
+                            except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError) as e:
+                                logger.bind(file_id=package.file_id, payment_no=getattr(deposit, 'payment_no', 'unknown')).warning("db.deposit_skipped")
+                        stored_count += deposits_stored
+                        logger.bind(file_id=package.file_id, stored=deposits_stored).debug("db.deposit_schedule_complete")
                         
                     if package.clixsign_signers:
+                        logger.bind(file_id=package.file_id, count=len(package.clixsign_signers)).debug("db.storing_clixsign_signers")
+                        signers_stored = 0
                         for signer in package.clixsign_signers:
-                            await self._store_clixsign_signer(connection, signer)
-                        stored_count += len(package.clixsign_signers)
+                            try:
+                                await self._store_clixsign_signer(connection, signer)
+                                signers_stored += 1
+                            except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError) as e:
+                                logger.bind(file_id=package.file_id, signer_email=getattr(signer, 'signer_email_address', 'unknown')).warning("db.signer_skipped")
+                        stored_count += signers_stored
+                        logger.bind(file_id=package.file_id, stored=signers_stored).debug("db.clixsign_signers_complete")
                     
                     # Transaction completed successfully
                     transaction_success = True
@@ -272,7 +307,8 @@ class UnderwritingDatabaseAdapter:
     
     async def _store_engagement_term(self, connection, entity: EngagementTerm):
         """Store engagement term data."""
-        await connection.execute("""
+        try:
+            await connection.execute("""
             INSERT INTO underwriting.engagement_term 
             (file_id, company_name, company_address, company_phone, company_type,
              settlement_fee, settlement_fee_percentage, monthly_payment, client_name,
@@ -308,6 +344,24 @@ class UnderwritingDatabaseAdapter:
             entity.coclient_signature_date, entity.client_initials, entity.client_initials_count,
             entity.coclient_initials, entity.coclient_initials_count,
             entity.page_count, datetime.now())
+        except asyncpg.InvalidColumnReferenceError as e:
+            logger.bind(file_id=entity.file_id, table="engagement_term").error("db.constraint_missing")
+            # Fallback to simple insert
+            await connection.execute("""
+                INSERT INTO underwriting.engagement_term 
+                (file_id, company_name, company_address, company_phone, company_type,
+                 settlement_fee, settlement_fee_percentage, monthly_payment, client_name,
+                 client_signature, client_signature_date, coclient_name, coclient_signature,
+                 coclient_signature_date, client_initials, client_initials_count, coclient_initials,
+                 coclient_initials_count, page_count, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            """, entity.file_id, entity.company_name, entity.company_address, entity.company_phone,
+                entity.company_type, entity.settlement_fee, entity.settlement_fee_percentage,
+                entity.monthly_payment, entity.client_name, entity.client_signature,
+                entity.client_signature_date, entity.coclient_name, entity.coclient_signature,
+                entity.coclient_signature_date, entity.client_initials, entity.client_initials_count,
+                entity.coclient_initials, entity.coclient_initials_count,
+                entity.page_count, datetime.now())
     
     async def _store_power_of_attorney(self, connection, entity: PowerOfAttorney):
         """Store power of attorney data."""
@@ -594,21 +648,32 @@ class UnderwritingDatabaseAdapter:
     
     async def _store_payment_service_fees(self, connection, entity: PaymentGatewayServiceFees):
         """Store payment gateway service fees."""
-        await connection.execute("""
-            DELETE FROM underwriting.payment_gateway_service_fees 
-            WHERE file_id = $1 AND service_type = $2 AND service_name = $3
-        """, entity.file_id, entity.service_type, entity.service_name)
-        
-        # Then insert the new entry
-        await connection.execute("""
-            INSERT INTO underwriting.payment_gateway_service_fees 
-            (file_id, service_type, service_name, service_amount, updated_at)
-            VALUES ($1, $2, $3, $4, $5)
-        """, entity.file_id, entity.service_type, entity.service_name,
-            entity.service_amount, datetime.now())
+        # Use INSERT with error handling since constraint may not exist
+        try:
+            await connection.execute("""
+                INSERT INTO underwriting.payment_gateway_service_fees 
+                (file_id, service_type, service_name, service_amount, updated_at)
+                VALUES ($1, $2, $3, $4, $5)
+            """, entity.file_id, entity.service_type, entity.service_name,
+                entity.service_amount, datetime.now())
+        except asyncpg.UniqueViolationError:
+            # If duplicate, update the existing record
+            await connection.execute("""
+                UPDATE underwriting.payment_gateway_service_fees 
+                SET service_amount = $4, updated_at = $5
+                WHERE file_id = $1 AND service_type = $2 AND service_name = $3
+            """, entity.file_id, entity.service_type, entity.service_name,
+                entity.service_amount, datetime.now())
     
     async def _store_payment_bank_info(self, connection, entity: PaymentGatewayBankInfo):
         """Store payment gateway bank info."""
+        logger.bind(
+            file_id=entity.file_id,
+            bank_name=entity.bank_name,
+            account_number=entity.account_number,
+            routing_number=entity.routing_number
+        ).debug("db.payment_bank_info_details")
+        
         await connection.execute("""
             INSERT INTO underwriting.payment_gateway_bank_info 
             (file_id, authorizing_person_name, bank_name, account_number, routing_number,
@@ -618,6 +683,16 @@ class UnderwritingDatabaseAdapter:
             ON CONFLICT (file_id) DO UPDATE SET
                 authorizing_person_name = COALESCE(EXCLUDED.authorizing_person_name, payment_gateway_bank_info.authorizing_person_name),
                 bank_name = COALESCE(EXCLUDED.bank_name, payment_gateway_bank_info.bank_name),
+                account_number = COALESCE(EXCLUDED.account_number, payment_gateway_bank_info.account_number),
+                routing_number = COALESCE(EXCLUDED.routing_number, payment_gateway_bank_info.routing_number),
+                account_type = COALESCE(EXCLUDED.account_type, payment_gateway_bank_info.account_type),
+                address = COALESCE(EXCLUDED.address, payment_gateway_bank_info.address),
+                recurring_debit_authorization = COALESCE(EXCLUDED.recurring_debit_authorization, payment_gateway_bank_info.recurring_debit_authorization),
+                first_debit_date = COALESCE(EXCLUDED.first_debit_date, payment_gateway_bank_info.first_debit_date),
+                client_signature = COALESCE(EXCLUDED.client_signature, payment_gateway_bank_info.client_signature),
+                client_signature_date = COALESCE(EXCLUDED.client_signature_date, payment_gateway_bank_info.client_signature_date),
+                coclient_signature = COALESCE(EXCLUDED.coclient_signature, payment_gateway_bank_info.coclient_signature),
+                coclient_signature_date = COALESCE(EXCLUDED.coclient_signature_date, payment_gateway_bank_info.coclient_signature_date),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.authorizing_person_name, entity.bank_name, entity.account_number,
             entity.routing_number, entity.account_type, entity.address, entity.recurring_debit_authorization,
@@ -626,19 +701,22 @@ class UnderwritingDatabaseAdapter:
     
     async def _store_payment_deposit_schedule(self, connection, entity: PaymentGatewayDepositSchedule):
         """Store payment gateway deposit schedule."""
-        # First, delete existing entry for this file_id and payment_no to avoid duplicates
-        await connection.execute("""
-            DELETE FROM underwriting.payment_gateway_deposit_schedule 
-            WHERE file_id = $1 AND payment_no = $2
-        """, entity.file_id, entity.payment_no)
-        
-        # Then insert the new entry
-        await connection.execute("""
-            INSERT INTO underwriting.payment_gateway_deposit_schedule 
-            (file_id, payment_no, process_date, amount, updated_at)
-            VALUES ($1, $2, $3, $4, $5)
-        """, entity.file_id, entity.payment_no, entity.process_date,
-            entity.amount, datetime.now())
+        # Use INSERT with error handling since constraint may not exist
+        try:
+            await connection.execute("""
+                INSERT INTO underwriting.payment_gateway_deposit_schedule 
+                (file_id, payment_no, process_date, amount, updated_at)
+                VALUES ($1, $2, $3, $4, $5)
+            """, entity.file_id, entity.payment_no, entity.process_date,
+                entity.amount, datetime.now())
+        except asyncpg.UniqueViolationError:
+            # If duplicate, update the existing record
+            await connection.execute("""
+                UPDATE underwriting.payment_gateway_deposit_schedule 
+                SET process_date = $3, amount = $4, updated_at = $5
+                WHERE file_id = $1 AND payment_no = $2
+            """, entity.file_id, entity.payment_no, entity.process_date,
+                entity.amount, datetime.now())
     
     async def _store_legal_plan_agreement(self, connection, entity: LegalPlanAgreement):
         """Store legal plan agreement data."""
@@ -700,8 +778,9 @@ class UnderwritingDatabaseAdapter:
     
     async def _store_clixsign_signer(self, connection, entity: ClixsignCertificateSigner):
         """Store clixsign certificate signer data."""
-        # Generate unique ID using timestamp and file_id
-        unique_id = self._generate_unique_id(entity.file_id, "signer")
+        # Use composite key for better uniqueness
+        unique_key = f"{entity.file_id}_{entity.signer_email_address or entity.signer_name}"
+        unique_id = abs(hash(unique_key)) % (2**63 - 1)
         
         await connection.execute("""
             INSERT INTO underwriting.clixsign_certificate_signer 
@@ -710,12 +789,20 @@ class UnderwritingDatabaseAdapter:
              package_declined_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (id) DO UPDATE SET
-                package_id = EXCLUDED.package_id,
-                signer_name = EXCLUDED.signer_name,
-        """, unique_id, entity.file_id, entity.package_id, entity.signer_name, entity.signer_email_address,
-            entity.signer_ip_address, entity.signer_user_agent, entity.package_opened_at,
-            entity.signature_adopted_at, entity.package_signed_at, entity.package_declined_at,
-            datetime.now())
+                package_id = COALESCE(EXCLUDED.package_id, clixsign_certificate_signer.package_id),
+                signer_name = COALESCE(EXCLUDED.signer_name, clixsign_certificate_signer.signer_name),
+                signer_email_address = COALESCE(EXCLUDED.signer_email_address, clixsign_certificate_signer.signer_email_address),
+                signer_ip_address = COALESCE(EXCLUDED.signer_ip_address, clixsign_certificate_signer.signer_ip_address),
+                signer_user_agent = COALESCE(EXCLUDED.signer_user_agent, clixsign_certificate_signer.signer_user_agent),
+                package_opened_at = COALESCE(EXCLUDED.package_opened_at, clixsign_certificate_signer.package_opened_at),
+                signature_adopted_at = COALESCE(EXCLUDED.signature_adopted_at, clixsign_certificate_signer.signature_adopted_at),
+                package_signed_at = COALESCE(EXCLUDED.package_signed_at, clixsign_certificate_signer.package_signed_at),
+                package_declined_at = COALESCE(EXCLUDED.package_declined_at, clixsign_certificate_signer.package_declined_at),
+                updated_at = EXCLUDED.updated_at
+        """, unique_id, entity.file_id, entity.package_id, entity.signer_name, 
+            entity.signer_email_address, entity.signer_ip_address, entity.signer_user_agent,
+            entity.package_opened_at, entity.signature_adopted_at, entity.package_signed_at,
+            entity.package_declined_at, datetime.now())
 
 
 # Backward compatibility alias

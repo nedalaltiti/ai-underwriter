@@ -247,7 +247,6 @@ class DownloadWorker:
                 task = DownloadTask.from_queue_message(queue_message)
             except ValueError as e:
                 # Invalid message format - send to DLQ immediately
-                # Escape curly braces in error message to prevent logging formatter conflicts
                 error_msg = str(e).replace('{', '{{').replace('}', '}}')
                 logger.bind(
                     correlation_id=queue_message.correlation_id,
