@@ -11,6 +11,7 @@ import asyncio
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 from loguru import logger
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 
@@ -205,6 +206,7 @@ class GeminiClient:
         - Primary Account Information (bank details section)
         - Company Agreement / Engagement Terms
         - Customer Service Agreement
+        - Limited Scope Retainer Agreement
         - Power of Attorney
         - Financial Budget
         - Attorney Client Privileged Financial Budget
@@ -358,6 +360,8 @@ class GeminiClient:
                 async with semaphore:
                     try:
                         logger.info(f"Extracting {entity_name} from section: {section}")
+                        # Add small delay to prevent rate limiting
+                        await asyncio.sleep(0.5)
                         result = await extractor(pdf_data, file_id)
                         
                         if result:
@@ -381,6 +385,10 @@ class GeminiClient:
                             # Handle single entities
                             else:
                                 package_data[entity_name] = result
+                            
+                            # Debug logging for financial_analysis client_initials
+                            if entity_name == 'financial_analysis' and isinstance(result, dict):
+                                logger.info(f"financial_analysis.client_initials_extracted: {result.get('client_initials', 'NOT_FOUND')}")
                             
                             logger.info(f"Successfully extracted {entity_name}")
                             return True
@@ -429,7 +437,7 @@ class GeminiClient:
                     was_detected = any(
                         any(pattern in section.lower() for pattern in [
                             'customer service agreement', 'client service agreement', 
-                            'company agreement', 'engagement terms'
+                            'company agreement', 'engagement terms', 'limited scope retainer'
                         ])
                         for section in detected_sections
                     )
@@ -478,6 +486,19 @@ class GeminiClient:
                         logger.debug("No clixsign data found in document")
                 except Exception as e:
                     logger.debug(f"Aggressive clixsign extraction failed: {e}")
+            
+            # Special aggressive fallback for engagement_term
+            if 'engagement_term' not in package_data:
+                logger.warning("No engagement_term data detected - attempting aggressive engagement extraction")
+                try:
+                    engagement_result = await self._extract_engagement_term(pdf_data, file_id)
+                    if engagement_result:
+                        package_data['engagement_term'] = engagement_result
+                        logger.info("Aggressive engagement_term extraction successful")
+                    else:
+                        logger.debug("No engagement_term data found in document")
+                except Exception as e:
+                    logger.debug(f"Aggressive engagement_term extraction failed: {e}")
             
             # Add file_id to all entities
             self._add_file_id_to_entities(package_data, file_id)
@@ -881,6 +902,12 @@ class GeminiClient:
             logger.error(f"Document extraction failed: {e}")
             return None
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=4, max=60),
+        retry=retry_if_exception_type(httpx.HTTPStatusError),
+        reraise=True
+    )
     async def _make_gemini_request(self, prompt: str, pdf_data: Dict[str, str]) -> Optional[Dict[str, Any]]:
         """Make request to Gemini API with error handling."""
         try:
@@ -1011,7 +1038,7 @@ class GeminiClient:
                 # For 400 errors, don't retry immediately - it's likely a parameter issue
             elif status_code == 429:
                 logger.warning(f"Gemini API rate limit hit: {error_text}")
-                # Rate limiting - will be retried with backoff
+                raise
             elif status_code in [500, 502, 503, 504]:
                 logger.warning(f"Gemini API server error {status_code}: {error_text}")
                 # Server errors - will be retried
