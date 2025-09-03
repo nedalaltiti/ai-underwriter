@@ -226,8 +226,12 @@ class GeminiClient:
         - Payment Bank Info
         - Program Disclosure
         
-        IMPORTANT: If you see bank information (bank name, routing number, account number, account type), 
-        always include "Primary Account Information" in your sections list.
+        IMPORTANT: 
+        - If you see bank information (bank name, routing number, account number, account type), 
+          always include "Primary Account Information" in your sections list.
+        - If you see ANY digital signature information, ClixSign data, or electronic signature certificates,
+          always include "Clixsign Completion Certificate" in your sections list.
+        - Look carefully at the END of the document for signature completion pages.
         """
         
         try:
@@ -297,6 +301,7 @@ class GeminiClient:
                 # Consent forms
                 ('fcra consent', 'fcra_consent', self._extract_fcra),
                 ('cancellation notice', 'cancellation_notice', self._extract_cancellation),
+                ('notice of right of rescission', 'cancellation_notice', self._extract_cancellation),
                 
                 # Disclosure sections - specific first to avoid conflicts
                 ('high interest disclosure', 'high_interest_disclosure', self._extract_high_interest),
@@ -458,6 +463,21 @@ class GeminiClient:
                     except Exception as e:
                         logger.error(f"Fallback extraction error for {entity_name}: {e}")
                         package_data[entity_name] = {'file_id': file_id}
+            
+            if 'clixsign_sender' not in package_data and 'clixsign_signers' not in package_data:
+                logger.warning("No clixsign data detected - attempting aggressive clixsign extraction")
+                try:
+                    clixsign_result = await self._extract_clixsign_data(pdf_data, file_id)
+                    if clixsign_result:
+                        if 'clixsign_sender' in clixsign_result:
+                            package_data['clixsign_sender'] = clixsign_result['clixsign_sender']
+                        if 'clixsign_signers' in clixsign_result:
+                            package_data['clixsign_signers'] = clixsign_result['clixsign_signers']
+                        logger.info("Aggressive clixsign extraction successful")
+                    else:
+                        logger.debug("No clixsign data found in document")
+                except Exception as e:
+                    logger.debug(f"Aggressive clixsign extraction failed: {e}")
             
             # Add file_id to all entities
             self._add_file_id_to_entities(package_data, file_id)
