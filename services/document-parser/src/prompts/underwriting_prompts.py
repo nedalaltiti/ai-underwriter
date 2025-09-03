@@ -816,7 +816,7 @@ def get_targeted_financial_analysis_prompt(missing_fields: list[str]) -> str:
     """
     fields_list = ",\n  ".join([f'"{f}": null' for f in missing_fields])
     return f"""
-You are extracting ONLY the following fields from a Financial Analysis (Exhibit B) page. Scan the table headers and their values. 
+You are extracting ONLY the following fields from a Financial Analysis page. Scan the table headers and their values. 
 
 {BASE_EXTRACTION_RULES}
 
@@ -883,7 +883,7 @@ Rules:
 def get_targeted_disclosure_prompt() -> str:
     """Prompt to extract Disclosure signatures and dates."""
     return f"""
-You are extracting ONLY the Disclosure (Exhibit C) signature fields. Look for sections labeled "Disclosure", "Exhibit C", or acknowledgement blocks with lines like "Client Signature", "Co-Client Signature", and their dates.
+You are extracting ONLY the Disclosure signature fields. Look for sections labeled "Disclosure", or acknowledgement blocks with lines like "Client Signature", "Co-Client Signature", and their dates.
 
 {BASE_EXTRACTION_RULES}
 

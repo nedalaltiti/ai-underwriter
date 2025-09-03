@@ -204,8 +204,10 @@ class GeminiClient:
         - Account Agreement
         - Primary Account Information (bank details section)
         - Company Agreement / Engagement Terms
+        - Customer Service Agreement
         - Power of Attorney
         - Financial Budget
+        - Attorney Client Privileged Financial Budget
         - Income/Expense Analysis
         - Budget Analysis
         - Financial Information
@@ -217,6 +219,7 @@ class GeminiClient:
         - High Interest Disclosure
         - FCRA Consent
         - Cancellation Notice
+        - Clixsign Completion Certificate
         - Clixsign Certificate
         - Clixsign Signers
         - Clixsign Sender
@@ -251,11 +254,13 @@ class GeminiClient:
             extraction_priority = [
                 # Critical high-priority entities - extract first to avoid overwrites
                 ('account agreement', 'payment_gateway_agreement', self._extract_payment_gateway),
+                ('customer service agreement', 'engagement_term', self._extract_engagement_term),
                 ('client service agreement', 'engagement_term', self._extract_engagement_term),
                 ('company agreement', 'engagement_term', self._extract_engagement_term),
                 ('engagement terms', 'engagement_term', self._extract_engagement_term),
                 ('services agreement', 'engagement_term', self._extract_engagement_term),
                 ('csa', 'engagement_term', self._extract_engagement_term),
+                ('attorney client privileged financial budget', 'financial_analysis', self._extract_financial_analysis),
                 ('financial analysis', 'financial_analysis', self._extract_financial_analysis),
                 ('financial budget', 'financial_analysis', self._extract_financial_analysis),
                 ('income expense', 'financial_analysis', self._extract_financial_analysis),
@@ -299,9 +304,12 @@ class GeminiClient:
                 ('disclosure', 'disclosure', self._extract_disclosure),  # Most generic last
                 
                 # Clixsign sections
+                ('clixsign completion certificate', 'clixsign_all', self._extract_clixsign_data),
                 ('clixsign certificate', 'clixsign_all', self._extract_clixsign_data),
                 ('clixsign signers', 'clixsign_all', self._extract_clixsign_data),
                 ('clixsign sender', 'clixsign_all', self._extract_clixsign_data),
+                ('sender information', 'clixsign_all', self._extract_clixsign_data),
+                ('signers', 'clixsign_all', self._extract_clixsign_data),
                 
                 # Additional aliases for better matching
                 ('limited scope retainer', 'engagement_term', self._extract_engagement_term),
@@ -391,16 +399,49 @@ class GeminiClient:
                 'engagement_term': ('client service agreement', self._extract_engagement_term),
                 'financial_analysis': ('financial analysis', self._extract_financial_analysis),
                 'payment_gateway_agreement': ('account agreement', self._extract_payment_gateway),
-                'debt_schedule': ('schedule d', self._extract_debt_schedule)
+                'attorney_privileged_client_info': ('attorney client privileged financial budget', self._extract_attorney_privileged),
+                'payment_bank_info': ('primary account information', self._extract_payment_bank_info),
+                'payment_service_fees': ('service fees table', self._extract_service_fees),
+                'payment_deposit_schedule': ('deposit schedule table', self._extract_deposit_schedule),
+                'legal_plan_agreement': ('legal plan agreement', self._extract_legal_plan),
+                'clixsign_all': ('clixsign completion certificate', self._extract_clixsign_data),
+                'debt_schedule': ('schedule d', self._extract_debt_schedule),
+                'disclosure': ('disclosure', self._extract_disclosure),
+                'fcra_consent': ('fcra consent', self._extract_fcra),
+                'high_interest_disclosure': ('high interest disclosure', self._extract_high_interest),
+                'program_disclosure': ('program disclosure', self._extract_program_disclosure),
+                'cancellation_notice': ('cancellation notice', self._extract_cancellation),
+                'clixsign_sender': ('clixsign sender', self._extract_clixsign_data),
+                'clixsign_signers': ('clixsign signers', self._extract_clixsign_data),
+                'power_of_attorney': ('power of attorney', self._extract_power_of_attorney),
             }
             
             # Ensure critical entities are extracted if they were detected
             for entity_name, (section_hint, extractor) in critical_entities.items():
                 # Check if this entity type was detected in sections
-                was_detected = any(
-                    section_hint in section.lower() 
-                    for section in detected_sections
-                )
+                # Special handling for entities with multiple possible names
+                if entity_name == 'engagement_term':
+                    was_detected = any(
+                        any(pattern in section.lower() for pattern in [
+                            'customer service agreement', 'client service agreement', 
+                            'company agreement', 'engagement terms'
+                        ])
+                        for section in detected_sections
+                    )
+                elif entity_name == 'financial_analysis':
+                    was_detected = any(
+                        any(pattern in section.lower() for pattern in [
+                            'financial analysis', 'financial budget', 
+                            'attorney client privileged financial budget',
+                            'income expense', 'budget analysis', 'exhibit b'
+                        ])
+                        for section in detected_sections
+                    )
+                else:
+                    was_detected = any(
+                        section_hint in section.lower() 
+                        for section in detected_sections
+                    )
                 
                 # If detected but not successfully extracted, try again
                 if was_detected and entity_name not in package_data:
@@ -1752,31 +1793,36 @@ class GeminiClient:
     async def _extract_clixsign_data(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
         """Extract ClixSign certificate data."""
         prompt = """
-        Extract ClixSign Certificate information.
+        Extract ClixSign Certificate or ClixSign Completion Certificate information.
+        
+        Look for:
+        - Signature Package Details (Final Status, Package Title, Package ID)
+        - Sender Information (Name, Email Address, IP Address, Sending Entity)
+        - Signers section (Name, Email Address, IP Address, User Agent, timestamps)
         
         Return JSON:
         {
           "clixsign_sender": {
-            "package_id": null,
-            "package_title": null,
-            "final_status": null,
-            "final_status_date": null,
-            "sending_entity": null,
-            "sender_name": null,
-            "sender_email_address": null,
-            "sender_ip_address": null,
-            "signers_count": null
+            "package_id": "Package ID value",
+            "package_title": "Package Title value", 
+            "final_status": "Final Status value",
+            "final_status_date": "Final Status Date value",
+            "sending_entity": "Sending Entity value",
+            "sender_name": "Sender Name value",
+            "sender_email_address": "Sender Email Address value",
+            "sender_ip_address": "Sender IP Address value",
+            "signers_count": "# of Signers value"
           },
           "clixsign_signers": [
             {
-              "package_id": null,
-              "signer_name": null,
-              "signer_email_address": null,
-              "signer_ip_address": null,
-              "signer_user_agent": null,
-              "package_opened_at": null,
-              "signature_adopted_at": null,
-              "package_signed_at": null
+              "package_id": "Package ID value",
+              "signer_name": "Signer name from Signers section",
+              "signer_email_address": "Signer Email Address",
+              "signer_ip_address": "Signer IP Address", 
+              "signer_user_agent": "User Agent information",
+              "package_opened_at": "Package Opened At timestamp",
+              "signature_adopted_at": "Signature Adopted At timestamp", 
+              "package_signed_at": "Package Signed At timestamp"
             }
           ]
         }

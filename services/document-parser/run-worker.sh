@@ -33,11 +33,11 @@ set -a  # automatically export all variables
 source "$ENV_FILE"
 set +a  # stop automatically exporting
 
-# Set Python path
-export PYTHONPATH="$ROOT_DIR:${PYTHONPATH:-}"
+# Set Python path to include src directory
+export PYTHONPATH="${SCRIPT_DIR}/src:$ROOT_DIR:${PYTHONPATH:-}"
 
-# Change to src directory
-cd "${SCRIPT_DIR}/src"
+# Change to project directory for poetry
+cd "${SCRIPT_DIR}"
 
 echo -e "${GREEN}⚙️  Worker Configuration:${NC}"
 echo -e "${YELLOW}📊 Input Queue: ${PARSER_INPUT_QUEUE_NAME:-uw-downloaded-docs-dev-sqs.fifo}${NC}"
@@ -47,4 +47,4 @@ echo -e "${YELLOW}🤖 Gemini Model: ${PARSER_GEMINI_MODEL:-gemini-2.0-flash}${N
 echo -e "${GREEN}🚀 Starting background worker...${NC}"
 
 # Run the worker
-python3 services/worker.py
+poetry run python src/services/worker.py
