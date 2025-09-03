@@ -303,6 +303,9 @@ class GeminiClient:
                 ('member acknowledgment', 'legal_plan_agreement', self._extract_legal_plan),
                 ('member information sheet', 'legal_plan_agreement', self._extract_legal_plan),
                 ('veritas legal plan', 'legal_plan_agreement', self._extract_legal_plan),
+                ('veritas', 'legal_plan_agreement', self._extract_legal_plan),  
+                ('member info', 'legal_plan_agreement', self._extract_legal_plan),  
+                ('member acknowledge', 'legal_plan_agreement', self._extract_legal_plan),  
                 
                 # Client information
                 ('attorney client privileged', 'attorney_privileged_client_info', self._extract_attorney_privileged),
@@ -459,6 +462,24 @@ class GeminiClient:
                         ])
                         for section in detected_sections
                     )
+                elif entity_name == 'legal_plan_agreement':
+                    # Check for explicit legal plan patterns
+                    explicit_patterns = any(
+                        any(pattern in section.lower() for pattern in [
+                            'legal plan agreement', 'legal plan', 'member agreement',
+                            'member acknowledgment', 'member information', 'veritas',
+                            'member info', 'member acknowledge'
+                        ])
+                        for section in detected_sections
+                    )
+                    # Check for typical Legal Plan Agreement document structure
+                    # These documents often have Account Agreement + Cancellation Notice + no Engagement Term
+                    has_typical_structure = (
+                        any('account agreement' in section.lower() for section in detected_sections) and
+                        any('cancellation notice' in section.lower() for section in detected_sections) and
+                        not any('engagement' in section.lower() or 'service agreement' in section.lower() for section in detected_sections)
+                    )
+                    was_detected = explicit_patterns or has_typical_structure
                 else:
                     was_detected = any(
                         section_hint in section.lower() 
@@ -1664,6 +1685,26 @@ class GeminiClient:
                     if cleaned_address.endswith(','):
                         cleaned_address = cleaned_address[:-1].strip()
                     entity[key] = cleaned_address if cleaned_address else None
+                    continue
+                
+                # Clean up initials fields - extract unique initials only
+                initials_fields = ['client_initials', 'coclient_initials', 'member_acknowledge_client_initials']
+                if key in initials_fields:
+                    if isinstance(value, str) and ',' in value:
+                        # Extract unique initials from comma-separated list like "MH, MH, MH, MH, MH"
+                        initials_list = [initial.strip() for initial in value.split(',')]
+                        unique_initials = list(dict.fromkeys(initials_list))  # Preserve order but remove duplicates
+                        if unique_initials:
+                            entity[key] = unique_initials[0]  # Use the first (and should be only) unique initial
+                        else:
+                            entity[key] = None
+                    elif isinstance(value, str) and len(value) > 10:
+                        # If still too long, try to extract just the first initials
+                        match = re.search(r'\b([A-Z]{1,4})\b', value)
+                        if match:
+                            entity[key] = match.group(1)
+                        else:
+                            entity[key] = None
                     continue
                 
                 # Clean up empty strings and placeholders to None for optional fields

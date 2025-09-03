@@ -315,7 +315,7 @@ Extract the following information and return as JSON:
   "is_all_initials_present": "Are all initials present? (true/false)",
   "member_agreement_client_signature": "Actual client name from MEMBER AGREEMENT signature line (often page 3)",
   "member_agreement_signature_date": "Date from MEMBER AGREEMENT signature section (YYYY-MM-DD)",
-  "member_acknowledge_client_initials": "Client initials from checklist boxes (e.g., DD, JD, etc.)",
+  "member_acknowledge_client_initials": "Client initials from checklist boxes - extract ONLY the unique initials (e.g., DD, JD) NOT a list (max 10 chars)",
   "member_acknowledge_client_initials_count": "TOTAL count of client initials ONLY in the Legal Plan Agreement section - count every DD, JD, etc. in checklist boxes of THIS section only (NOT other sections)",
   "member_acknowledge_client_signature": "Actual client name from MEMBER ACKNOWLEDGEMENT signature line (often page 4)",
   "member_acknowledge_signature_date": "Date from MEMBER ACKNOWLEDGEMENT signature section (YYYY-MM-DD)",
