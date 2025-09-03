@@ -14,7 +14,7 @@ from models.underwriting_entities import (
     FinancialAnalysis, DebtSchedule, FCRAConsumerReportConsent, Disclosure,
     HighInterestCreditorDisclosure, ProgramDisclosure, CancellationNotice,
     PaymentGatewayServiceFees, PaymentGatewayBankInfo, PaymentGatewayDepositSchedule,
-    LegalPlanAgreement, ClixsignCertificateSender, ClixsignCertificateSigner
+    LegalPlanAgreement, AttorneyPrivilegedClientInfo, ClixsignCertificateSender, ClixsignCertificateSigner
 )
 
 
@@ -112,7 +112,7 @@ class UnderwritingDatabaseAdapter:
             single_entities = ['engagement_term', 'power_of_attorney', 'payment_gateway_agreement', 
                              'financial_analysis', 'fcra_consent', 'disclosure', 'high_interest_disclosure',
                              'program_disclosure', 'cancellation_notice', 'payment_bank_info', 
-                             'legal_plan_agreement', 'clixsign_sender']
+                             'legal_plan_agreement', 'attorney_privileged_client_info', 'clixsign_sender']
             for entity_name in single_entities:
                 if getattr(package, entity_name, None):
                     entity_summary.append(entity_name)
@@ -177,24 +177,44 @@ class UnderwritingDatabaseAdapter:
                             raise
                     
                     if package.fcra_consent:
-                        await self._store_fcra_consent(connection, package.fcra_consent)
-                        stored_count += 1
+                        try:
+                            await self._store_fcra_consent(connection, package.fcra_consent)
+                            stored_count += 1
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="fcra_consent", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                         
                     if package.disclosure:
-                        await self._store_disclosure(connection, package.disclosure)
-                        stored_count += 1
+                        try:
+                            await self._store_disclosure(connection, package.disclosure)
+                            stored_count += 1
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="disclosure", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                         
                     if package.high_interest_disclosure:
-                        await self._store_high_interest_disclosure(connection, package.high_interest_disclosure)
-                        stored_count += 1
+                        try:
+                            await self._store_high_interest_disclosure(connection, package.high_interest_disclosure)
+                            stored_count += 1
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="high_interest_disclosure", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                         
                     if package.program_disclosure:
-                        await self._store_program_disclosure(connection, package.program_disclosure)
-                        stored_count += 1
+                        try:
+                            await self._store_program_disclosure(connection, package.program_disclosure)
+                            stored_count += 1
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="program_disclosure", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                         
                     if package.cancellation_notice:
-                        await self._store_cancellation_notice(connection, package.cancellation_notice)
-                        stored_count += 1
+                        try:
+                            await self._store_cancellation_notice(connection, package.cancellation_notice)
+                            stored_count += 1
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="cancellation_notice", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                         
                     if package.payment_bank_info:
                         try:
@@ -213,17 +233,34 @@ class UnderwritingDatabaseAdapter:
                         except asyncpg.InvalidColumnReferenceError as e:
                             logger.bind(file_id=package.file_id, table="legal_plan_agreement", error=str(e)).warning("db.constraint_error_skipped")
                         
+                    if package.attorney_privileged_client_info:
+                        try:
+                            await self._store_attorney_privileged_client_info(connection, package.attorney_privileged_client_info)
+                            stored_count += 1
+                        except asyncpg.InvalidColumnReferenceError as e:
+                            logger.bind(file_id=package.file_id, table="attorney_privileged_client_info", error=str(e)).warning("db.constraint_error_skipped")
+                        except asyncpg.InsufficientPrivilegeError as e:
+                            logger.bind(file_id=package.file_id, table="attorney_privileged_client_info", error=str(e)).warning("db.permission_denied_skipped")
+                        
                     if package.clixsign_sender:
-                        await self._store_clixsign_sender(connection, package.clixsign_sender)
-                        stored_count += 1
+                        try:
+                            await self._store_clixsign_sender(connection, package.clixsign_sender)
+                            stored_count += 1
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="clixsign_sender", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                     
                     # Store list entities with UUID-based IDs
                     if package.debt_schedule:
-                        logger.bind(file_id=package.file_id, count=len(package.debt_schedule)).debug("db.storing_debt_schedule")
-                        for debt in package.debt_schedule:
-                            await self._store_debt_schedule(connection, debt)
-                        stored_count += len(package.debt_schedule)
-                        logger.bind(file_id=package.file_id).debug("db.debt_schedule_complete")
+                        try:
+                            logger.bind(file_id=package.file_id, count=len(package.debt_schedule)).debug("db.storing_debt_schedule")
+                            for debt in package.debt_schedule:
+                                await self._store_debt_schedule(connection, debt)
+                            stored_count += len(package.debt_schedule)
+                            logger.bind(file_id=package.file_id).debug("db.debt_schedule_complete")
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="debt_schedule", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                         
                     if package.payment_service_fees:
                         logger.bind(file_id=package.file_id, count=len(package.payment_service_fees)).debug("db.storing_service_fees")
@@ -238,38 +275,46 @@ class UnderwritingDatabaseAdapter:
                         logger.bind(file_id=package.file_id, stored=fees_stored).debug("db.service_fees_complete")
                         
                     if package.payment_deposit_schedule:
-                        logger.bind(file_id=package.file_id, count=len(package.payment_deposit_schedule)).debug("db.storing_deposit_schedule")
-                        deposits_stored = 0
-                        for deposit in package.payment_deposit_schedule:
-                            try:
-                                await self._store_payment_deposit_schedule(connection, deposit)
-                                deposits_stored += 1
-                            except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError) as e:
-                                logger.bind(file_id=package.file_id, payment_no=getattr(deposit, 'payment_no', 'unknown')).warning("db.deposit_skipped")
-                        stored_count += deposits_stored
-                        logger.bind(file_id=package.file_id, stored=deposits_stored).debug("db.deposit_schedule_complete")
+                        try:
+                            logger.bind(file_id=package.file_id, count=len(package.payment_deposit_schedule)).debug("db.storing_deposit_schedule")
+                            deposits_stored = 0
+                            for deposit in package.payment_deposit_schedule:
+                                try:
+                                    await self._store_payment_deposit_schedule(connection, deposit)
+                                    deposits_stored += 1
+                                except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError) as e:
+                                    logger.bind(file_id=package.file_id, payment_no=getattr(deposit, 'payment_no', 'unknown')).warning("db.deposit_skipped")
+                            stored_count += deposits_stored
+                            logger.bind(file_id=package.file_id, stored=deposits_stored).debug("db.deposit_schedule_complete")
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="payment_deposit_schedule", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                         
                     if package.clixsign_signers:
-                        logger.bind(file_id=package.file_id, count=len(package.clixsign_signers)).debug("db.storing_clixsign_signers")
-                        signers_stored = 0
-                        for signer in package.clixsign_signers:
-                            try:
-                                logger.bind(
-                                    file_id=package.file_id,
-                                    signer_name=getattr(signer, 'signer_name', 'unknown'),
-                                    signer_email=getattr(signer, 'signer_email_address', 'unknown')
-                                ).debug("db.storing_clixsign_signer")
-                                await self._store_clixsign_signer(connection, signer)
-                                signers_stored += 1
-                                logger.bind(file_id=package.file_id).debug("db.clixsign_signer_stored")
-                            except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError) as e:
-                                logger.bind(
-                                    file_id=package.file_id, 
-                                    signer_email=getattr(signer, 'signer_email_address', 'unknown'),
-                                    error=str(e)
-                                ).error("db.signer_failed")
-                        stored_count += signers_stored
-                        logger.bind(file_id=package.file_id, stored=signers_stored).debug("db.clixsign_signers_complete")
+                        try:
+                            logger.bind(file_id=package.file_id, count=len(package.clixsign_signers)).debug("db.storing_clixsign_signers")
+                            signers_stored = 0
+                            for signer in package.clixsign_signers:
+                                try:
+                                    logger.bind(
+                                        file_id=package.file_id,
+                                        signer_name=getattr(signer, 'signer_name', 'unknown'),
+                                        signer_email=getattr(signer, 'signer_email_address', 'unknown')
+                                    ).debug("db.storing_clixsign_signer")
+                                    await self._store_clixsign_signer(connection, signer)
+                                    signers_stored += 1
+                                    logger.bind(file_id=package.file_id).debug("db.clixsign_signer_stored")
+                                except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError) as e:
+                                    logger.bind(
+                                        file_id=package.file_id, 
+                                        signer_email=getattr(signer, 'signer_email_address', 'unknown'),
+                                        error=str(e)
+                                    ).error("db.signer_failed")
+                            stored_count += signers_stored
+                            logger.bind(file_id=package.file_id, stored=signers_stored).debug("db.clixsign_signers_complete")
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="clixsign_signers", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                     
                     # Transaction completed successfully
                     transaction_success = True
@@ -321,11 +366,13 @@ class UnderwritingDatabaseAdapter:
             await connection.execute("""
             INSERT INTO underwriting.engagement_term 
             (file_id, company_name, company_address, company_phone, company_type,
-             settlement_fee, settlement_fee_percentage, monthly_payment, client_name,
+             settlement_fee, settlement_fee_percentage, monthly_payment, client_name, client_address,
              client_signature, client_signature_date, coclient_name, coclient_signature,
              coclient_signature_date, client_initials, client_initials_count, coclient_initials,
-             coclient_initials_count, page_count, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+             coclient_initials_count, page_count, identified_debts_ack_client_signature,
+             identified_debts_ack_coclient_signature, privacy_policy_client_initials,
+             privacy_policy_coclient_initials, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
             ON CONFLICT (file_id) DO UPDATE SET
                 company_name = COALESCE(EXCLUDED.company_name, engagement_term.company_name),
                 company_address = COALESCE(EXCLUDED.company_address, engagement_term.company_address),
@@ -346,32 +393,42 @@ class UnderwritingDatabaseAdapter:
                 coclient_initials = COALESCE(EXCLUDED.coclient_initials, engagement_term.coclient_initials),
                 coclient_initials_count = COALESCE(EXCLUDED.coclient_initials_count, engagement_term.coclient_initials_count),
                 page_count = COALESCE(EXCLUDED.page_count, engagement_term.page_count),
+                identified_debts_ack_client_signature = COALESCE(EXCLUDED.identified_debts_ack_client_signature, engagement_term.identified_debts_ack_client_signature),
+                identified_debts_ack_coclient_signature = COALESCE(EXCLUDED.identified_debts_ack_coclient_signature, engagement_term.identified_debts_ack_coclient_signature),
+                privacy_policy_client_initials = COALESCE(EXCLUDED.privacy_policy_client_initials, engagement_term.privacy_policy_client_initials),
+                privacy_policy_coclient_initials = COALESCE(EXCLUDED.privacy_policy_coclient_initials, engagement_term.privacy_policy_coclient_initials),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.company_name, entity.company_address, entity.company_phone,
             entity.company_type, entity.settlement_fee, entity.settlement_fee_percentage,
-            entity.monthly_payment, entity.client_name, entity.client_signature,
+            entity.monthly_payment, entity.client_name, entity.client_address, entity.client_signature,
             entity.client_signature_date, entity.coclient_name, entity.coclient_signature,
             entity.coclient_signature_date, entity.client_initials, entity.client_initials_count,
             entity.coclient_initials, entity.coclient_initials_count,
-            entity.page_count, datetime.now())
+            entity.page_count, entity.identified_debts_ack_client_signature,
+            entity.identified_debts_ack_coclient_signature, entity.privacy_policy_client_initials,
+            entity.privacy_policy_coclient_initials, datetime.now())
         except asyncpg.InvalidColumnReferenceError as e:
             logger.bind(file_id=entity.file_id, table="engagement_term").error("db.constraint_missing")
             # Fallback to simple insert
             await connection.execute("""
                 INSERT INTO underwriting.engagement_term 
                 (file_id, company_name, company_address, company_phone, company_type,
-                 settlement_fee, settlement_fee_percentage, monthly_payment, client_name,
+                 settlement_fee, settlement_fee_percentage, monthly_payment, client_name, client_address,
                  client_signature, client_signature_date, coclient_name, coclient_signature,
                  coclient_signature_date, client_initials, client_initials_count, coclient_initials,
-                 coclient_initials_count, page_count, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                 coclient_initials_count, page_count, identified_debts_ack_client_signature,
+                 identified_debts_ack_coclient_signature, privacy_policy_client_initials,
+                 privacy_policy_coclient_initials, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
             """, entity.file_id, entity.company_name, entity.company_address, entity.company_phone,
                 entity.company_type, entity.settlement_fee, entity.settlement_fee_percentage,
-                entity.monthly_payment, entity.client_name, entity.client_signature,
+                entity.monthly_payment, entity.client_name, entity.client_address, entity.client_signature,
                 entity.client_signature_date, entity.coclient_name, entity.coclient_signature,
                 entity.coclient_signature_date, entity.client_initials, entity.client_initials_count,
                 entity.coclient_initials, entity.coclient_initials_count,
-                entity.page_count, datetime.now())
+                entity.page_count, entity.identified_debts_ack_client_signature,
+                entity.identified_debts_ack_coclient_signature, entity.privacy_policy_client_initials,
+                entity.privacy_policy_coclient_initials, datetime.now())
     
     async def _store_power_of_attorney(self, connection, entity: PowerOfAttorney):
         """Store power of attorney data."""
@@ -423,8 +480,9 @@ class UnderwritingDatabaseAdapter:
              total_enrolled_debt, estimated_program_length, monthly_program_deposit,
              estimated_program_settle_amount, fee_method, total_program_fees,
              estimated_program_savings, estimated_total_cost, hardship_details,
-             client_signature, client_signature_date, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+             client_signature, client_signature_date, coclient_signature, coclient_signature_date,
+             client_initials, coclient_initials, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
             ON CONFLICT (file_id) DO UPDATE SET
                 applicant_name = COALESCE(EXCLUDED.applicant_name, financial_analysis.applicant_name),
                 applicant_email = COALESCE(EXCLUDED.applicant_email, financial_analysis.applicant_email),
@@ -455,6 +513,10 @@ class UnderwritingDatabaseAdapter:
                 hardship_details = COALESCE(EXCLUDED.hardship_details, financial_analysis.hardship_details),
                 client_signature = COALESCE(EXCLUDED.client_signature, financial_analysis.client_signature),
                 client_signature_date = COALESCE(EXCLUDED.client_signature_date, financial_analysis.client_signature_date),
+                coclient_signature = COALESCE(EXCLUDED.coclient_signature, financial_analysis.coclient_signature),
+                coclient_signature_date = COALESCE(EXCLUDED.coclient_signature_date, financial_analysis.coclient_signature_date),
+                client_initials = COALESCE(EXCLUDED.client_initials, financial_analysis.client_initials),
+                coclient_initials = COALESCE(EXCLUDED.coclient_initials, financial_analysis.coclient_initials),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.applicant_name, entity.applicant_email, entity.coapplicant_name,
             entity.coapplicant_email, entity.draft_type, entity.fixed_income, entity.day_phone,
@@ -466,7 +528,8 @@ class UnderwritingDatabaseAdapter:
             entity.monthly_program_deposit, entity.estimated_program_settle_amount,
             entity.fee_method, entity.total_program_fees, entity.estimated_program_savings,
             entity.estimated_total_cost, entity.hardship_details, entity.client_signature,
-            entity.client_signature_date, datetime.now())
+            entity.client_signature_date, entity.coclient_signature, entity.coclient_signature_date,
+            entity.client_initials, entity.coclient_initials, datetime.now())
     
     async def _store_debt_schedule(self, connection, entity: DebtSchedule):
         """Store debt schedule entry with duplicate prevention."""
@@ -480,10 +543,14 @@ class UnderwritingDatabaseAdapter:
             # Update existing record with latest data
             await connection.execute("""
                 UPDATE underwriting.debt_schedule 
-                SET current_balance = $5, debt_type = $6, updated_at = $7
+                SET current_balance = $5, debt_type = $6, client_name = $7, client_signature = $8,
+                    client_signature_date = $9, coclient_name = $10, coclient_signature = $11,
+                    coclient_signature_date = $12, updated_at = $13
                 WHERE id = $1 AND file_id = $2 AND creditor_name = $3 AND name_on_account = $4
             """, existing_id, entity.file_id, entity.creditor_name, entity.name_on_account,
-                entity.current_balance, entity.debt_type, datetime.now())
+                entity.current_balance, entity.debt_type, entity.client_name, entity.client_signature,
+                entity.client_signature_date, entity.coclient_name, entity.coclient_signature,
+                entity.coclient_signature_date, datetime.now())
             
             logger.bind(
                 file_id=entity.file_id,
@@ -498,10 +565,14 @@ class UnderwritingDatabaseAdapter:
         try:
             await connection.execute("""
                 INSERT INTO underwriting.debt_schedule 
-                (id, file_id, creditor_name, name_on_account, account_number, current_balance, debt_type, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                (id, file_id, creditor_name, name_on_account, account_number, current_balance, debt_type,
+                 client_name, client_signature, client_signature_date, coclient_name, 
+                 coclient_signature, coclient_signature_date, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             """, unique_id, entity.file_id, entity.creditor_name, entity.name_on_account, 
-                entity.account_number, entity.current_balance, entity.debt_type, datetime.now())
+                entity.account_number, entity.current_balance, entity.debt_type,
+                entity.client_name, entity.client_signature, entity.client_signature_date,
+                entity.coclient_name, entity.coclient_signature, entity.coclient_signature_date, datetime.now())
             
             logger.bind(
                 file_id=entity.file_id,
@@ -539,13 +610,25 @@ class UnderwritingDatabaseAdapter:
             s = str(v).strip()
             if not s:
                 return None
-            # Take up to 4 characters and ensure they're letters
+            # Take only the first character and ensure it's a letter
             first_chars = s[:4]
             return first_chars if first_chars.isalpha() else None
+
+        def _coerce_state(v: Any) -> Optional[str]:
+            """Coerce state to 2-character code."""
+            if v is None:
+                return None
+            s = str(v).strip().upper()
+            if not s:
+                return None
+            # Take up to 2 characters and ensure they're letters
+            state_code = s[:2]
+            return state_code if state_code.isalpha() else None
 
         client_initials_value = _coerce_client_initials(entity.client_initials)
         client_middle_initial = _coerce_middle_initial(entity.client_middle_initial)
         coclient_middle_initial = _coerce_middle_initial(entity.coclient_middle_initial)
+        client_state_value = _coerce_state(entity.client_state)
         pages_count_value = None
         if entity.pages_count is not None:
             try:
@@ -558,10 +641,10 @@ class UnderwritingDatabaseAdapter:
             (file_id, account_id, client_first_name, client_last_name, client_middle_initial,
              client_ssn, client_dob, client_address, client_city, client_state, client_zipcode,
              client_phone, client_email, coclient_first_name, coclient_last_name,
-             coclient_middle_initial, coclient_ssn, coclient_dob, client_initials,
+             coclient_middle_initial, coclient_ssn, coclient_dob, client_initials, coclient_initials,
              client_signature, client_signature_date, coclient_signature, coclient_signature_date,
              pages_count, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
             ON CONFLICT (file_id) DO UPDATE SET
                 account_id = COALESCE(EXCLUDED.account_id, payment_gateway_agreement.account_id),
                 client_first_name = COALESCE(EXCLUDED.client_first_name, payment_gateway_agreement.client_first_name),
@@ -581,6 +664,7 @@ class UnderwritingDatabaseAdapter:
                 coclient_ssn = COALESCE(EXCLUDED.coclient_ssn, payment_gateway_agreement.coclient_ssn),
                 coclient_dob = COALESCE(EXCLUDED.coclient_dob, payment_gateway_agreement.coclient_dob),
                 client_initials = COALESCE(EXCLUDED.client_initials, payment_gateway_agreement.client_initials),
+                coclient_initials = COALESCE(EXCLUDED.coclient_initials, payment_gateway_agreement.coclient_initials),
                 client_signature = COALESCE(EXCLUDED.client_signature, payment_gateway_agreement.client_signature),
                 client_signature_date = COALESCE(EXCLUDED.client_signature_date, payment_gateway_agreement.client_signature_date),
                 coclient_signature = COALESCE(EXCLUDED.coclient_signature, payment_gateway_agreement.coclient_signature),
@@ -589,10 +673,10 @@ class UnderwritingDatabaseAdapter:
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.account_id, entity.client_first_name, entity.client_last_name,
             client_middle_initial, entity.client_ssn, entity.client_dob, entity.client_address,
-            entity.client_city, entity.client_state, entity.client_zipcode, entity.client_phone,
+            entity.client_city, client_state_value, entity.client_zipcode, entity.client_phone,
             entity.client_email, entity.coclient_first_name, entity.coclient_last_name,
             coclient_middle_initial, entity.coclient_ssn, entity.coclient_dob,
-            client_initials_value, entity.client_signature, entity.client_signature_date,
+            client_initials_value, entity.coclient_initials, entity.client_signature, entity.client_signature_date,
             entity.coclient_signature, entity.coclient_signature_date, pages_count_value,
             datetime.now())
     
@@ -613,16 +697,24 @@ class UnderwritingDatabaseAdapter:
         """Store disclosure data."""
         await connection.execute("""
             INSERT INTO underwriting.disclosure 
-            (file_id, client_signature, client_signature_date, coclient_signature, coclient_signature_date, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            (file_id, client_signature, client_signature_date, coclient_signature, coclient_signature_date,
+             additional_disclosure_client_signature, additional_disclosure_client_signature_date,
+             additional_disclosure_coclient_signature, additional_disclosure_coclient_signature_date, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (file_id) DO UPDATE SET
                 client_signature = COALESCE(EXCLUDED.client_signature, disclosure.client_signature),
                 client_signature_date = COALESCE(EXCLUDED.client_signature_date, disclosure.client_signature_date),
                 coclient_signature = COALESCE(EXCLUDED.coclient_signature, disclosure.coclient_signature),
                 coclient_signature_date = COALESCE(EXCLUDED.coclient_signature_date, disclosure.coclient_signature_date),
+                additional_disclosure_client_signature = COALESCE(EXCLUDED.additional_disclosure_client_signature, disclosure.additional_disclosure_client_signature),
+                additional_disclosure_client_signature_date = COALESCE(EXCLUDED.additional_disclosure_client_signature_date, disclosure.additional_disclosure_client_signature_date),
+                additional_disclosure_coclient_signature = COALESCE(EXCLUDED.additional_disclosure_coclient_signature, disclosure.additional_disclosure_coclient_signature),
+                additional_disclosure_coclient_signature_date = COALESCE(EXCLUDED.additional_disclosure_coclient_signature_date, disclosure.additional_disclosure_coclient_signature_date),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.client_signature, entity.client_signature_date,
-            entity.coclient_signature, entity.coclient_signature_date, datetime.now())
+            entity.coclient_signature, entity.coclient_signature_date,
+            entity.additional_disclosure_client_signature, entity.additional_disclosure_client_signature_date,
+            entity.additional_disclosure_coclient_signature, entity.additional_disclosure_coclient_signature_date, datetime.now())
     
     async def _store_high_interest_disclosure(self, connection, entity: HighInterestCreditorDisclosure):
         """Store high interest creditor disclosure data."""
@@ -643,14 +735,17 @@ class UnderwritingDatabaseAdapter:
         """Store program disclosure data."""
         await connection.execute("""
             INSERT INTO underwriting.program_disclosure 
-            (file_id, company_name, settlement_fee_percent, client_initial, is_all_initials_present, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            (file_id, company_name, settlement_fee_percent, client_initials, coclient_initials, is_all_initials_present, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (file_id) DO UPDATE SET
                 company_name = COALESCE(EXCLUDED.company_name, program_disclosure.company_name),
                 settlement_fee_percent = COALESCE(EXCLUDED.settlement_fee_percent, program_disclosure.settlement_fee_percent),
+                client_initials = COALESCE(EXCLUDED.client_initials, program_disclosure.client_initials),
+                coclient_initials = COALESCE(EXCLUDED.coclient_initials, program_disclosure.coclient_initials),
+                is_all_initials_present = COALESCE(EXCLUDED.is_all_initials_present, program_disclosure.is_all_initials_present),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.company_name, entity.settlement_fee_percent,
-            entity.client_initial, entity.is_all_initials_present, datetime.now())
+            entity.client_initials, entity.coclient_initials, entity.is_all_initials_present, datetime.now())
     
     async def _store_cancellation_notice(self, connection, entity: CancellationNotice):
         """Store cancellation notice data."""
@@ -693,19 +788,35 @@ class UnderwritingDatabaseAdapter:
             recurring_debit_authorization=entity.recurring_debit_authorization
         ).debug("db.payment_bank_info_details")
         
+        # Coerce state to 2-character code
+        def _coerce_state(v: Any) -> Optional[str]:
+            if v is None:
+                return None
+            s = str(v).strip().upper()
+            if not s:
+                return None
+            state_code = s[:2]
+            return state_code if state_code.isalpha() else None
+        
+        client_state_value = _coerce_state(entity.client_state)
+        
         await connection.execute("""
             INSERT INTO underwriting.payment_gateway_bank_info 
             (file_id, authorizing_person_name, bank_name, account_number, routing_number,
-             account_type, address, recurring_debit_authorization, first_debit_date,
+             account_type, client_address, client_city, client_state, client_zipcode, 
+             recurring_debit_authorization, first_debit_date,
              client_signature, client_signature_date, coclient_signature, coclient_signature_date, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT (file_id) DO UPDATE SET
                 authorizing_person_name = COALESCE(EXCLUDED.authorizing_person_name, payment_gateway_bank_info.authorizing_person_name),
                 bank_name = COALESCE(EXCLUDED.bank_name, payment_gateway_bank_info.bank_name),
                 account_number = COALESCE(EXCLUDED.account_number, payment_gateway_bank_info.account_number),
                 routing_number = COALESCE(EXCLUDED.routing_number, payment_gateway_bank_info.routing_number),
                 account_type = COALESCE(EXCLUDED.account_type, payment_gateway_bank_info.account_type),
-                address = COALESCE(EXCLUDED.address, payment_gateway_bank_info.address),
+                client_address = COALESCE(EXCLUDED.client_address, payment_gateway_bank_info.client_address),
+                client_city = COALESCE(EXCLUDED.client_city, payment_gateway_bank_info.client_city),
+                client_state = COALESCE(EXCLUDED.client_state, payment_gateway_bank_info.client_state),
+                client_zipcode = COALESCE(EXCLUDED.client_zipcode, payment_gateway_bank_info.client_zipcode),
                 recurring_debit_authorization = COALESCE(EXCLUDED.recurring_debit_authorization, payment_gateway_bank_info.recurring_debit_authorization),
                 first_debit_date = COALESCE(EXCLUDED.first_debit_date, payment_gateway_bank_info.first_debit_date),
                 client_signature = COALESCE(EXCLUDED.client_signature, payment_gateway_bank_info.client_signature),
@@ -714,7 +825,7 @@ class UnderwritingDatabaseAdapter:
                 coclient_signature_date = COALESCE(EXCLUDED.coclient_signature_date, payment_gateway_bank_info.coclient_signature_date),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.authorizing_person_name, entity.bank_name, entity.account_number,
-            entity.routing_number, entity.account_type, entity.address, entity.recurring_debit_authorization,
+            entity.routing_number, entity.account_type, entity.client_address, entity.client_city, client_state_value, entity.client_zipcode, entity.recurring_debit_authorization,
             entity.first_debit_date, entity.client_signature, entity.client_signature_date,
             entity.coclient_signature, entity.coclient_signature_date, datetime.now())
     
@@ -762,8 +873,11 @@ class UnderwritingDatabaseAdapter:
              bank_account_number, credit_card_expiration_date, bank_routing_number,
              credit_card_name, bank_institution_name, credit_card_billing_address,
              account_holder_name, initials_count, is_all_initials_present, client_signature, signature_date,
-             pages_count, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
+             pages_count, member_agreement_client_signature, member_agreement_signature_date,
+             member_acknowledge_client_initials, member_acknowledge_client_initials_count,
+             member_acknowledge_client_signature, member_acknowledge_signature_date,
+             member_info_client_signature, member_info_signature_date, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45)
             ON CONFLICT (file_id) DO UPDATE SET
                 legal_plan_provider = COALESCE(EXCLUDED.legal_plan_provider, legal_plan_agreement.legal_plan_provider),
                 member_name = COALESCE(EXCLUDED.member_name, legal_plan_agreement.member_name),
@@ -777,7 +891,62 @@ class UnderwritingDatabaseAdapter:
             entity.bank_account_number, entity.credit_card_expiration_date, entity.bank_routing_number,
             entity.credit_card_name, entity.bank_institution_name, entity.credit_card_billing_address,
             entity.account_holder_name, initials_count_value, entity.is_all_initials_present, 
-            entity.client_signature, entity.signature_date, pages_count_value, datetime.now())
+            entity.client_signature, entity.signature_date, pages_count_value,
+            entity.member_agreement_client_signature, entity.member_agreement_signature_date,
+            entity.member_acknowledge_client_initials, entity.member_acknowledge_client_initials_count,
+            entity.member_acknowledge_client_signature, entity.member_acknowledge_signature_date,
+            entity.member_info_client_signature, entity.member_info_signature_date, datetime.now())
+    
+    async def _store_attorney_privileged_client_info(self, connection, entity: AttorneyPrivilegedClientInfo):
+        """Store attorney privileged client info data."""
+        await connection.execute("""
+            INSERT INTO underwriting.attorney_privileged_client_info 
+            (file_id, client_name, client_ssn, client_dob, client_employer, client_title,
+             client_classification, client_email, client_street, client_city, client_state,
+             client_zipcode, client_home_phone, client_cell_phone, coclient_name, coclient_ssn,
+             coclient_dob, coclient_employer, coclient_title, coclient_classification,
+             coclient_email, is_married_to_coclient, has_security_clearance, is_in_bankruptcy,
+             is_enrolled_in_credit_counseling, client_signature, client_signature_date,
+             coclient_signature, coclient_signature_date, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+            ON CONFLICT (file_id) DO UPDATE SET
+                client_name = COALESCE(EXCLUDED.client_name, attorney_privileged_client_info.client_name),
+                client_ssn = COALESCE(EXCLUDED.client_ssn, attorney_privileged_client_info.client_ssn),
+                client_dob = COALESCE(EXCLUDED.client_dob, attorney_privileged_client_info.client_dob),
+                client_employer = COALESCE(EXCLUDED.client_employer, attorney_privileged_client_info.client_employer),
+                client_title = COALESCE(EXCLUDED.client_title, attorney_privileged_client_info.client_title),
+                client_classification = COALESCE(EXCLUDED.client_classification, attorney_privileged_client_info.client_classification),
+                client_email = COALESCE(EXCLUDED.client_email, attorney_privileged_client_info.client_email),
+                client_street = COALESCE(EXCLUDED.client_street, attorney_privileged_client_info.client_street),
+                client_city = COALESCE(EXCLUDED.client_city, attorney_privileged_client_info.client_city),
+                client_state = COALESCE(EXCLUDED.client_state, attorney_privileged_client_info.client_state),
+                client_zipcode = COALESCE(EXCLUDED.client_zipcode, attorney_privileged_client_info.client_zipcode),
+                client_home_phone = COALESCE(EXCLUDED.client_home_phone, attorney_privileged_client_info.client_home_phone),
+                client_cell_phone = COALESCE(EXCLUDED.client_cell_phone, attorney_privileged_client_info.client_cell_phone),
+                coclient_name = COALESCE(EXCLUDED.coclient_name, attorney_privileged_client_info.coclient_name),
+                coclient_ssn = COALESCE(EXCLUDED.coclient_ssn, attorney_privileged_client_info.coclient_ssn),
+                coclient_dob = COALESCE(EXCLUDED.coclient_dob, attorney_privileged_client_info.coclient_dob),
+                coclient_employer = COALESCE(EXCLUDED.coclient_employer, attorney_privileged_client_info.coclient_employer),
+                coclient_title = COALESCE(EXCLUDED.coclient_title, attorney_privileged_client_info.coclient_title),
+                coclient_classification = COALESCE(EXCLUDED.coclient_classification, attorney_privileged_client_info.coclient_classification),
+                coclient_email = COALESCE(EXCLUDED.coclient_email, attorney_privileged_client_info.coclient_email),
+                is_married_to_coclient = COALESCE(EXCLUDED.is_married_to_coclient, attorney_privileged_client_info.is_married_to_coclient),
+                has_security_clearance = COALESCE(EXCLUDED.has_security_clearance, attorney_privileged_client_info.has_security_clearance),
+                is_in_bankruptcy = COALESCE(EXCLUDED.is_in_bankruptcy, attorney_privileged_client_info.is_in_bankruptcy),
+                is_enrolled_in_credit_counseling = COALESCE(EXCLUDED.is_enrolled_in_credit_counseling, attorney_privileged_client_info.is_enrolled_in_credit_counseling),
+                client_signature = COALESCE(EXCLUDED.client_signature, attorney_privileged_client_info.client_signature),
+                client_signature_date = COALESCE(EXCLUDED.client_signature_date, attorney_privileged_client_info.client_signature_date),
+                coclient_signature = COALESCE(EXCLUDED.coclient_signature, attorney_privileged_client_info.coclient_signature),
+                coclient_signature_date = COALESCE(EXCLUDED.coclient_signature_date, attorney_privileged_client_info.coclient_signature_date),
+                updated_at = EXCLUDED.updated_at
+        """, entity.file_id, entity.client_name, entity.client_ssn, entity.client_dob,
+            entity.client_employer, entity.client_title, entity.client_classification, entity.client_email,
+            entity.client_street, entity.client_city, entity.client_state, entity.client_zipcode,
+            entity.client_home_phone, entity.client_cell_phone, entity.coclient_name, entity.coclient_ssn,
+            entity.coclient_dob, entity.coclient_employer, entity.coclient_title, entity.coclient_classification,
+            entity.coclient_email, entity.is_married_to_coclient, entity.has_security_clearance,
+            entity.is_in_bankruptcy, entity.is_enrolled_in_credit_counseling, entity.client_signature,
+            entity.client_signature_date, entity.coclient_signature, entity.coclient_signature_date, datetime.now())
     
     async def _store_clixsign_sender(self, connection, entity: ClixsignCertificateSender):
         """Store clixsign certificate sender data."""

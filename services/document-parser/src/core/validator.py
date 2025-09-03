@@ -61,7 +61,7 @@ class UnderwritingValidator:
         """
         # Guard: this validator only supports ExtractedDocument, not packages
         if not isinstance(doc, ExtractedDocument):
-            logger.info("Skipping validation: input is not an ExtractedDocument")
+            logger.debug("validator.skip non ExtractedDocument")
             return []
 
         logger.info(f"Starting validation for client: {doc.client_info.name}")

@@ -53,6 +53,10 @@ class EngagementTerm(BaseUnderwritingModel):
     coclient_initials: Optional[str] = Field(None, max_length=10)
     coclient_initials_count: Optional[int] = None
     page_count: Optional[int] = None
+    identified_debts_ack_client_signature: Optional[str] = Field(None, max_length=255)
+    identified_debts_ack_coclient_signature: Optional[str] = Field(None, max_length=255)
+    privacy_policy_client_initials: Optional[str] = Field(None, max_length=10)
+    privacy_policy_coclient_initials: Optional[str] = Field(None, max_length=10)
 
 
 
@@ -75,6 +79,12 @@ class DebtSchedule(BaseUnderwritingModel):
     account_number: Optional[str] = Field(None, max_length=64)
     current_balance: Optional[Decimal] = None
     debt_type: Optional[str] = Field(None, max_length=100)
+    client_name: Optional[str] = Field(None, max_length=255)
+    client_signature: Optional[str] = Field(None, max_length=255)
+    client_signature_date: Optional[date] = None
+    coclient_name: Optional[str] = Field(None, max_length=255)
+    coclient_signature: Optional[str] = Field(None, max_length=255)
+    coclient_signature_date: Optional[date] = None
 
 
 class FinancialAnalysis(BaseUnderwritingModel):
@@ -110,6 +120,10 @@ class FinancialAnalysis(BaseUnderwritingModel):
     hardship_details: Optional[str] = Field(None, max_length=2000)
     client_signature: Optional[str] = Field(None, max_length=255)
     client_signature_date: Optional[date] = None
+    coclient_signature: Optional[str] = Field(None, max_length=255)
+    coclient_signature_date: Optional[date] = None
+    client_initials: Optional[str] = Field(None, max_length=10)
+    coclient_initials: Optional[str] = Field(None, max_length=10)
 
 
 class Disclosure(BaseUnderwritingModel):
@@ -120,6 +134,11 @@ class Disclosure(BaseUnderwritingModel):
     client_signature_date: Optional[date] = None
     coclient_signature: Optional[str] = Field(None, max_length=255)
     coclient_signature_date: Optional[date] = None
+    additional_disclosure_client_signature: Optional[str] = Field(None, max_length=255)
+    additional_disclosure_client_signature_date: Optional[date] = None
+    additional_disclosure_coclient_signature: Optional[str] = Field(None, max_length=255)
+    additional_disclosure_coclient_signature_date: Optional[date] = None
+
 
 
 class HighInterestCreditorDisclosure(BaseUnderwritingModel):
@@ -141,7 +160,10 @@ class ProgramDisclosure(BaseUnderwritingModel):
     file_id: int = Field(..., description="File identifier")
     company_name: Optional[str] = Field(None, max_length=255)
     settlement_fee_percent: Optional[Decimal] = Field(None, ge=0, le=100, decimal_places=2)
-    client_initial: Optional[str] = Field(None, max_length=10)
+    client_initials: Optional[str] = Field(None, max_length=10)
+    coclient_initials: Optional[str] = Field(None, max_length=10)
+    client_initials_count: Optional[int] = None
+    coclient_initials_count: Optional[int] = None
     is_all_initials_present: Optional[bool] = None
 
 
@@ -184,24 +206,25 @@ class PaymentGatewayAgreement(BaseUnderwritingModel):
     account_id: Optional[str] = Field(None, max_length=100)
     client_first_name: Optional[str] = Field(None, max_length=255)
     client_last_name: Optional[str] = Field(None, max_length=255)
-    client_middle_initial: Optional[str] = Field(None, max_length=255)
+    client_middle_initial: Optional[str] = None
     client_ssn: Optional[str] = None
     client_dob: Optional[date] = None
-    client_address: Optional[str] = Field(None, max_length=500)
-    client_city: Optional[str] = Field(None, max_length=100)
-    client_state: Optional[str] = Field(None, max_length=2)
-    client_zipcode: Optional[str] = Field(None, max_length=10)
-    client_phone: Optional[str] = Field(None, max_length=20)
+    client_address: Optional[str] = None
+    client_city: Optional[str] = None
+    client_state: Optional[str] = None
+    client_zipcode: Optional[str] = None
+    client_phone: Optional[str] = None
     client_email: Optional[EmailStr] = None
-    coclient_first_name: Optional[str] = Field(None, max_length=255)
-    coclient_last_name: Optional[str] = Field(None, max_length=255)
-    coclient_middle_initial: Optional[str] = Field(None, max_length=255)
+    coclient_first_name: Optional[str] = None
+    coclient_last_name: Optional[str] = None
+    coclient_middle_initial: Optional[str] = None
     coclient_ssn: Optional[str] = None
     coclient_dob: Optional[date] = None
-    client_initials: Optional[str] = Field(None, max_length=10)
-    client_signature: Optional[str] = Field(None, max_length=255)
+    client_initials: Optional[str] = None
+    coclient_initials: Optional[str] = None
+    client_signature: Optional[str] = None
     client_signature_date: Optional[datetime] = None
-    coclient_signature: Optional[str] = Field(None, max_length=255)
+    coclient_signature: Optional[str] = None
     coclient_signature_date: Optional[datetime] = None
     pages_count: Optional[int] = None
 
@@ -225,7 +248,10 @@ class PaymentGatewayBankInfo(BaseUnderwritingModel):
     account_number: Optional[str] = Field(None, max_length=50)
     routing_number: Optional[str] = Field(None, max_length=9)
     account_type: Optional[Literal["checking", "savings"]] = None
-    address: Optional[str] = Field(None, max_length=500)
+    client_address: Optional[str] = Field(None, max_length=500)
+    client_city: Optional[str] = None
+    client_state: Optional[str] = None
+    client_zipcode: Optional[str] = None
     recurring_debit_authorization: Optional[Decimal] = None
     first_debit_date: Optional[date] = None
     client_signature: Optional[str] = Field(None, max_length=128)
@@ -282,6 +308,14 @@ class LegalPlanAgreement(BaseUnderwritingModel):
     client_signature: Optional[str] = Field(None, max_length=255)
     signature_date: Optional[datetime] = None
     pages_count: Optional[int] = None
+    member_agreement_client_signature: Optional[str] = Field(None, max_length=255)
+    member_agreement_signature_date: Optional[date] = None
+    member_acknowledge_client_initials: Optional[str] = Field(None, max_length=10)
+    member_acknowledge_client_initials_count: Optional[int] = None
+    member_acknowledge_client_signature: Optional[str] = Field(None, max_length=255)
+    member_acknowledge_signature_date: Optional[date] = None
+    member_info_client_signature: Optional[str] = Field(None, max_length=255)
+    member_info_signature_date: Optional[date] = None
 
 
 class ClixsignCertificateSender(BaseUnderwritingModel):
@@ -314,6 +348,39 @@ class ClixsignCertificateSigner(BaseUnderwritingModel):
     package_declined_at: Optional[datetime] = None
     
 
+class AttorneyPrivilegedClientInfo(BaseUnderwritingModel):
+    """Attorney Privileged Client Information document model."""
+    
+    file_id: int = Field(..., description="File identifier")
+    client_name: Optional[str] = Field(None, max_length=255)
+    client_ssn: Optional[str] = None
+    client_dob: Optional[date] = None
+    client_employer: Optional[str] = Field(None, max_length=255)
+    client_title: Optional[str] = Field(None, max_length=255)
+    client_classification: Optional[str] = Field(None, max_length=255)
+    client_email: Optional[EmailStr] = None
+    client_street: Optional[str] = Field(None, max_length=500)
+    client_city: Optional[str] = Field(None, max_length=100)
+    client_state: Optional[str] = Field(None, max_length=2)
+    client_zipcode: Optional[str] = Field(None, max_length=10)
+    client_home_phone: Optional[str] = Field(None, max_length=20)
+    client_cell_phone: Optional[str] = Field(None, max_length=20)
+    coclient_name: Optional[str] = Field(None, max_length=255)
+    coclient_ssn: Optional[str] = None
+    coclient_dob: Optional[date] = None
+    coclient_employer: Optional[str] = Field(None, max_length=255)
+    coclient_title: Optional[str] = Field(None, max_length=255)
+    coclient_classification: Optional[str] = Field(None, max_length=255)
+    coclient_email: Optional[EmailStr] = None
+    is_married_to_coclient: Optional[bool] = None
+    has_security_clearance: Optional[bool] = None
+    is_in_bankruptcy: Optional[bool] = None
+    is_enrolled_in_credit_counseling: Optional[bool] = None
+    client_signature: Optional[str] = Field(None, max_length=255)
+    client_signature_date: Optional[date] = None
+    coclient_signature: Optional[str] = Field(None, max_length=255)
+    coclient_signature_date: Optional[date] = None
+
 
 class ExtractedDocumentPackage(BaseUnderwritingModel):
     """
@@ -325,13 +392,13 @@ class ExtractedDocumentPackage(BaseUnderwritingModel):
     document_type: Optional[str] = Field(None, description="Detected document type")
     confidence_score: Optional[float] = Field(None, ge=0, le=1, description="Extraction confidence")
     
-    # Core entities (most common)
+    # Core entities 
     engagement_term: Optional[EngagementTerm] = None
     power_of_attorney: Optional[PowerOfAttorney] = None
     payment_gateway_agreement: Optional[PaymentGatewayAgreement] = None
     financial_analysis: Optional[FinancialAnalysis] = None
     
-    # Supporting entities (optional)
+    # Supporting entities 
     fcra_consent: Optional[FCRAConsumerReportConsent] = None
     debt_schedule: Optional[List[DebtSchedule]] = None
     disclosure: Optional[Disclosure] = None
@@ -339,15 +406,18 @@ class ExtractedDocumentPackage(BaseUnderwritingModel):
     program_disclosure: Optional[ProgramDisclosure] = None
     cancellation_notice: Optional[CancellationNotice] = None
     
-    # Payment related (optional)
+    # Payment related 
     payment_service_fees: Optional[List[PaymentGatewayServiceFees]] = None
     payment_bank_info: Optional[PaymentGatewayBankInfo] = None
     payment_deposit_schedule: Optional[List[PaymentGatewayDepositSchedule]] = None
     
-    # Legal plan (optional)
+    # Legal plan 
     legal_plan_agreement: Optional[LegalPlanAgreement] = None
     
-    # Digital signature info (optional)
+    # Attorney privileged info 
+    attorney_privileged_client_info: Optional[AttorneyPrivilegedClientInfo] = None
+    
+    # Digital signature info 
     clixsign_sender: Optional[ClixsignCertificateSender] = None
     clixsign_signers: Optional[List[ClixsignCertificateSigner]] = None
     
@@ -362,7 +432,8 @@ class ExtractedDocumentPackage(BaseUnderwritingModel):
             self.engagement_term, self.power_of_attorney, self.payment_gateway_agreement,
             self.financial_analysis, self.fcra_consent, self.disclosure,
             self.high_interest_disclosure, self.program_disclosure, self.cancellation_notice,
-            self.payment_bank_info, self.legal_plan_agreement, self.clixsign_sender
+            self.payment_bank_info, self.legal_plan_agreement, self.attorney_privileged_client_info,
+            self.clixsign_sender
         ]
         
         # Check for list entities
@@ -397,6 +468,7 @@ __all__ = [
     'PaymentGatewayBankInfo',
     'PaymentGatewayDepositSchedule',
     'LegalPlanAgreement',
+    'AttorneyPrivilegedClientInfo',
     'ClixsignCertificateSender',
     'ClixsignCertificateSigner',
     'ExtractedDocumentPackage'

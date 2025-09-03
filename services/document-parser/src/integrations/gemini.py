@@ -7,6 +7,7 @@ import json
 import re
 import httpx
 import time
+import asyncio
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 from loguru import logger
@@ -201,17 +202,21 @@ class GeminiClient:
         Return JSON: {"sections": ["section_name1", "section_name2", ...]}
         
         Look for:
-        - Account Agreement / Client Information Sheet
+        - Account Agreement
         - Primary Account Information (bank details section)
         - Company Agreement / Engagement Terms
         - Power of Attorney
         - Financial Analysis (Exhibit B)
         - Financial Budget
+        - Income/Expense Analysis
+        - Budget Analysis
+        - Financial Information
         - Debt Schedule (Exhibit A)
         - Service Fees table
         - Deposit Schedule table
         - Disclosure sections (Exhibit C)
         - Legal Plan Agreement
+        - Attorney Client Privileged / Client Information
         - High Interest Disclosure
         - FCRA Consent
         - Cancellation Notice
@@ -234,7 +239,7 @@ class GeminiClient:
             # Stage 2: Extract each section individually with focused prompts
             package_data = {
                 'file_id': file_id,
-                'document_type': 'comprehensive',
+                'document_type': 'multi_section',
                 'confidence_score': 0.95,
                 'extraction_metadata': {
                     'extraction_time': datetime.now().isoformat(),
@@ -247,19 +252,23 @@ class GeminiClient:
             # Map sections to extraction functions
             extraction_map = {
                 'account agreement': ('payment_gateway_agreement', self._extract_payment_gateway),
-                'client information': ('payment_gateway_agreement', self._extract_payment_gateway),
                 'payment bank info': ('payment_bank_info', self._extract_payment_bank_info),
                 'primary account': ('payment_bank_info', self._extract_payment_bank_info),
                 'bank information': ('payment_bank_info', self._extract_payment_bank_info),
                 'ach authorization': ('payment_bank_info', self._extract_payment_bank_info),
                 'company agreement': ('engagement_term', self._extract_engagement_term),
                 'engagement terms': ('engagement_term', self._extract_engagement_term),
+                'client service agreement': ('engagement_term', self._extract_engagement_term),
+                'service agreement': ('engagement_term', self._extract_engagement_term),
                 'limited scope retainer': ('engagement_term', self._extract_engagement_term),
                 'retainer agreement': ('engagement_term', self._extract_engagement_term),
                 'terms of engagement': ('engagement_term', self._extract_engagement_term),
                 'power of attorney': ('power_of_attorney', self._extract_power_of_attorney),
                 'financial analysis': ('financial_analysis', self._extract_financial_analysis),
                 'financial budget': ('financial_analysis', self._extract_financial_analysis),
+                'income expense': ('financial_analysis', self._extract_financial_analysis),
+                'budget analysis': ('financial_analysis', self._extract_financial_analysis),
+                'financial information': ('financial_analysis', self._extract_financial_analysis),
                 'exhibit b': ('financial_analysis', self._extract_financial_analysis),
                 'debt schedule': ('debt_schedule', self._extract_debt_schedule),
                 'exhibit a': ('debt_schedule', self._extract_debt_schedule),
@@ -268,6 +277,9 @@ class GeminiClient:
                 'disclosure': ('disclosure', self._extract_disclosure),
                 'exhibit c': ('disclosure', self._extract_disclosure),
                 'legal plan': ('legal_plan_agreement', self._extract_legal_plan),
+                'attorney client privileged': ('attorney_privileged_client_info', self._extract_attorney_privileged),
+                'attorney privileged': ('attorney_privileged_client_info', self._extract_attorney_privileged),
+                'client information': ('attorney_privileged_client_info', self._extract_attorney_privileged),
                 'high interest': ('high_interest_disclosure', self._extract_high_interest),
                 'fcra consent': ('fcra_consent', self._extract_fcra),
                 'cancellation notice': ('cancellation_notice', self._extract_cancellation),
@@ -280,36 +292,103 @@ class GeminiClient:
             # Track what we've already extracted to avoid duplicates
             extracted_entities = set()
             
+            # Log what sections were detected for debugging
+            logger.bind(file_id=file_id, detected_count=len(detected_sections)).info("staged_extraction.sections_detected")
+            
             # Extract each detected section
-            for section in detected_sections:
+            semaphore = asyncio.Semaphore(4)
+            
+            async def extract_one(section: str):
                 section_lower = section.lower()
                 for key, (entity_name, extractor) in extraction_map.items():
                     if key in section_lower and entity_name not in extracted_entities:
-                        try:
-                            logger.info(f"Extracting {entity_name} from section: {section}")
-                            result = await extractor(pdf_data, file_id)
-                            if result:
-                                # Handle list entities differently
-                                if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
-                                    if entity_name not in package_data:
-                                        package_data[entity_name] = []
-                                    if isinstance(result, list):
-                                        package_data[entity_name].extend(result)
+                        async with semaphore:
+                            try:
+                                logger.info(f"Extracting {entity_name} from section: {section}")
+                                result = await extractor(pdf_data, file_id)
+                                if result:
+                                    if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
+                                        if entity_name not in package_data:
+                                            package_data[entity_name] = []
+                                        if isinstance(result, list):
+                                            package_data[entity_name].extend(result)
+                                        else:
+                                            package_data[entity_name].append(result)
+                                    elif entity_name == 'clixsign_all':
+                                        if isinstance(result, dict):
+                                            if 'clixsign_sender' in result:
+                                                package_data['clixsign_sender'] = result['clixsign_sender']
+                                            if 'clixsign_signers' in result:
+                                                package_data['clixsign_signers'] = result['clixsign_signers']
                                     else:
-                                        package_data[entity_name].append(result)
-                                # Handle clixsign specially (has sender and signers)
-                                elif entity_name == 'clixsign_all':
-                                    if isinstance(result, dict):
-                                        if 'clixsign_sender' in result:
-                                            package_data['clixsign_sender'] = result['clixsign_sender']
-                                        if 'clixsign_signers' in result:
-                                            package_data['clixsign_signers'] = result['clixsign_signers']
-                                else:
-                                    package_data[entity_name] = result
-                                extracted_entities.add(entity_name)
-                        except Exception as e:
-                            logger.warning(f"Failed to extract {entity_name}: {e}")
+                                        package_data[entity_name] = result
+                                    extracted_entities.add(entity_name)
+                            except Exception as e:
+                                logger.warning(f"Failed to extract {entity_name}: {e}")
             
+            # Launch tasks with bounded concurrency
+            tasks = [extract_one(section) for section in detected_sections]
+            await asyncio.gather(*tasks)
+
+            # Enforce: any detected singleton entity must be present (store at least placeholders)
+            # Build entity->extractor map
+            entity_to_extractor = {}
+            for key, (entity_name, extractor) in extraction_map.items():
+                entity_to_extractor.setdefault(entity_name, extractor)
+            # Determine required entities from detected sections
+            required_entities = set()
+            for section in detected_sections:
+                section_lower = section.lower()
+                for key, (entity_name, _) in extraction_map.items():
+                    if key in section_lower:
+                        required_entities.add(entity_name)
+            singleton_entities = {
+                'engagement_term','power_of_attorney','payment_gateway_agreement','financial_analysis',
+                'fcra_consent','disclosure','program_disclosure','cancellation_notice',
+                'payment_bank_info','legal_plan_agreement','attorney_privileged_client_info'
+            }
+            for entity_name in sorted(required_entities & singleton_entities):
+                if entity_name not in package_data:
+                    try:
+                        logger.warning(f"{entity_name}.missing_after_section_match; forcing direct extraction")
+                        extractor = entity_to_extractor.get(entity_name)
+                        forced = await extractor(pdf_data, file_id) if extractor else None
+                        if forced:
+                            package_data[entity_name] = forced
+                            extracted_entities.add(entity_name)
+                            logger.info(f"{entity_name}.forced_extraction_succeeded")
+                        else:
+                            # Create placeholder so DB gets a row with file_id
+                            package_data[entity_name] = { 'file_id': file_id }
+                            logger.warning(f"{entity_name}.placeholder_created_for_storage")
+                    except Exception as e:
+                        package_data[entity_name] = { 'file_id': file_id }
+                        logger.warning(f"{entity_name}.forced_extraction_failed; placeholder_created: {e}")
+
+            # Fallback: ensure engagement_term is not skipped if section naming varies
+            if 'engagement_term' not in package_data:
+                try:
+                    logger.warning("engagement_term.not_detected_in_sections; attempting fallback extraction")
+                    fallback_engagement = await self._extract_engagement_term(pdf_data, file_id)
+                    if fallback_engagement:
+                        package_data['engagement_term'] = fallback_engagement
+                        extracted_entities.add('engagement_term')
+                        logger.info("engagement_term.fallback_extracted")
+                except Exception as e:
+                    logger.warning(f"engagement_term.fallback_failed: {e}")
+
+            # Fallback: ensure financial_analysis is not skipped if section naming varies
+            if 'financial_analysis' not in package_data:
+                try:
+                    logger.warning("financial_analysis.not_detected_in_sections; attempting fallback extraction")
+                    fallback_fin = await self._extract_financial_analysis(pdf_data, file_id)
+                    if fallback_fin:
+                        package_data['financial_analysis'] = fallback_fin
+                        extracted_entities.add('financial_analysis')
+                        logger.info("financial_analysis.fallback_extracted")
+                except Exception as e:
+                    logger.warning(f"financial_analysis.fallback_failed: {e}")
+
             # Add file_id to all entities
             self._add_file_id_to_entities(package_data, file_id)
             
@@ -378,11 +457,13 @@ class GeminiClient:
                             indicator_lower = indicator.lower()
                             if 'power of attorney' in indicator_lower:
                                 detected_sections.append('power_of_attorney')
-                            elif 'account agreement' in indicator_lower or 'client information' in indicator_lower:
+                            elif 'account agreement' in indicator_lower:
                                 detected_sections.append('payment_gateway_agreement')
+                            elif 'attorney client privileged' in indicator_lower or 'attorney privileged' in indicator_lower or 'client information' in indicator_lower:
+                                detected_sections.append('attorney_privileged_client_info')
                             elif 'engagement' in indicator_lower or 'client service' in indicator_lower or 'retainer' in indicator_lower or 'company agreement' in indicator_lower:
                                 detected_sections.append('engagement_term')
-                            elif 'financial analysis' in indicator_lower or 'exhibit b' in indicator_lower or 'financial budget' in indicator_lower:
+                            elif 'financial analysis' in indicator_lower or 'exhibit b' in indicator_lower or 'financial budget' in indicator_lower or 'income' in indicator_lower or 'budget' in indicator_lower:
                                 detected_sections.append('financial_analysis')
                             elif 'debt schedule' in indicator_lower or 'exhibit a' in indicator_lower:
                                 detected_sections.append('debt_schedule')
@@ -458,7 +539,7 @@ class GeminiClient:
             # Create document package
             package_data = {
                 'file_id': file_id,
-                'document_type': 'comprehensive',
+                'document_type': 'multi_section',
                 'confidence_score': 1.0,  
                 'extraction_metadata': {
                     'extraction_time': datetime.now().isoformat(),
@@ -491,7 +572,9 @@ class GeminiClient:
                     fa = package_data.get('financial_analysis') or {}
                     critical_keys = [
                         'draft_type', 'fixed_income', 'day_phone', 'evening_phone', 'cell_phone',
-                        'estimated_program_settle_amount', 'fee_method'
+                        'estimated_program_settle_amount', 'fee_method',
+                        'client_signature', 'client_signature_date', 
+                        'client_initials', 'client_initials_count'
                     ]
                     for key in critical_keys:
                         if not fa.get(key):
@@ -759,6 +842,20 @@ class GeminiClient:
                 # Extract content
                 if 'candidates' in response_data and response_data['candidates']:
                     candidate = response_data['candidates'][0]
+                    
+                    # Check for content safety blocks
+                    if 'finishReason' in candidate:
+                        finish_reason = candidate['finishReason']
+                        if finish_reason != 'STOP':
+                            logger.error(f"Gemini response blocked due to: {finish_reason}")
+                            if finish_reason == 'SAFETY':
+                                logger.error("Content blocked by safety filters")
+                            elif finish_reason == 'RECITATION':
+                                logger.error("Content blocked due to recitation concerns")
+                            elif finish_reason == 'MAX_TOKENS':
+                                logger.error("Response truncated due to max tokens limit")
+                            return None
+                    
                     if 'content' in candidate and 'parts' in candidate['content']:
                         text_content = candidate['content']['parts'][0].get('text', '')
                         
@@ -767,8 +864,39 @@ class GeminiClient:
                         if json_data:
                             return json_data
                         else:
-                            logger.warning("No valid JSON found in Gemini response")
+                            # Log more details about the failed response
+                            response_length = len(text_content)
+                            logger.warning(f"No valid JSON found in Gemini response (length: {response_length} chars)")
+                            
+                            # Log first and last parts of response for debugging
+                            if response_length > 0:
+                                logger.warning(f"Response start: {text_content[:200]}")
+                                logger.warning(f"Response end: {text_content[-200:]}")
+                                
+                                # Check if response contains common error indicators
+                                if "I cannot" in text_content or "I'm unable" in text_content:
+                                    logger.error("Gemini declined to process the request")
+                                elif "error" in text_content.lower():
+                                    logger.error("Gemini response contains error message")
+                                elif response_length < 50:
+                                    logger.error("Gemini response is too short")
+                                elif not any(char in text_content for char in ['{', '[', '"']):
+                                    logger.error("Gemini response contains no JSON-like characters")
+                                else:
+                                    # Try a fallback: if response seems to have content but no JSON,
+                                    # attempt to extract any structured data manually
+                                    logger.warning("Attempting manual data extraction from non-JSON response")
+                                    fallback_data = self._attempt_fallback_extraction(text_content)
+                                    if fallback_data:
+                                        logger.info("Successfully extracted data using fallback method")
+                                        return fallback_data
+                            else:
+                                logger.error("Gemini returned empty response")
+                            
                             return None
+                    else:
+                        logger.error("Gemini candidate has no content or parts")
+                        return None
                 
                 logger.warning("Unexpected Gemini response structure")
                 return None
@@ -885,6 +1013,9 @@ class GeminiClient:
                 'payment_bank_info': 'payment_bank_info',
                 'payment_deposit_schedule': 'payment_deposit_schedule',
                 'legal_plan_agreement': 'legal_plan_agreement',
+                'attorney_privileged_client_info': 'attorney_privileged_client_info',
+                'attorney privileged': 'attorney_privileged_client_info',
+                'client information': 'attorney_privileged_client_info',
                 'clixsign_sender': 'clixsign_sender',
                 'clixsign_signers': 'clixsign_signers'
             }
@@ -1071,7 +1202,7 @@ class GeminiClient:
                 if key in ['engagement_term', 'power_of_attorney', 'payment_gateway_agreement', 
                           'financial_analysis', 'fcra_consent', 'disclosure', 'high_interest_disclosure',
                           'program_disclosure', 'cancellation_notice', 'payment_bank_info', 
-                          'legal_plan_agreement', 'clixsign_sender']:
+                          'legal_plan_agreement', 'attorney_privileged_client_info', 'clixsign_sender']:
                     value['file_id'] = file_id
                     self._fix_entity_data_formats(value)
                     
@@ -1259,7 +1390,8 @@ class GeminiClient:
                     'credit_report_authorization', 'financial_info_disclosure_authorization',
                     'termination_rights', 'arbitration_clause', 'class_action_waiver',
                     'recurring_debit_authorization_bool', 'credit_counseling_disclosure',
-                    'bankruptcy_disclosure', 'debt_negotiation_disclosure'
+                    'bankruptcy_disclosure', 'debt_negotiation_disclosure', 'has_security_clearance',
+                    'is_married_to_coclient', 'is_in_bankruptcy', 'is_enrolled_in_credit_counseling'
                 ]
                 if key in boolean_fields:
                     entity[key] = value.lower() in ['true', 'yes', '1', 'on']
@@ -1267,7 +1399,8 @@ class GeminiClient:
                 # Fix integer fields that might come as strings
                 integer_fields = [
                     'estimated_program_length', 'debt_relief_program_duration',
-                    'signer_number', 'initials_count', 'page_count', 'pages_count', 'signers_count'
+                    'signer_number', 'initials_count', 'page_count', 'pages_count', 'signers_count', 
+                    'client_initials_count', 'coclient_initials_count'
                 ]
                 if key in integer_fields and isinstance(value, str):
                     numeric = re.sub(r"[^0-9]", "", value)
@@ -1275,7 +1408,7 @@ class GeminiClient:
                         entity[key] = int(numeric)
                 
                 # Clean up address formatting issues
-                address_fields = ['client_address', 'coclient_address', 'address', 'attorney_address', 'company_address', 'credit_card_billing_address']
+                address_fields = ['client_address', 'coclient_address', 'address', 'attorney_address', 'company_address', 'credit_card_billing_address', 'client_street', 'coclient_street']
                 if key in address_fields:
                     # Remove curly braces, trailing commas, and clean up formatting
                     cleaned_address = value.replace('{', '').replace('}', '').strip()
@@ -1288,12 +1421,14 @@ class GeminiClient:
                 if value.strip() == '' or value.lower() in ['null', 'none', 'n/a', 'na']:
                     entity[key] = None
                 
-                # Fix placeholder values - common in template documents
+                # Fix placeholder values
                 if isinstance(value, str) and '{' in value and '}' in value:
                     # Common placeholders that should be None
                     placeholder_patterns = [
                         '{COSIGNDATE}', '{SIGNDATE}', '{DATE}', '{SIGNATURE}', '{NAME}',
-                        '{AMOUNT}', '{PHONE}', '{EMAIL}', '{ADDRESS}', '{SSN}'
+                        '{AMOUNT}', '{PHONE}', '{EMAIL}', '{ADDRESS}', '{SSN}', '{CITY}', '{STATE}', '{ZIP}'
+                        '{RECURRINGDEBITAUTHORIZATION}', '{FIRSTDEBITDATE}', '{CLIENTSIGNATURE}', '{COCLIENTSIGNATURE}',
+                        '{CLIENTINITIALS}', '{COCLIENTINITIALS}'
                     ]
                     if value.upper() in placeholder_patterns:
                         logger.bind(
@@ -1465,7 +1600,10 @@ class GeminiClient:
         - Routing Number field (9 digits, e.g., "043000096", "322271627")
         - Account Type field ("Checking" or "Savings")
         - "Authorizing Person's Name (as it appears on check)" field
-        - Address, City, State, Zip fields
+        - Address (Street address)
+        - City (City)
+        - State (State)
+        - Zip (Zip)
         - "Recurring Debit Authorization" amount (e.g., "$651.57", "$631.23")
         - "Date of First Debit" (e.g., "Sep 15, 2025", "Sep 03, 2025")
         - Client Signature line and Date
@@ -1481,7 +1619,10 @@ class GeminiClient:
             "account_number": "Exact account number from Account Number field",
             "routing_number": "Exact routing number from Routing Number field",
             "account_type": "checking or savings (lowercase)",
-            "address": "Full address from Address/City/State/Zip fields",
+            "address": "Street address from Address field",
+            "city": "City from City field",
+            "state": "State from State field",
+            "zip_code": "Zip from Zip field",
             "recurring_debit_authorization": "Amount without $ symbol (e.g., 651.57)",
             "first_debit_date": "Date in YYYY-MM-DD format",
             "client_signature": "Client signature text if present",
@@ -1645,10 +1786,20 @@ class GeminiClient:
         {
           "company_name": null,
           "settlement_fee_percent": null,
-          "client_initial": null,
+          "client_initials": null,
+          "coclient_initials": null,
           "is_all_initials_present": null
         }
         """
+        result = await self._make_gemini_request(prompt, pdf_data)
+        if result:
+            result['file_id'] = file_id
+            self._fix_entity_data_formats(result)
+        return result
+    
+    async def _extract_attorney_privileged(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
+        """Extract attorney privileged client info data."""
+        prompt = get_prompt_for_document_type('attorney_privileged_client_info')
         result = await self._make_gemini_request(prompt, pdf_data)
         if result:
             result['file_id'] = file_id
@@ -1664,6 +1815,53 @@ class GeminiClient:
             self._fix_entity_data_formats(result)
         return result
     
+
+    def _attempt_fallback_extraction(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        Attempt to extract structured data from non-JSON responses.
+        This handles cases where Gemini returns explanatory text or partial data.
+        """
+        try:
+            # Look for key-value pairs in various formats
+            data = {}
+            
+            # Pattern 1: "field: value" format
+            kv_pattern = r'([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([^\n\r]+)'
+            matches = re.findall(kv_pattern, text, re.IGNORECASE)
+            
+            for key, value in matches:
+                # Clean up the value
+                value = value.strip().strip('"\'')
+                if value.lower() in ['null', 'none', 'n/a', 'not found']:
+                    value = None
+                data[key.lower()] = value
+            
+            # Pattern 2: Look for structured text blocks
+            if not data:
+                # Try to find any structured information
+                lines = text.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if ':' in line and not line.startswith('#'):
+                        parts = line.split(':', 1)
+                        if len(parts) == 2:
+                            key = parts[0].strip().lower()
+                            value = parts[1].strip().strip('"\'')
+                            if value.lower() in ['null', 'none', 'n/a', 'not found']:
+                                value = None
+                            data[key] = value
+            
+            # Only return data if we found at least 3 fields
+            if len(data) >= 3:
+                logger.info(f"Fallback extraction found {len(data)} fields")
+                return data
+            else:
+                logger.warning(f"Fallback extraction only found {len(data)} fields, insufficient")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Fallback extraction failed: {e}")
+            return None
 
     def health_check(self) -> bool:
         """Check if Gemini client is healthy."""

@@ -48,16 +48,36 @@ def extract_json_from_response(text: str) -> Optional[Dict[str, Any]]:
         except json.JSONDecodeError:
             continue
     
-    # Strategy 4: Look for JSON starting with { and ending with }
-    brace_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-    matches = re.findall(brace_pattern, text, re.DOTALL)
+    # Strategy 4: Look for JSON starting with { and ending with } (improved)
+    # This pattern handles nested braces better
+    def find_json_blocks(text):
+        """Find potential JSON blocks by balancing braces."""
+        blocks = []
+        i = 0
+        while i < len(text):
+            if text[i] == '{':
+                start = i
+                brace_count = 1
+                i += 1
+                while i < len(text) and brace_count > 0:
+                    if text[i] == '{':
+                        brace_count += 1
+                    elif text[i] == '}':
+                        brace_count -= 1
+                    i += 1
+                if brace_count == 0:
+                    blocks.append(text[start:i])
+            else:
+                i += 1
+        return blocks
     
-    # Try the largest match first (likely to be the main JSON)
-    matches.sort(key=len, reverse=True)
+    json_blocks = find_json_blocks(text)
+    # Sort by length (largest first)
+    json_blocks.sort(key=len, reverse=True)
     
-    for match in matches:
+    for block in json_blocks:
         try:
-            result = json.loads(match)
+            result = json.loads(block)
             # Validate it's a dictionary and has some content
             if isinstance(result, dict) and len(result) > 0:
                 return result
@@ -105,6 +125,56 @@ def extract_json_from_response(text: str) -> Optional[Dict[str, Any]]:
             return json.loads(cleaned_text)
         except json.JSONDecodeError:
             pass
+    
+    # Strategy 8: Look for JSON after common prefixes
+    prefixes = [
+        "Here is the JSON:",
+        "Here's the JSON:",
+        "JSON:",
+        "Result:",
+        "Output:",
+        "Response:",
+        "Data:",
+        "The extracted data is:",
+        "The result is:"
+    ]
+    
+    for prefix in prefixes:
+        if prefix in text:
+            # Find text after the prefix
+            after_prefix = text.split(prefix, 1)[1].strip()
+            try:
+                return json.loads(after_prefix)
+            except json.JSONDecodeError:
+                # Try to find JSON in the text after prefix using brace matching
+                def find_json_in_text(text):
+                    blocks = []
+                    i = 0
+                    while i < len(text):
+                        if text[i] == '{':
+                            start = i
+                            brace_count = 1
+                            i += 1
+                            while i < len(text) and brace_count > 0:
+                                if text[i] == '{':
+                                    brace_count += 1
+                                elif text[i] == '}':
+                                    brace_count -= 1
+                                i += 1
+                            if brace_count == 0:
+                                blocks.append(text[start:i])
+                        else:
+                            i += 1
+                    return blocks
+                
+                json_blocks = find_json_in_text(after_prefix)
+                for block in json_blocks:
+                    try:
+                        result = json.loads(block)
+                        if isinstance(result, dict) and len(result) > 0:
+                            return result
+                    except json.JSONDecodeError:
+                        continue
     
     logger.debug(f"Could not extract JSON from text: {text[:200]}...")
     return None

@@ -58,6 +58,15 @@ class BankDetails(BaseModel):
     account_number: str
     routing_number: Optional[str] = None
     account_type: AccountType
+    account_name: Optional[str] = None
+    account_type: Optional[str] = None
+    client_address: Optional[str] = None
+    client_city: Optional[str] = None
+    client_state: Optional[str] = None
+    client_zipcode: Optional[str] = None
+    recurring_debit_authorization: Optional[str] = None
+    first_debit_date: Optional[date] = None
+    client_signature: Optional[str] = None
 
 
 class ClientInformation(BaseModel):
@@ -67,7 +76,10 @@ class ClientInformation(BaseModel):
     dob: date
     email: str = Field(..., pattern="^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$")
     phone: str = Field(..., pattern="^\\d{3}-\\d{3}-\\d{4}$")
-    address: Address
+    client_address: Optional[str] = None
+    client_city: Optional[str] = None
+    client_state: Optional[str] = None
+    client_zipcode: Optional[str] = None
     
     @field_validator('dob')
     def validate_age(cls, v):
@@ -91,6 +103,14 @@ class FinancialAnalysis(BaseModel):
     total_program_fees: float
     estimated_savings: float
     estimated_total_cost: float
+    client_signature: Optional[str] = None
+    client_signature_date: Optional[date] = None
+    coclient_signature: Optional[str] = None
+    coclient_signature_date: Optional[date] = None
+    client_initials: Optional[str] = None
+    coclient_initials: Optional[str] = None
+    client_initials_count: Optional[int] = None
+    coclient_initials_count: Optional[int] = None
     
     @field_validator('net_income')
     def validate_net_income(cls, v, values):

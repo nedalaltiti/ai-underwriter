@@ -19,11 +19,12 @@ CRITICAL EXTRACTION RULES:
 
 7. For SSNs, maintain format with dashes (e.g., "123-45-6789" or "XXX-XX-6789" if masked)
 8. For addresses, extract as clean text without brackets, braces, or trailing commas
-9. For initials, look for 2-4 capital letters (e.g., "JJCS", "AA", "CW")
-10. Match the EXACT field names and JSON shape requested
-11. Process systematically: don't jump around, extract section by section
-12. For initial counts: scan only the relevant document section until the signature page for that section, not the entire multi-document package
-13. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
+9. For signatures, extract the ACTUAL CLIENT NAME that appears on the signature line (e.g., "Robert Adams", "John Smith")
+10. For initials, look for 2-4 capital letters (e.g., "JJCS", "AA", "CW")
+11. Match the EXACT field names and JSON shape requested
+12. Process systematically: don't jump around, extract section by section
+13. For initial counts: scan only the relevant document section until the signature page for that section, not the entire multi-document package
+14. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
 """
 
 ENGAGEMENT_TERM_PROMPT = f"""
@@ -58,16 +59,20 @@ Extract ALL these fields (use null if not found):
   "monthly_payment": "Monthly payment amount",
   "client_name": "Primary client full name",
   "client_address": "Client address",
-  "client_signature": "Client signature text/indicator",
+  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams')",
   "client_signature_date": "Date signed (YYYY-MM-DD)",
   "coclient_name": "Co-client name if present",
-  "coclient_signature": "Co-client signature text/indicator",
+  "coclient_signature": "Actual co-client name from signature line if present",
   "coclient_signature_date": "Co-client date if present",
   "client_initials": "Client initials found in document (e.g., JD, ABC, JJCS)",
   "client_initials_count": "Total count of client initials from page 1 through ALL pages until client signature (including unnumbered pages)",
   "coclient_initials": "Co-client initials if present (e.g., MJ, XYZ)",
   "coclient_initials_count": "Total count of how many times co-client initials appear throughout document",
-  "page_count": "Total pages in engagement term section"
+  "page_count": "Total pages in engagement term section",
+  "identified_debts_ack_client_signature": "Actual client name from signature line",
+  "identified_debts_ack_coclient_signature": "Actual co-client name from signature line if present",
+  "privacy_policy_client_initials": "Client initials",
+  "privacy_policy_coclient_initials": "Co-client initials if present",
 }}
 
 Focus on: Company letterhead, fee structures, signature blocks, initials throughout document
@@ -98,12 +103,12 @@ Extract the following information and return as JSON:
   "client_name": "Primary client full name",
   "client_ssn": "Client SSN (format: 123-45-6789)",
   "client_dob": "Client date of birth (YYYY-MM-DD). If split across lines like '09/28/1' and '971', combine to '1971-09-28'",
-  "client_signature": "Client signature indicator",
+  "client_signature": "Actual client name from signature line",
   "client_signature_date": "Date client signed (YYYY-MM-DD)",
   "coclient_name": "Co-client full name if present",
   "coclient_ssn": "Co-client SSN (format: 123-45-6789)",
   "coclient_dob": "Co-client date of birth (YYYY-MM-DD)",
-  "coclient_signature": "Co-client signature indicator",
+  "coclient_signature": "Actual co-client name from signature line if present",
   "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)"
 }}
 
@@ -122,7 +127,7 @@ You are extracting data from a Payment Gateway/Account Agreement.
 
 KEY IDENTIFIERS:
 - Processor names: FORTH, RAM, CFT
-- Look for: Account Agreement, Client Information Sheet
+- Look for: Account Agreement
 
 Extract ALL these fields (use null if not found):
 
@@ -146,9 +151,10 @@ Extract ALL these fields (use null if not found):
   "coclient_ssn": "Co-client SSN - if masked, keep masked format",
   "coclient_dob": "Co-client date of birth",
   "client_initials": "Client initials",
-  "client_signature": "Client signature indicator",
+  "coclient_initials": "Co-client initials if present",
+  "client_signature": "Actual client name from signature line",
   "client_signature_date": "Date client signed",
-  "coclient_signature": "Co-client signature indicator",
+  "coclient_signature": "Actual co-client name from signature line if present",
   "coclient_signature_date": "Date co-client signed",
   "pages_count": "Total pages"
 }}
@@ -192,8 +198,12 @@ Extract ALL these financial fields (use null if not found):
   "estimated_program_savings": "Estimated savings",
   "estimated_total_cost": "Estimated total cost",
   "hardship_details": "Hardship description",
-  "client_signature": "Client signature indicator",
-  "client_signature_date": "Date signed (YYYY-MM-DD)"
+  "client_signature": "Actual client name from signature line",
+  "client_signature_date": "Date signed (YYYY-MM-DD)",
+  "coclient_signature": "Actual co-client name from signature line if present",
+  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)",
+  "client_initials": "Client initials",
+  "coclient_initials": "Co-client initials if present",
 }}
 
 Look for: Income/expense tables, Program Details section, hardship explanations
@@ -214,12 +224,18 @@ Extract ALL fields for each debt (use null if not found):
       "name_on_account": "Account holder name",
       "account_number": "Account number",
       "current_balance": "Balance amount",
-      "debt_type": "Type of debt (credit card, loan, etc.)"
+      "debt_type": "Type of debt (credit card, loan, etc.)",
+      "client_name": "Client name if shown",
+      "client_signature": "Actual client name from signature line if present",
+      "client_signature_date": "Client signature date if present",
+      "coclient_name": "Co-client name if shown", 
+      "coclient_signature": "Actual co-client name from signature line if present",
+      "coclient_signature_date": "Co-client signature date if present"
     }}
   ]
 }}
 
-Look for: Tables with creditor listings, account details, balances
+Look for: Tables with creditor listings, account details, balances, signature sections
 """
 
 CANCELLATION_NOTICE_PROMPT = f"""
@@ -233,9 +249,9 @@ Extract ALL these fields (use null if not found):
   "file_id": null,
   "cancellation_deadline": "Cancellation deadline date (YYYY-MM-DD)",
   "cancellation_date": "Actual cancellation date (YYYY-MM-DD)",
-  "client_signature": "Client signature indicator",
+  "client_signature": "Actual client name from signature line",
   "client_signature_date": "Date client signed (YYYY-MM-DD)",
-  "coclient_signature": "Co-client signature indicator",
+  "coclient_signature": "Actual co-client name from signature line if present",
   "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)"
 }}
 
@@ -284,7 +300,17 @@ Extract the following information and return as JSON:
   "initials_count": "Number of initials in document",
   "client_signature": "Client signature indicator",
   "signature_date": "Signature date (YYYY-MM-DD)",
-  "pages_count": "Total pages in document"
+  "pages_count": "Total pages in document",
+  "is_all_initials_present": "Are all initials present? (true/false)",
+  "member_agreement_client_signature": "Actual client name from signature line",
+  "member_agreement_signature_date": "Date client signed (YYYY-MM-DD)",
+  "member_acknowledge_client_initials": "Client initials",
+  "member_acknowledge_client_initials_count": "Number of client initials in document",
+  "member_acknowledge_client_signature": "Actual client name from signature line",
+  "member_acknowledge_signature_date": "Date client signed (YYYY-MM-DD)",
+  "member_info_client_signature": "Actual client name from signature line",
+  "member_info_signature_date": "Date client signed (YYYY-MM-DD)"
+
 }}
 
 Focus on:
@@ -292,6 +318,53 @@ Focus on:
 - Payment method and schedule
 - Legal plan terms and duration
 - Bank or credit card payment information
+"""
+
+ATTORNEY_PRIVILEGED_CLIENT_INFO_PROMPT = f"""
+You are extracting data from an Attorney Client Privileged / Client Information document.
+
+{BASE_EXTRACTION_RULES}
+
+Extract ALL these fields from the Client Information section (use null if not found):
+
+{{
+  "file_id": null,
+  "client_name": "Client full name",
+  "client_ssn": "Client SSN - if masked, keep masked format",
+  "client_dob": "Client date of birth (YYYY-MM-DD)",
+  "client_employer": "Main App Employer",
+  "client_title": "Job title",
+  "client_classification": "Employment classification",
+  "client_email": "Main App Email",
+  "client_street": "Street address",
+  "client_city": "City",
+  "client_state": "State (2-letter code)",
+  "client_zipcode": "ZIP code",
+  "client_home_phone": "Home phone",
+  "client_cell_phone": "Cell phone",
+  "coclient_name": "Co-client full name",
+  "coclient_ssn": "Co-client SSN",
+  "coclient_dob": "Co-client date of birth (YYYY-MM-DD)",
+  "coclient_employer": "Co App Employer",
+  "coclient_title": "Co-client job title",
+  "coclient_classification": "Co-client employment classification",
+  "coclient_email": "Co App Email",
+  "is_married_to_coclient": "Married to Co-applicant? (true/false)",
+  "has_security_clearance": "Security clearance question (true/false)",
+  "is_in_bankruptcy": "Currently involved in bankruptcy proceeding? (true/false)",
+  "is_enrolled_in_credit_counseling": "Currently enrolled in credit counseling program? (true/false)",
+  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams')",
+  "client_signature_date": "Client signature date (YYYY-MM-DD)",
+  "coclient_signature": "Actual co-client name from signature line if present",
+  "coclient_signature_date": "Co-client signature date (YYYY-MM-DD)"
+}}
+
+Focus on:
+- Client Information section with personal details
+- Employment Information section
+- Contact Information section
+- Yes/No questions about marriage, security clearance, bankruptcy, credit counseling
+- Signature blocks at the bottom
 """
 
 # Document type detection prompt
@@ -306,6 +379,7 @@ Analyze the document and identify its type from these categories:
 - payment_gateway_agreement (Account Agreement)
 - financial_analysis (Exhibit B, Financial Budget)
 - debt_schedule (Exhibit A)
+- attorney_privileged_client_info (Attorney Client Privileged / Client Information)
 - fcra_consent
 - disclosure (Exhibit C)
 - high_interest_disclosure
@@ -313,7 +387,12 @@ Analyze the document and identify its type from these categories:
 - cancellation_notice
 - legal_plan_agreement
 - clixsign_certificate
-- unknown
+- clixsign_signers
+- clixsign_sender
+- clixsign_all
+- payment_bank_info
+- payment_deposit_schedule
+- payment_service_fees
 
 Return JSON with:
 {{
@@ -335,7 +414,7 @@ INDICATOR KEYWORDS:
 - engagement_term (Company Agreement, Client Services Agreement): "Engagement Terms", "Terms of Engagement", "Company Agreement", provider names like "Clarity", "Concordia", "Resync", "Aspire", "Palisade", phrases like "settlement fee", "settlement fee percentage", "monthly program payment".
 """
 
-# Comprehensive extraction prompt for unknown documents
+# Comprehensive extraction prompt for multi-section documents
 COMPREHENSIVE_EXTRACTION_PROMPT = f"""
 You are extracting ALL underwriting entities from a multi-document package. This is a SINGLE COMPREHENSIVE extraction - extract everything in ONE pass. Use null for missing fields. Return ONLY valid JSON.
 
@@ -343,9 +422,10 @@ You are extracting ALL underwriting entities from a multi-document package. This
 
 CRITICAL SUCCESS FACTORS:
 1. EXTRACT EVERYTHING in this single request - no follow-up extractions will be made
-2. Be thorough and systematic - scan the ENTIRE document for all entity types
+2. Be thorough and systematic - scan the ENTIRE document for all 17 required entity types
 3. For lists (debt_schedule, payment_service_fees, etc.), extract ALL entries completely
 4. Use null for missing fields but ensure you check the entire document first
+5. Every document MUST contain at least one of the 17 required sections - there are no "unknown" documents
 
 DOCUMENT TYPE DISAMBIGUATION:
 - Account Agreement/Client Information Sheet/Bank Info → payment_gateway_agreement
@@ -353,6 +433,7 @@ DOCUMENT TYPE DISAMBIGUATION:
 - Financial tables/Exhibit B/Financial Budget → financial_analysis
 - Creditor lists/Exhibit A → debt_schedule
 - Legal plan enrollment → legal_plan_agreement
+- Attorney Client Privileged/Client Information → attorney_privileged_client_info
 - Digital signatures/ClixSign → clixsign_sender/clixsign_signers
 
 EXTRACTION STRATEGY:
@@ -386,6 +467,7 @@ Return this complete structure:
     "coclient_ssn": null,
     "coclient_dob": null,
     "client_initials": null,
+    "coclient_initials": null,
     "client_signature": null,
     "client_signature_date": null,
     "coclient_signature": null,
@@ -409,10 +491,16 @@ Return this complete structure:
     "coclient_signature": null,
     "coclient_signature_date": null,
     "client_initials": null,
+    "coclient_initials": null,
     "client_initials_count": null,
     "coclient_initials": null,
     "coclient_initials_count": null,
+    "coclient_initials_count": null,
     "page_count": null,
+    "identified_debts_ack_client_signature": null,
+    "identified_debts_ack_coclient_signature": null,
+    "privacy_policy_client_initials": null,
+    "privacy_policy_coclient_initials": null
   }},
   "fcra_consent": {{
     "file_id": null,
@@ -427,7 +515,13 @@ Return this complete structure:
     "name_on_account": null,
     "account_number": null,
     "current_balance": null,
-    "debt_type": null
+    "debt_type": null,
+    "client_name": null,
+    "client_signature": null,
+    "client_signature_date": null,
+    "coclient_name": null,
+    "coclient_signature": null,
+    "coclient_signature_date": null
   }}],
   "financial_analysis": {{
     "file_id": null,
@@ -459,14 +553,22 @@ Return this complete structure:
     "estimated_total_cost": null,
     "hardship_details": null,
     "client_signature": null,
-    "client_signature_date": null
+    "client_signature_date": null,
+    "coclient_signature": null,
+    "coclient_signature_date": null,
+    "client_initials": null,
+    "coclient_initials": null
   }},
   "disclosure": {{
     "file_id": null,
     "client_signature": null,
     "client_signature_date": null,
     "coclient_signature": null,
-    "coclient_signature_date": null
+    "coclient_signature_date": null,
+    "additional_disclosure_client_signature": null,
+    "additional_disclosure_client_signature_date": null,
+    "additional_disclosure_coclient_signature": null,
+    "additional_disclosure_coclient_signature_date": null
   }},
   "high_interest_disclosure": {{
     "file_id": null,
@@ -482,7 +584,10 @@ Return this complete structure:
     "file_id": null,
     "company_name": null,
     "settlement_fee_percent": null,
-    "client_initial": null,
+    "client_initials": null,
+    "coclient_initials": null,
+    "client_initials_count": null,
+    "coclient_initials_count": null,
     "is_all_initials_present": null
   }},
   "power_of_attorney": {{
@@ -524,7 +629,10 @@ Return this complete structure:
     "account_number": null,  // Bank account number
     "routing_number": null,  // Bank routing number (exactly 9 digits)
     "account_type": null,
-    "address": null,
+    "client_address": null,
+    "client_city": null,
+    "client_state": null,
+    "client_zipcode": null,
     "recurring_debit_authorization": null,
     "first_debit_date": null,
     "client_signature": null,
@@ -574,7 +682,15 @@ Return this complete structure:
     "is_all_initials_present": null,
     "client_signature": null,
     "signature_date": null,
-    "pages_count": null
+    "pages_count": null,
+    "member_agreement_client_signature": null,
+    "member_agreement_signature_date": null,
+    "member_acknowledge_client_initials": null,
+    "member_acknowledge_client_initials_count": null,
+    "member_acknowledge_client_signature": null,
+    "member_acknowledge_signature_date": null,
+    "member_info_client_signature": null,
+    "member_info_signature_date": null
   }},
   "clixsign_sender": {{
     "file_id": null,
@@ -598,16 +714,48 @@ Return this complete structure:
     "package_opened_at": null,
     "signature_adopted_at": null,
     "package_signed_at": null
-  }}]
+  }}],
+  "attorney_privileged_client_info": {{
+    "file_id": null,
+    "client_name": null,
+    "client_ssn": null,
+    "client_dob": null,
+    "client_employer": null,
+    "client_title": null,
+    "client_classification": null,
+    "client_email": null,
+    "client_street": null,
+    "client_city": null,
+    "client_state": null,
+    "client_zipcode": null,
+    "client_home_phone": null,
+    "client_cell_phone": null,
+    "coclient_name": null,
+    "coclient_ssn": null,
+    "coclient_dob": null,
+    "coclient_employer": null,
+    "coclient_title": null,
+    "coclient_classification": null,
+    "coclient_email": null,
+    "is_married_to_coclient": null,
+    "has_security_clearance": null,
+    "is_in_bankruptcy": null,
+    "is_enrolled_in_credit_counseling": null,
+    "client_signature": null,
+    "client_signature_date": null,
+    "coclient_signature": null,
+    "coclient_signature_date": null
+  }}
 }}
 
 EXTRACTION STRATEGY:
-1. First identify which document types are present
-2. For each identified type, extract ALL its fields
-3. Use null for fields that are not visible
-4. Do NOT skip any fields - they are all required
+1. First identify which of the 17 required sections are present in this document
+2. For each identified section, extract ALL its fields completely
+3. Use null for fields that are not visible in the document
+4. Do NOT skip any fields - they are all required for database storage
+5. Remember: documents can contain multiple sections or be split across documents
 
-IMPORTANT: ALL entities above are required parts of the underwriting package.
+IMPORTANT: ALL 17 entities above are the complete set of possible underwriting sections. Every document must map to at least one of these.
 """
 
 def get_prompt_for_document_type(document_type: str) -> str:
@@ -622,6 +770,7 @@ def get_prompt_for_document_type(document_type: str) -> str:
         'debt_schedule': DEBT_SCHEDULE_PROMPT,
         'cancellation_notice': CANCELLATION_NOTICE_PROMPT,
         'legal_plan_agreement': LEGAL_PLAN_AGREEMENT_PROMPT,
+        'attorney_privileged_client_info': ATTORNEY_PRIVILEGED_CLIENT_INFO_PROMPT,
         'document_detection': DOCUMENT_TYPE_DETECTION_PROMPT,
         'comprehensive': COMPREHENSIVE_EXTRACTION_PROMPT
     }
@@ -745,7 +894,11 @@ Return STRICT JSON with exactly this shape:
     "client_signature": "Signature text/indicator if present",
     "client_signature_date": "YYYY-MM-DD or null",
     "coclient_signature": "Co-client signature indicator if present",
-    "coclient_signature_date": "YYYY-MM-DD or null"
+    "coclient_signature_date": "YYYY-MM-DD or null",
+    "additional_disclosure_client_signature": "Client signature indicator if present",
+    "additional_disclosure_client_signature_date": "YYYY-MM-DD or null",
+    "additional_disclosure_coclient_signature": "Co-client signature indicator if present",
+    "additional_disclosure_coclient_signature_date": "YYYY-MM-DD or null"
   }}
 }}
 
@@ -840,7 +993,10 @@ def get_payment_bank_info_prompt() -> str:
     - "Routing Number" (9 digits, e.g., "043000096", "322271627")
     - "Account Type" ("Checking" or "Savings")
     - "Authorizing Person's Name (as it appears on check)" 
-    - "Address (as it appears on check)", "City", "State", "Zip"
+    - "client_address"
+    - "client_city"
+    - "client_state"
+    - "client_zipcode"
     - "Recurring Debit Authorization" (dollar amount like "$651.57", "$631.23")
     - "Date of First Debit" (e.g., "Sep 15, 2025")
     - "Client Signature" and "Date" lines at bottom
@@ -854,7 +1010,10 @@ def get_payment_bank_info_prompt() -> str:
       "account_number": null,
       "routing_number": null,
       "account_type": null,
-      "address": null,
+      "client_address": null,
+      "client_city": null,
+      "client_state": null,
+      "client_zipcode": null,
       "recurring_debit_authorization": null,
       "first_debit_date": null,
       "client_signature": null,
@@ -869,6 +1028,5 @@ def get_payment_bank_info_prompt() -> str:
     - account_type: Must be "checking" or "savings" (lowercase)
     - recurring_debit_authorization: Extract the dollar amount from "Recurring Debit Authorization" field, remove $ symbol (e.g., 651.57, 631.23)
     - first_debit_date: Format as YYYY-MM-DD
-    - address: Combine Address + City + State + Zip into one field
     - If a field is blank or not visible, keep it null
     """
