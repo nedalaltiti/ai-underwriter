@@ -22,8 +22,7 @@ from prompts.underwriting_prompts import (
     get_targeted_service_fees_prompt,
     get_targeted_disclosure_prompt,
     get_targeted_power_of_attorney_prompt,
-    get_targeted_account_agreement_prompt,
-    BASE_EXTRACTION_RULES
+    get_targeted_account_agreement_prompt
 )
 from utils.json_parser import extract_json_from_response
 
@@ -259,7 +258,8 @@ class GeminiClient:
                 'company agreement': ('engagement_term', self._extract_engagement_term),
                 'engagement terms': ('engagement_term', self._extract_engagement_term),
                 'client service agreement': ('engagement_term', self._extract_engagement_term),
-                'service agreement': ('engagement_term', self._extract_engagement_term),
+                'services agreement': ('engagement_term', self._extract_engagement_term),
+                'csa': ('engagement_term', self._extract_engagement_term),
                 'limited scope retainer': ('engagement_term', self._extract_engagement_term),
                 'retainer agreement': ('engagement_term', self._extract_engagement_term),
                 'terms of engagement': ('engagement_term', self._extract_engagement_term),
@@ -288,6 +288,16 @@ class GeminiClient:
                 'clixsign sender': ('clixsign_all', self._extract_clixsign_data),
                 'program disclosure': ('program_disclosure', self._extract_program_disclosure)
             }
+            # Broaden aliases for better recall
+            extraction_map.update({
+                'client information sheet': ('payment_gateway_agreement', self._extract_payment_gateway),
+                'client information form': ('payment_gateway_agreement', self._extract_payment_gateway),
+                'client information': ('payment_gateway_agreement', self._extract_payment_gateway),
+                'account information': ('payment_gateway_agreement', self._extract_payment_gateway),
+                'account information sheet': ('payment_gateway_agreement', self._extract_payment_gateway),
+                'attorney client information': ('attorney_privileged_client_info', self._extract_attorney_privileged),
+                'client info form': ('attorney_privileged_client_info', self._extract_attorney_privileged)
+            })
             
             # Track what we've already extracted to avoid duplicates
             extracted_entities = set()
