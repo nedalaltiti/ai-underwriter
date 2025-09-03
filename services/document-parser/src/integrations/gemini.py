@@ -472,33 +472,156 @@ class GeminiClient:
                         logger.error(f"Fallback extraction error for {entity_name}: {e}")
                         package_data[entity_name] = {'file_id': file_id}
             
-            if 'clixsign_sender' not in package_data and 'clixsign_signers' not in package_data:
-                logger.warning("No clixsign data detected - attempting aggressive clixsign extraction")
-                try:
-                    clixsign_result = await self._extract_clixsign_data(pdf_data, file_id)
-                    if clixsign_result:
-                        if 'clixsign_sender' in clixsign_result:
-                            package_data['clixsign_sender'] = clixsign_result['clixsign_sender']
-                        if 'clixsign_signers' in clixsign_result:
-                            package_data['clixsign_signers'] = clixsign_result['clixsign_signers']
-                        logger.info("Aggressive clixsign extraction successful")
-                    else:
-                        logger.debug("No clixsign data found in document")
-                except Exception as e:
-                    logger.debug(f"Aggressive clixsign extraction failed: {e}")
+            # Comprehensive aggressive fallback for ALL entities that were detected but not extracted
+            # Build a complete entity->extractor mapping
+            all_entity_extractors = {
+                'payment_gateway_agreement': self._extract_payment_gateway,
+                'engagement_term': self._extract_engagement_term,
+                'financial_analysis': self._extract_financial_analysis,
+                'power_of_attorney': self._extract_power_of_attorney,
+                'payment_bank_info': self._extract_payment_bank_info,
+                'debt_schedule': self._extract_debt_schedule,
+                'payment_service_fees': self._extract_service_fees,
+                'payment_deposit_schedule': self._extract_deposit_schedule,
+                'legal_plan_agreement': self._extract_legal_plan,
+                'attorney_privileged_client_info': self._extract_attorney_privileged,
+                'fcra_consent': self._extract_fcra,
+                'cancellation_notice': self._extract_cancellation,
+                'disclosure': self._extract_disclosure,
+                'high_interest_disclosure': self._extract_high_interest,
+                'program_disclosure': self._extract_program_disclosure,
+                'clixsign_all': self._extract_clixsign_data
+            }
             
-            # Special aggressive fallback for engagement_term
+            # Check what entities should exist based on detected sections
+            detected_entities = set()
+            for section in detected_sections:
+                section_lower = section.lower().strip()
+                for search_key, entity_name, extractor in extraction_priority:
+                    if (search_key in section_lower or 
+                        section_lower in search_key or 
+                        (len(search_key.split()) > 1 and all(word in section_lower for word in search_key.split()))):
+                        detected_entities.add(entity_name)
+                        break
+            
+            # Attempt aggressive extraction for any detected entity that's missing
+            for entity_name in detected_entities:
+                if entity_name not in package_data and entity_name in all_entity_extractors:
+                    logger.warning(f"Detected entity {entity_name} not extracted - attempting aggressive extraction")
+                    try:
+                        extractor = all_entity_extractors[entity_name]
+                        result = await extractor(pdf_data, file_id)
+                        if result:
+                            # Handle different entity types appropriately
+                            if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
+                                if isinstance(result, list):
+                                    package_data[entity_name] = result
+                                else:
+                                    package_data[entity_name] = [result]
+                            elif entity_name == 'clixsign_all':
+                                if isinstance(result, dict):
+                                    if 'clixsign_sender' in result:
+                                        package_data['clixsign_sender'] = result['clixsign_sender']
+                                    if 'clixsign_signers' in result:
+                                        package_data['clixsign_signers'] = result['clixsign_signers']
+                            else:
+                                package_data[entity_name] = result
+                            logger.info(f"Aggressive extraction successful for {entity_name}")
+                        else:
+                            # Create appropriate placeholder based on entity type
+                            if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
+                                package_data[entity_name] = []  # Empty list for list entities
+                                logger.warning(f"Aggressive extraction failed for {entity_name} - using empty list")
+                            elif entity_name == 'clixsign_all':
+                                # Skip placeholder for clixsign_all - it's handled specially
+                                logger.warning(f"Aggressive extraction failed for {entity_name} - skipping placeholder")
+                            else:
+                                package_data[entity_name] = {'file_id': file_id}
+                                logger.warning(f"Aggressive extraction failed for {entity_name} - using placeholder")
+                    except Exception as e:
+                        logger.error(f"Aggressive extraction error for {entity_name}: {e}")
+                        # Create appropriate placeholder based on entity type
+                        if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
+                            package_data[entity_name] = []  # Empty list for list entities
+                        elif entity_name != 'clixsign_all':  # Skip clixsign_all
+                            package_data[entity_name] = {'file_id': file_id}
+            
+            # Final safety net: Always attempt engagement_term if missing (it's in every document)
             if 'engagement_term' not in package_data:
-                logger.warning("No engagement_term data detected - attempting aggressive engagement extraction")
+                logger.warning("engagement_term missing despite all fallbacks - final attempt")
                 try:
                     engagement_result = await self._extract_engagement_term(pdf_data, file_id)
                     if engagement_result:
                         package_data['engagement_term'] = engagement_result
-                        logger.info("Aggressive engagement_term extraction successful")
+                        logger.info("Final engagement_term extraction successful")
                     else:
-                        logger.debug("No engagement_term data found in document")
+                        package_data['engagement_term'] = {'file_id': file_id}
+                        logger.warning("Final engagement_term extraction failed - using placeholder")
                 except Exception as e:
-                    logger.debug(f"Aggressive engagement_term extraction failed: {e}")
+                    logger.error(f"Final engagement_term extraction error: {e}")
+                    package_data['engagement_term'] = {'file_id': file_id}
+            
+            # Comprehensive signature and initials backfill for ALL sections
+            signature_critical_fields = {
+                'engagement_term': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date', 'client_initials', 'coclient_initials'],
+                'financial_analysis': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date', 'client_initials', 'coclient_initials'],
+                'power_of_attorney': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date'],
+                'payment_gateway_agreement': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date', 'client_initials', 'coclient_initials'],
+                'legal_plan_agreement': ['member_agreement_client_signature', 'member_agreement_signature_date', 'member_acknowledge_client_signature', 'member_acknowledge_signature_date', 'member_info_client_signature', 'member_info_signature_date', 'member_acknowledge_client_initials', 'member_acknowledge_client_initials_count'],
+                'cancellation_notice': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date'],
+                'disclosure': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date', 'client_initials', 'coclient_initials'],
+                'program_disclosure': ['client_initials', 'coclient_initials'],
+                'payment_bank_info': ['client_signature', 'client_signature_date']
+            }
+            
+            for entity_name, critical_fields in signature_critical_fields.items():
+                if entity_name in package_data and isinstance(package_data[entity_name], dict):
+                    entity_data = package_data[entity_name]
+                    missing_fields = [field for field in critical_fields if entity_data.get(field) in (None, '', 'null', 'NOT_FOUND')]
+                    
+                    if missing_fields:
+                        logger.warning(f"{entity_name}.signature_initials_missing: {missing_fields}")
+                        try:
+                            # Create targeted prompt for missing signature/initial fields
+                            fields_json = ",\n  ".join([f'"{field}": null' for field in missing_fields])
+                            targeted_prompt = f"""
+                            Extract ONLY the following missing fields from this document section.
+                            
+                            SCAN THE ENTIRE PAGE from top to bottom, especially:
+                            - Bottom of page for client initials (usually "Initials: XX" format)
+                            - Signature blocks and dates
+                            - Co-client information if joint account
+                            
+                            Return STRICT JSON with EXACTLY these keys:
+                            {{
+                              {fields_json}
+                            }}
+                            
+                            CRITICAL INSTRUCTIONS:
+                             - For initials: Check bottom of page after all content
+                             - For initial counts: Count ONLY within THIS specific section, NOT the entire document
+                             - For signatures: Extract ACTUAL CLIENT NAME from signature line
+                             - For dates: Use YYYY-MM-DD format
+                             - Section isolation: Each section has independent initials/signatures - don't cross-count
+                             - If not found, keep as null
+                            """
+                            
+                            backfill_result = await self._make_gemini_request(targeted_prompt, pdf_data)
+                            if backfill_result:
+                                filled_count = 0
+                                for field in missing_fields:
+                                    if field in backfill_result and backfill_result[field] not in (None, '', 'null'):
+                                        entity_data[field] = backfill_result[field]
+                                        filled_count += 1
+                                
+                                if filled_count > 0:
+                                    logger.info(f"{entity_name}.signature_initials_backfilled: {filled_count}/{len(missing_fields)} fields")
+                                else:
+                                    logger.warning(f"{entity_name}.signature_initials_backfill_empty")
+                            else:
+                                logger.warning(f"{entity_name}.signature_initials_backfill_failed")
+                        except Exception as e:
+                            logger.debug(f"{entity_name}.signature_initials_backfill_error: {e}")
             
             # Add file_id to all entities
             self._add_file_id_to_entities(package_data, file_id)
@@ -1842,34 +1965,53 @@ class GeminiClient:
         prompt = """
         Extract ClixSign Certificate or ClixSign Completion Certificate information.
         
-        Look for:
-        - Signature Package Details (Final Status, Package Title, Package ID)
-        - Sender Information (Name, Email Address, IP Address, Sending Entity)
-        - Signers section (Name, Email Address, IP Address, User Agent, timestamps)
+        CRITICAL: Look for the exact data shown in these sections:
         
-        Return JSON:
+        1. SIGNATURE PACKAGE DETAILS section:
+           - Final Status (e.g., "Completed")
+           - Final Status Date (e.g., "2025-09-03T13:38:44-05:00")
+           - Package Title (e.g., "Aspire Contract EN")
+           - Package ID (e.g., "15570452")
+           - # of Signers (e.g., "1")
+        
+        2. SENDER INFORMATION section:
+           - Name (e.g., "Michael Tomaszkiewicz")
+           - Email Address (e.g., "michael.tomaszkiewicz@loanify.ai")
+           - IP Address (e.g., "184.98.77.246") 
+           - Sending Entity (e.g., "Loanify, Inc")
+        
+        3. SIGNERS section (for each signer):
+           - Signer name (e.g., "Joshua")
+           - Email Address (e.g., "joshuadk@gmail.com")
+           - IP Address (e.g., "100.8.7.225")
+           - User Agent (browser info)
+           - Package Opened At timestamp
+           - Signature Adopted At timestamp
+           - Package Signed At timestamp
+        
+        Return JSON with EXACT values from the certificate:
         {
           "clixsign_sender": {
-            "package_id": "Package ID value",
-            "package_title": "Package Title value", 
-            "final_status": "Final Status value",
-            "final_status_date": "Final Status Date value",
-            "sending_entity": "Sending Entity value",
-            "sender_name": "Sender Name value",
-            "sender_email_address": "Sender Email Address value",
-            "sender_ip_address": "Sender IP Address value",
-            "signers_count": "# of Signers value"
+            "package_id": "exact Package ID from certificate",
+            "package_title": "exact Package Title from certificate", 
+            "final_status": "exact Final Status from certificate",
+            "final_status_date": "exact Final Status Date from certificate",
+            "sending_entity": "exact Sending Entity from certificate",
+            "sender_name": "exact Name from Sender Information",
+            "sender_email_address": "exact Email Address from Sender Information",
+            "sender_ip_address": "exact IP Address from Sender Information",
+            "signers_count": "exact # of Signers value"
           },
           "clixsign_signers": [
             {
-              "package_id": "Package ID value",
-              "signer_name": "Signer name from Signers section",
-              "signer_email_address": "Signer Email Address",
-              "signer_ip_address": "Signer IP Address", 
-              "signer_user_agent": "User Agent information",
-              "package_opened_at": "Package Opened At timestamp",
-              "signature_adopted_at": "Signature Adopted At timestamp", 
-              "package_signed_at": "Package Signed At timestamp"
+              "package_id": "same Package ID as above",
+              "signer_name": "exact signer name from Signers section",
+              "signer_email_address": "exact Email Address from signer",
+              "signer_ip_address": "exact IP Address from signer", 
+              "signer_user_agent": "exact User Agent from signer",
+              "package_opened_at": "exact Package Opened At timestamp",
+              "signature_adopted_at": "exact Signature Adopted At timestamp", 
+              "package_signed_at": "exact Package Signed At timestamp"
             }
           ]
         }

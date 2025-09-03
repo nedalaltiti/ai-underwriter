@@ -20,11 +20,17 @@ CRITICAL EXTRACTION RULES:
 7. For SSNs, maintain format with dashes (e.g., "123-45-6789" or "XXX-XX-6789" if masked)
 8. For addresses, extract as clean text without brackets, braces, or trailing commas
 9. For signatures, extract the ACTUAL CLIENT NAME that appears on the signature line (e.g., "Robert Adams", "John Smith")
-10. For initials, look for 2-4 capital letters (e.g., "JJCS", "AA", "CW")
-11. Match the EXACT field names and JSON shape requested
-12. Process systematically: don't jump around, extract section by section
-13. For initial counts: scan only the relevant document section until the signature page for that section, not the entire multi-document package
-14. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
+10. For initials, look for 2-4 capital letters (e.g., "JJCS", "AA", "CW") - ALWAYS check the bottom of each page
+11. CRITICAL: Scan the ENTIRE page from top to bottom - client initials are often at the very bottom
+12. For each section, ALWAYS look for:
+    - Client signature and signature date
+    - Co-client signature and signature date (if joint account)
+    - Client initials (usually at bottom of page)
+    - Co-client initials (if present)
+13. Match the EXACT field names and JSON shape requested
+14. Process systematically: don't jump around, extract section by section
+15. For initial counts: CRITICAL - scan ONLY the specific section you're extracting, NOT the entire document. Each section has its own initial count that should be independent of other sections
+16. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
 """
 
 ENGAGEMENT_TERM_PROMPT = f"""
@@ -42,9 +48,10 @@ SPECIFIC EXTRACTION GUIDANCE:
 - Settlement fee percentage often appears as "25%" or "25.00%" 
 - Monthly payment amounts are in program details
 - Client signatures appear at the bottom
-- Initials: Look for 2-4 capital letters (e.g., "JD", "ABC", "JJCS") written by client throughout document
-- Initial counts: Count EVERY occurrence of client initials on each page (not just unique initials)
-- Example: If "JD" appears 5 times throughout document, client_initials_count = 5
+- Initials: Look for 2-4 capital letters (e.g., "JD", "ABC", "JJCS") written by client in the ENGAGEMENT TERM section ONLY
+- Initial counts: Count EVERY occurrence of client initials ONLY within the Engagement Term section (NOT the entire document)
+- Example: If "JD" appears 5 times in the engagement term section only, client_initials_count = 5
+- DO NOT count initials from other sections like Legal Plan, Financial Analysis, etc.
 
 Extract ALL these fields (use null if not found):
 
@@ -65,9 +72,9 @@ Extract ALL these fields (use null if not found):
   "coclient_signature": "Actual co-client name from signature line if present",
   "coclient_signature_date": "Co-client date if present",
   "client_initials": "Client initials found in document (e.g., JD, ABC, JJCS)",
-  "client_initials_count": "Total count of client initials from page 1 through ALL pages until client signature (including unnumbered pages)",
+  "client_initials_count": "Total count of client initials ONLY within the Engagement Term section (NOT the entire document or other sections)",
   "coclient_initials": "Co-client initials if present (e.g., MJ, XYZ)",
-  "coclient_initials_count": "Total count of how many times co-client initials appear throughout document",
+  "coclient_initials_count": "Total count of co-client initials ONLY within the Engagement Term section (NOT other sections)",
   "page_count": "Total pages in engagement term section",
   "identified_debts_ack_client_signature": "Actual client name from signature line",
   "identified_debts_ack_coclient_signature": "Actual co-client name from signature line if present",
@@ -202,11 +209,18 @@ Extract ALL these financial fields (use null if not found):
   "client_signature_date": "Date signed (YYYY-MM-DD)",
   "coclient_signature": "Actual co-client name from signature line if present",
   "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)",
-  "client_initials": "Client initials",
-  "coclient_initials": "Co-client initials if present",
+  "client_initials": "Client initials - IMPORTANT: Check the BOTTOM of the page after all tables and data",
+  "coclient_initials": "Co-client initials if present - Check bottom of page",
 }}
 
-Look for: Income/expense tables, Program Details section, hardship explanations
+CRITICAL SCANNING INSTRUCTIONS:
+1. Scan the ENTIRE page from top to bottom
+2. Look for Income/expense tables and financial data in the main section
+3. ALWAYS check the BOTTOM of the page for:
+   - Client initials (usually 2-4 letters like "GK", "AD", "LR")
+   - Signature lines
+   - Any additional fields after the financial tables
+4. Client initials are typically found at the very bottom, separate from the main financial data
 """
 
 DEBT_SCHEDULE_PROMPT = f"""
@@ -302,22 +316,63 @@ Extract the following information and return as JSON:
   "signature_date": "Signature date (YYYY-MM-DD)",
   "pages_count": "Total pages in document",
   "is_all_initials_present": "Are all initials present? (true/false)",
-  "member_agreement_client_signature": "Actual client name from signature line",
-  "member_agreement_signature_date": "Date client signed (YYYY-MM-DD)",
-  "member_acknowledge_client_initials": "Client initials",
-  "member_acknowledge_client_initials_count": "Number of client initials in document",
-  "member_acknowledge_client_signature": "Actual client name from signature line",
-  "member_acknowledge_signature_date": "Date client signed (YYYY-MM-DD)",
-  "member_info_client_signature": "Actual client name from signature line",
-  "member_info_signature_date": "Date client signed (YYYY-MM-DD)"
+  "member_agreement_client_signature": "Actual client name from MEMBER AGREEMENT signature line (often page 3)",
+  "member_agreement_signature_date": "Date from MEMBER AGREEMENT signature section (YYYY-MM-DD)",
+  "member_acknowledge_client_initials": "Client initials from checklist boxes (e.g., DD, JD, etc.)",
+  "member_acknowledge_client_initials_count": "TOTAL count of client initials ONLY in the Legal Plan Agreement section - count every DD, JD, etc. in checklist boxes of THIS section only (NOT other sections)",
+  "member_acknowledge_client_signature": "Actual client name from MEMBER ACKNOWLEDGEMENT signature line (often page 4)",
+  "member_acknowledge_signature_date": "Date from MEMBER ACKNOWLEDGEMENT signature section (YYYY-MM-DD)",
+  "member_info_client_signature": "Actual client name from MEMBER INFO signature line (often page 5)",
+  "member_info_signature_date": "Date from MEMBER INFO signature section (YYYY-MM-DD)"
 
 }}
 
+CRITICAL EXTRACTION INSTRUCTIONS:
+1. SCAN THE ENTIRE LEGAL PLAN AGREEMENT SECTION from page 1 to the last page
+2. COUNT ALL INITIALS in checklist boxes ONLY within the Legal Plan Agreement section (e.g., if you see DD in 5 different boxes in this section, count = 5)
+3. DO NOT count initials from other document sections (Engagement Terms, Financial Analysis, etc.)
+4. Look for THREE DIFFERENT signature sections across multiple pages:
+   - MEMBER AGREEMENT signatures (typically page 3)
+   - MEMBER ACKNOWLEDGEMENT signatures (typically page 4) 
+   - MEMBER INFO signatures (typically page 5)
+5. Extract ACTUAL CLIENT NAME from ALL signature lines (e.g., "Danielle Duncan")
+6. Look for signature dates next to each signature line (e.g., "8/6/2025" → "2025-08-06")
+7. Each signature section may be on a different page - scan all pages thoroughly
+
 Focus on:
-- Member information and contact details
-- Payment method and schedule
+- Member information and contact details in the form fields
+- Payment method and schedule details
 - Legal plan terms and duration
 - Bank or credit card payment information
+- INITIALS in all checklist boxes (count every occurrence)
+- CLIENT SIGNATURES at bottom of pages
+"""
+
+PROGRAM_DISCLOSURE_PROMPT = f"""
+You are extracting data from a Program Disclosure document.
+
+{BASE_EXTRACTION_RULES}
+
+Extract ALL these fields (use null if not found):
+
+{{
+  "file_id": null,
+  "company_name": "Debt settlement company name",
+  "settlement_fee_percent": "Settlement fee percentage",
+  "client_initials": "Client initials found ONLY in the Program Disclosure section",
+  "coclient_initials": "Co-client initials if present ONLY in the Program Disclosure section",
+  "client_initials_count": "Total count of client initials ONLY within the Program Disclosure section (NOT other sections)",
+  "coclient_initials_count": "Total count of co-client initials ONLY within the Program Disclosure section (NOT other sections)",
+  "is_all_initials_present": "Are all required initials present in this section? (true/false)"
+}}
+
+CRITICAL SECTION-SPECIFIC INSTRUCTIONS:
+1. Count initials ONLY within the Program Disclosure section
+2. DO NOT count initials from Engagement Terms, Legal Plan, Financial Analysis, or other sections
+3. Each section has its own independent initial count
+4. Look for signature blocks within this specific section
+
+Focus on: Program terms, disclosure statements, initial requirements for this section only
 """
 
 ATTORNEY_PRIVILEGED_CLIENT_INFO_PROMPT = f"""
@@ -770,6 +825,7 @@ def get_prompt_for_document_type(document_type: str) -> str:
         'debt_schedule': DEBT_SCHEDULE_PROMPT,
         'cancellation_notice': CANCELLATION_NOTICE_PROMPT,
         'legal_plan_agreement': LEGAL_PLAN_AGREEMENT_PROMPT,
+        'program_disclosure': PROGRAM_DISCLOSURE_PROMPT,
         'attorney_privileged_client_info': ATTORNEY_PRIVILEGED_CLIENT_INFO_PROMPT,
         'document_detection': DOCUMENT_TYPE_DETECTION_PROMPT,
         'comprehensive': COMPREHENSIVE_EXTRACTION_PROMPT
@@ -816,7 +872,7 @@ def get_targeted_financial_analysis_prompt(missing_fields: list[str]) -> str:
     """
     fields_list = ",\n  ".join([f'"{f}": null' for f in missing_fields])
     return f"""
-You are extracting ONLY the following fields from a Financial Analysis page. Scan the table headers and their values. 
+You are extracting ONLY the following fields from a Financial Analysis page. Scan the ENTIRE page from top to bottom.
 
 {BASE_EXTRACTION_RULES}
 
@@ -826,11 +882,17 @@ Return STRICT JSON with EXACTLY these keys and no others. If a field isn't clear
   {fields_list}
 }}
 
+CRITICAL SCANNING INSTRUCTIONS:
+1. Scan the ENTIRE page from top to bottom - don't stop at the financial tables
+2. Check the BOTTOM of the page for client initials (usually 2-4 letters like "GK", "AD", "LR")
+3. Client initials are typically found at the very bottom, separate from the main financial data
+
 Hints:
 - "Fee Method" typically appears near program details and can be "ACH".
 - "Estimated Program Settle Amount" is usually a currency in the Program Details section.
 - Phone numbers appear in Client Details.
 - If multiple phone numbers exist, assign them according to their labels: day_phone, evening_phone, cell_phone.
+- CLIENT INITIALS: Always check the bottom of the page after all tables and financial data
 """
 
 
