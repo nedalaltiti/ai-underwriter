@@ -217,6 +217,10 @@ class GeminiClient:
         - Service Fees table
         - Deposit Schedule table
         - Legal Plan Agreement
+        - Member Agreement
+        - Member Acknowledgment Check List  
+        - Member Information Sheet
+        - Veritas Legal Plan
         - Attorney Client Privileged / Client Information
         - High Interest Disclosure
         - FCRA Consent
@@ -294,6 +298,11 @@ class GeminiClient:
                 # Legal documents
                 ('legal plan agreement', 'legal_plan_agreement', self._extract_legal_plan),
                 ('legal plan', 'legal_plan_agreement', self._extract_legal_plan),
+                ('member agreement', 'legal_plan_agreement', self._extract_legal_plan),
+                ('member acknowledgment check list', 'legal_plan_agreement', self._extract_legal_plan),
+                ('member acknowledgment', 'legal_plan_agreement', self._extract_legal_plan),
+                ('member information sheet', 'legal_plan_agreement', self._extract_legal_plan),
+                ('veritas legal plan', 'legal_plan_agreement', self._extract_legal_plan),
                 
                 # Client information
                 ('attorney client privileged', 'attorney_privileged_client_info', self._extract_attorney_privileged),
@@ -416,7 +425,7 @@ class GeminiClient:
                 'payment_bank_info': ('primary account information', self._extract_payment_bank_info),
                 'payment_service_fees': ('service fees table', self._extract_service_fees),
                 'payment_deposit_schedule': ('deposit schedule table', self._extract_deposit_schedule),
-                'legal_plan_agreement': ('legal plan agreement', self._extract_legal_plan),
+                'legal_plan_agreement': ('member agreement', self._extract_legal_plan),
                 'clixsign_all': ('clixsign completion certificate', self._extract_clixsign_data),
                 'debt_schedule': ('schedule d', self._extract_debt_schedule),
                 'disclosure': ('disclosure', self._extract_disclosure),
