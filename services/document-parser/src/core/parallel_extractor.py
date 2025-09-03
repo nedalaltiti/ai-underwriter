@@ -51,10 +51,10 @@ class ParallelDocumentExtractor:
         if any('account agreement' in str(ind).lower() or 'payment gateway' in str(ind).lower() for ind in doc_indicators):
             extraction_tasks.append(('payment_gateway', self._extract_payment_gateway(pdf_data)))
             
-        if any('financial analysis' in str(ind).lower() or 'exhibit b' in str(ind).lower() for ind in doc_indicators):
+        if any('financial analysis' in str(ind).lower() for ind in doc_indicators):
             extraction_tasks.append(('financial_analysis', self._extract_financial_analysis(pdf_data)))
             
-        if any('debt schedule' in str(ind).lower() or 'exhibit a' in str(ind).lower() for ind in doc_indicators):
+        if any('debt schedule' in str(ind).lower() for ind in doc_indicators):
             extraction_tasks.append(('debt_schedule', self._extract_debt_schedule(pdf_data)))
             
         if any('attorney' in str(ind).lower() and 'privileged' in str(ind).lower() or 'client information' in str(ind).lower() for ind in doc_indicators):
@@ -113,8 +113,8 @@ Identify what type of document this is. Look for key indicators:
 
 - Engagement Terms: Settlement company names (Clarity, Concordia, etc), settlement fee %
 - Account Agreement: FORTH/RAM/CFT processor, bank account info
-- Financial Analysis: Exhibit B, income/expense tables
-- Debt Schedule: Exhibit A, creditor list
+- Financial Analysis: income/expense tables
+- Debt Schedule: creditor list
 - Attorney Privileged: Attorney Client Privileged, Client Information forms
 - Digital Signatures: ClixSign, Digital signatures
 - Cancellation Notice: Cancellation Notice
@@ -218,7 +218,7 @@ Return null for missing fields. ALL fields are required.
     async def _extract_financial_analysis(self, pdf_data: Dict[str, str]) -> Optional[Dict]:
         """Extract ALL financial analysis fields."""
         prompt = """
-Extract ALL fields from Financial Analysis (Exhibit B):
+Extract ALL fields from Financial Analysis:
 
 {
   "applicant_name": "Applicant name",
@@ -263,7 +263,7 @@ Return null for missing fields. ALL fields are required.
     async def _extract_debt_schedule(self, pdf_data: Dict[str, str]) -> Optional[Dict]:
         """Extract only debt schedule."""
         prompt = """
-Extract creditor list from Debt Schedule (Exhibit A):
+Extract creditor list from Debt Schedule:
 
 {
   "debt_schedule": [

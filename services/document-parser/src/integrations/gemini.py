@@ -205,15 +205,13 @@ class GeminiClient:
         - Primary Account Information (bank details section)
         - Company Agreement / Engagement Terms
         - Power of Attorney
-        - Financial Analysis (Exhibit B)
         - Financial Budget
         - Income/Expense Analysis
         - Budget Analysis
         - Financial Information
-        - Debt Schedule (Exhibit A)
+        - Schedule D / Schedule of Enrolled Identified Debt
         - Service Fees table
         - Deposit Schedule table
-        - Disclosure sections (Exhibit C)
         - Legal Plan Agreement
         - Attorney Client Privileged / Client Information
         - High Interest Disclosure
@@ -239,7 +237,7 @@ class GeminiClient:
             package_data = {
                 'file_id': file_id,
                 'document_type': 'multi_section',
-                'confidence_score': 0.95,
+                'confidence_score': 0.85,
                 'extraction_metadata': {
                     'extraction_time': datetime.now().isoformat(),
                     'model': self.model_name,
@@ -258,9 +256,7 @@ class GeminiClient:
                 ('engagement terms', 'engagement_term', self._extract_engagement_term),
                 ('services agreement', 'engagement_term', self._extract_engagement_term),
                 ('csa', 'engagement_term', self._extract_engagement_term),
-                ('financial analysis (exhibit b)', 'financial_analysis', self._extract_financial_analysis),
                 ('financial analysis', 'financial_analysis', self._extract_financial_analysis),
-                ('exhibit b', 'financial_analysis', self._extract_financial_analysis),
                 ('financial budget', 'financial_analysis', self._extract_financial_analysis),
                 ('income expense', 'financial_analysis', self._extract_financial_analysis),
                 ('budget analysis', 'financial_analysis', self._extract_financial_analysis),
@@ -274,9 +270,10 @@ class GeminiClient:
                 
                 # Document sections
                 ('power of attorney', 'power_of_attorney', self._extract_power_of_attorney),
-                ('debt schedule (exhibit a)', 'debt_schedule', self._extract_debt_schedule),
+                ('schedule d', 'debt_schedule', self._extract_debt_schedule),
+                ('schedule of enrolled identified debt', 'debt_schedule', self._extract_debt_schedule),
+                ('enrolled identified debt', 'debt_schedule', self._extract_debt_schedule),
                 ('debt schedule', 'debt_schedule', self._extract_debt_schedule),
-                ('exhibit a', 'debt_schedule', self._extract_debt_schedule),
                 ('service fees table', 'payment_service_fees', self._extract_service_fees),
                 ('service fees', 'payment_service_fees', self._extract_service_fees),
                 ('payment schedule table', 'payment_deposit_schedule', self._extract_deposit_schedule),
@@ -299,8 +296,6 @@ class GeminiClient:
                 # Disclosure sections - specific first to avoid conflicts
                 ('high interest disclosure', 'high_interest_disclosure', self._extract_high_interest),
                 ('program disclosure', 'program_disclosure', self._extract_program_disclosure),
-                ('disclosure sections (exhibit c)', 'disclosure', self._extract_disclosure),
-                ('exhibit c', 'disclosure', self._extract_disclosure),
                 ('disclosure', 'disclosure', self._extract_disclosure),  # Most generic last
                 
                 # Clixsign sections
@@ -395,7 +390,8 @@ class GeminiClient:
             critical_entities = {
                 'engagement_term': ('client service agreement', self._extract_engagement_term),
                 'financial_analysis': ('financial analysis', self._extract_financial_analysis),
-                'payment_gateway_agreement': ('account agreement', self._extract_payment_gateway)
+                'payment_gateway_agreement': ('account agreement', self._extract_payment_gateway),
+                'debt_schedule': ('schedule d', self._extract_debt_schedule)
             }
             
             # Ensure critical entities are extracted if they were detected
@@ -496,9 +492,9 @@ class GeminiClient:
                                 detected_sections.append('attorney_privileged_client_info')
                             elif 'engagement' in indicator_lower or 'client service' in indicator_lower or 'retainer' in indicator_lower or 'company agreement' in indicator_lower:
                                 detected_sections.append('engagement_term')
-                            elif 'financial analysis' in indicator_lower or 'exhibit b' in indicator_lower or 'financial budget' in indicator_lower or 'income' in indicator_lower or 'budget' in indicator_lower:
+                            elif 'financial analysis' in indicator_lower or 'financial budget' in indicator_lower or 'income' in indicator_lower or 'budget' in indicator_lower:
                                 detected_sections.append('financial_analysis')
-                            elif 'debt schedule' in indicator_lower or 'exhibit a' in indicator_lower:
+                            elif 'debt schedule' in indicator_lower:
                                 detected_sections.append('debt_schedule')
                             elif 'service fees' in indicator_lower:
                                 detected_sections.append('payment_service_fees')

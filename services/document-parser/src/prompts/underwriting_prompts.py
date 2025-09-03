@@ -163,7 +163,7 @@ Focus on: Client Information section, signatures
 """
 
 FINANCIAL_ANALYSIS_PROMPT = f"""
-You are extracting data from a Financial Analysis (Exhibit B) or Financial Budget.
+You are extracting data from a Financial Analysis or Financial Budget.
 
 {BASE_EXTRACTION_RULES}
 
@@ -210,7 +210,7 @@ Look for: Income/expense tables, Program Details section, hardship explanations
 """
 
 DEBT_SCHEDULE_PROMPT = f"""
-You are extracting creditor information from a Debt Schedule (Exhibit A).
+You are extracting creditor information from a Debt Schedule.
 
 {BASE_EXTRACTION_RULES}
 
@@ -377,11 +377,11 @@ Analyze the document and identify its type from these categories:
 - engagement_term (Company Agreement, Client Services Agreement)
 - power_of_attorney 
 - payment_gateway_agreement (Account Agreement)
-- financial_analysis (Exhibit B, Financial Budget)
-- debt_schedule (Exhibit A)
+- financial_analysis (Financial Budget)
+- debt_schedule
 - attorney_privileged_client_info (Attorney Client Privileged / Client Information)
 - fcra_consent
-- disclosure (Exhibit C)
+- disclosure
 - high_interest_disclosure
 - program_disclosure
 - cancellation_notice
@@ -430,8 +430,8 @@ CRITICAL SUCCESS FACTORS:
 DOCUMENT TYPE DISAMBIGUATION:
 - Account Agreement/Client Information Sheet/Bank Info → payment_gateway_agreement
 - Debt settlement companies (Clarity, Concordia, etc.) → engagement_term  
-- Financial tables/Exhibit B/Financial Budget → financial_analysis
-- Creditor lists/Exhibit A → debt_schedule
+- Financial tables/Financial Budget → financial_analysis
+- Creditor lists → debt_schedule
 - Legal plan enrollment → legal_plan_agreement
 - Attorney Client Privileged/Client Information → attorney_privileged_client_info
 - Digital signatures/ClixSign → clixsign_sender/clixsign_signers

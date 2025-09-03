@@ -71,7 +71,7 @@ class FCRAConsumerReportConsent(BaseUnderwritingModel):
 
 
 class DebtSchedule(BaseUnderwritingModel):
-    """Debt Schedule (Exhibit A) - can have multiple entries per file."""
+    """Debt Schedule - can have multiple entries per file."""
     
     file_id: int = Field(..., description="File identifier")
     creditor_name: Optional[str] = Field(None, max_length=255)
@@ -88,7 +88,7 @@ class DebtSchedule(BaseUnderwritingModel):
 
 
 class FinancialAnalysis(BaseUnderwritingModel):
-    """Financial Analysis (Exhibit B) document model."""
+    """Financial Analysis document model."""
     
     file_id: int = Field(..., description="File identifier")
     applicant_name: Optional[str] = Field(None, max_length=255)
@@ -127,7 +127,7 @@ class FinancialAnalysis(BaseUnderwritingModel):
 
 
 class Disclosure(BaseUnderwritingModel):
-    """Disclosure (Exhibit C) document model."""
+    """Disclosure document model."""
     
     file_id: int = Field(..., description="File identifier")
     client_signature: Optional[str] = Field(None, max_length=255)
@@ -261,7 +261,7 @@ class PaymentGatewayBankInfo(BaseUnderwritingModel):
 
 
 class PaymentGatewayDepositSchedule(BaseUnderwritingModel):
-    """Payment Gateway Deposit Schedule - multiple entries per file."""
+    """Payment Gateway Deposit Schedule document model - multiple entries per file."""
     
     file_id: int = Field(..., description="File identifier")
     payment_no: Optional[str] = Field(None, max_length=50)
@@ -270,7 +270,7 @@ class PaymentGatewayDepositSchedule(BaseUnderwritingModel):
 
 
 class LegalPlanAgreement(BaseUnderwritingModel):
-    """Legal Plan Agreement document model."""
+    """Legal Plan Agreement document model - multiple entries per file."""
     
     file_id: int = Field(..., description="File identifier")
     legal_plan_provider: Optional[str] = Field(None, max_length=255)
