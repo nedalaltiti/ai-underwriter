@@ -248,159 +248,180 @@ class GeminiClient:
                 }
             }
             
-            # Map sections to extraction functions
-            extraction_map = {
-                'account agreement': ('payment_gateway_agreement', self._extract_payment_gateway),
-                'payment bank info': ('payment_bank_info', self._extract_payment_bank_info),
-                'primary account': ('payment_bank_info', self._extract_payment_bank_info),
-                'bank information': ('payment_bank_info', self._extract_payment_bank_info),
-                'ach authorization': ('payment_bank_info', self._extract_payment_bank_info),
-                'company agreement': ('engagement_term', self._extract_engagement_term),
-                'engagement terms': ('engagement_term', self._extract_engagement_term),
-                'client service agreement': ('engagement_term', self._extract_engagement_term),
-                'services agreement': ('engagement_term', self._extract_engagement_term),
-                'csa': ('engagement_term', self._extract_engagement_term),
-                'limited scope retainer': ('engagement_term', self._extract_engagement_term),
-                'retainer agreement': ('engagement_term', self._extract_engagement_term),
-                'terms of engagement': ('engagement_term', self._extract_engagement_term),
-                'power of attorney': ('power_of_attorney', self._extract_power_of_attorney),
-                'financial analysis': ('financial_analysis', self._extract_financial_analysis),
-                'financial budget': ('financial_analysis', self._extract_financial_analysis),
-                'income expense': ('financial_analysis', self._extract_financial_analysis),
-                'budget analysis': ('financial_analysis', self._extract_financial_analysis),
-                'financial information': ('financial_analysis', self._extract_financial_analysis),
-                'exhibit b': ('financial_analysis', self._extract_financial_analysis),
-                'debt schedule': ('debt_schedule', self._extract_debt_schedule),
-                'exhibit a': ('debt_schedule', self._extract_debt_schedule),
-                'service fees': ('payment_service_fees', self._extract_service_fees),
-                'deposit schedule': ('payment_deposit_schedule', self._extract_deposit_schedule),
-                # More specific matches first to avoid conflicts
-                'high interest disclosure': ('high_interest_disclosure', self._extract_high_interest),
-                'high interest': ('high_interest_disclosure', self._extract_high_interest),
-                'program disclosure': ('program_disclosure', self._extract_program_disclosure),
-                'disclosure': ('disclosure', self._extract_disclosure),
-                'exhibit c': ('disclosure', self._extract_disclosure),
-                'legal plan': ('legal_plan_agreement', self._extract_legal_plan),
-                'attorney client privileged': ('attorney_privileged_client_info', self._extract_attorney_privileged),
-                'attorney privileged': ('attorney_privileged_client_info', self._extract_attorney_privileged),
-                'client information': ('attorney_privileged_client_info', self._extract_attorney_privileged),
-                'fcra consent': ('fcra_consent', self._extract_fcra),
-                'cancellation notice': ('cancellation_notice', self._extract_cancellation),
-                'clixsign certificate': ('clixsign_all', self._extract_clixsign_data),
-                'clixsign signers': ('clixsign_all', self._extract_clixsign_data),
-                'clixsign sender': ('clixsign_all', self._extract_clixsign_data)
-            }
-            # Broaden aliases for better recall
-            extraction_map.update({
-                'client information sheet': ('payment_gateway_agreement', self._extract_payment_gateway),
-                'client information form': ('payment_gateway_agreement', self._extract_payment_gateway),
-                'client information': ('payment_gateway_agreement', self._extract_payment_gateway),
-                'account information': ('payment_gateway_agreement', self._extract_payment_gateway),
-                'account information sheet': ('payment_gateway_agreement', self._extract_payment_gateway),
-                'attorney client information': ('attorney_privileged_client_info', self._extract_attorney_privileged),
-                'client info form': ('attorney_privileged_client_info', self._extract_attorney_privileged)
-            })
+            # Enhanced extraction map with priority ordering to prevent conflicts
+            # Process in priority order - most specific matches first
+            extraction_priority = [
+                # Critical high-priority entities - extract first to avoid overwrites
+                ('account agreement', 'payment_gateway_agreement', self._extract_payment_gateway),
+                ('client service agreement', 'engagement_term', self._extract_engagement_term),
+                ('company agreement', 'engagement_term', self._extract_engagement_term),
+                ('engagement terms', 'engagement_term', self._extract_engagement_term),
+                ('services agreement', 'engagement_term', self._extract_engagement_term),
+                ('csa', 'engagement_term', self._extract_engagement_term),
+                ('financial analysis (exhibit b)', 'financial_analysis', self._extract_financial_analysis),
+                ('financial analysis', 'financial_analysis', self._extract_financial_analysis),
+                ('exhibit b', 'financial_analysis', self._extract_financial_analysis),
+                ('financial budget', 'financial_analysis', self._extract_financial_analysis),
+                ('income expense', 'financial_analysis', self._extract_financial_analysis),
+                ('budget analysis', 'financial_analysis', self._extract_financial_analysis),
+                ('financial information', 'financial_analysis', self._extract_financial_analysis),
+                
+                # Account/Bank information - high priority
+                ('primary account information', 'payment_bank_info', self._extract_payment_bank_info),
+                ('payment bank info', 'payment_bank_info', self._extract_payment_bank_info),
+                ('bank information', 'payment_bank_info', self._extract_payment_bank_info),
+                ('ach authorization', 'payment_bank_info', self._extract_payment_bank_info),
+                
+                # Document sections
+                ('power of attorney', 'power_of_attorney', self._extract_power_of_attorney),
+                ('debt schedule (exhibit a)', 'debt_schedule', self._extract_debt_schedule),
+                ('debt schedule', 'debt_schedule', self._extract_debt_schedule),
+                ('exhibit a', 'debt_schedule', self._extract_debt_schedule),
+                ('service fees table', 'payment_service_fees', self._extract_service_fees),
+                ('service fees', 'payment_service_fees', self._extract_service_fees),
+                ('payment schedule table', 'payment_deposit_schedule', self._extract_deposit_schedule),
+                ('deposit schedule table', 'payment_deposit_schedule', self._extract_deposit_schedule),
+                ('deposit schedule', 'payment_deposit_schedule', self._extract_deposit_schedule),
+                
+                # Legal documents
+                ('legal plan agreement', 'legal_plan_agreement', self._extract_legal_plan),
+                ('legal plan', 'legal_plan_agreement', self._extract_legal_plan),
+                
+                # Client information
+                ('attorney client privileged', 'attorney_privileged_client_info', self._extract_attorney_privileged),
+                ('attorney privileged', 'attorney_privileged_client_info', self._extract_attorney_privileged),
+                ('client information', 'attorney_privileged_client_info', self._extract_attorney_privileged),
+                
+                # Consent forms
+                ('fcra consent', 'fcra_consent', self._extract_fcra),
+                ('cancellation notice', 'cancellation_notice', self._extract_cancellation),
+                
+                # Disclosure sections - specific first to avoid conflicts
+                ('high interest disclosure', 'high_interest_disclosure', self._extract_high_interest),
+                ('program disclosure', 'program_disclosure', self._extract_program_disclosure),
+                ('disclosure sections (exhibit c)', 'disclosure', self._extract_disclosure),
+                ('exhibit c', 'disclosure', self._extract_disclosure),
+                ('disclosure', 'disclosure', self._extract_disclosure),  # Most generic last
+                
+                # Clixsign sections
+                ('clixsign certificate', 'clixsign_all', self._extract_clixsign_data),
+                ('clixsign signers', 'clixsign_all', self._extract_clixsign_data),
+                ('clixsign sender', 'clixsign_all', self._extract_clixsign_data),
+                
+                # Additional aliases for better matching
+                ('limited scope retainer', 'engagement_term', self._extract_engagement_term),
+                ('retainer agreement', 'engagement_term', self._extract_engagement_term),
+                ('terms of engagement', 'engagement_term', self._extract_engagement_term)
+            ]
             
             # Track what we've already extracted to avoid duplicates
             extracted_entities = set()
+            entity_extraction_tasks = []
             
-            # Log what sections were detected for debugging
-            logger.bind(file_id=file_id, detected_count=len(detected_sections)).info("staged_extraction.sections_detected")
-            
-            # Extract each detected section
-            semaphore = asyncio.Semaphore(4)
-            
-            async def extract_one(section: str):
-                section_lower = section.lower()
-                for key, (entity_name, extractor) in extraction_map.items():
-                    if key in section_lower and entity_name not in extracted_entities:
-                        async with semaphore:
-                            try:
-                                logger.info(f"Extracting {entity_name} from section: {section}")
-                                result = await extractor(pdf_data, file_id)
-                                if result:
-                                    if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
-                                        if entity_name not in package_data:
-                                            package_data[entity_name] = []
-                                        if isinstance(result, list):
-                                            package_data[entity_name].extend(result)
-                                        else:
-                                            package_data[entity_name].append(result)
-                                    elif entity_name == 'clixsign_all':
-                                        if isinstance(result, dict):
-                                            if 'clixsign_sender' in result:
-                                                package_data['clixsign_sender'] = result['clixsign_sender']
-                                            if 'clixsign_signers' in result:
-                                                package_data['clixsign_signers'] = result['clixsign_signers']
-                                    else:
-                                        package_data[entity_name] = result
-                                    extracted_entities.add(entity_name)
-                            except Exception as e:
-                                logger.warning(f"Failed to extract {entity_name}: {e}")
-            
-            # Launch tasks with bounded concurrency
-            tasks = [extract_one(section) for section in detected_sections]
-            await asyncio.gather(*tasks)
-
-            # Enforce: any detected singleton entity must be present (store at least placeholders)
-            # Build entity->extractor map
-            entity_to_extractor = {}
-            for key, (entity_name, extractor) in extraction_map.items():
-                entity_to_extractor.setdefault(entity_name, extractor)
-            # Determine required entities from detected sections
-            required_entities = set()
+            # Process each detected section with priority-based matching
             for section in detected_sections:
-                section_lower = section.lower()
-                for key, (entity_name, _) in extraction_map.items():
-                    if key in section_lower:
-                        required_entities.add(entity_name)
-            singleton_entities = {
-                'engagement_term','power_of_attorney','payment_gateway_agreement','financial_analysis',
-                'fcra_consent','disclosure','program_disclosure','cancellation_notice',
-                'payment_bank_info','legal_plan_agreement','attorney_privileged_client_info'
-            }
-            for entity_name in sorted(required_entities & singleton_entities):
-                if entity_name not in package_data:
+                section_lower = section.lower().strip()
+                
+                # Find best matching extraction based on priority order
+                for search_key, entity_name, extractor in extraction_priority:
+                    # Improved matching: exact phrase match or comprehensive word match
+                    if (search_key in section_lower or 
+                        section_lower in search_key or 
+                        (len(search_key.split()) > 1 and all(word in section_lower for word in search_key.split()))):
+                        
+                        # Skip if already extracted
+                        if entity_name in extracted_entities:
+                            logger.debug(f"Skipping {entity_name} - already extracted")
+                            continue
+                        
+                        # Mark as extracted immediately to prevent duplicates
+                        extracted_entities.add(entity_name)
+                        entity_extraction_tasks.append((section, entity_name, extractor))
+                        logger.info(f"Scheduled extraction of {entity_name} from section: {section}")
+                        break  # Move to next section after finding first match
+            
+            # Log scheduling summary
+            logger.bind(file_id=file_id, detected_count=len(detected_sections), scheduled_count=len(entity_extraction_tasks)).info("staged_extraction.sections_detected")
+            
+            # Execute extractions with controlled concurrency
+            semaphore = asyncio.Semaphore(3)  # Reduced concurrency for stability
+            
+            async def extract_one(section: str, entity_name: str, extractor):
+                async with semaphore:
                     try:
-                        logger.warning(f"{entity_name}.missing_after_section_match; forcing direct extraction")
-                        extractor = entity_to_extractor.get(entity_name)
-                        forced = await extractor(pdf_data, file_id) if extractor else None
-                        if forced:
-                            package_data[entity_name] = forced
-                            extracted_entities.add(entity_name)
-                            logger.info(f"{entity_name}.forced_extraction_succeeded")
+                        logger.info(f"Extracting {entity_name} from section: {section}")
+                        result = await extractor(pdf_data, file_id)
+                        
+                        if result:
+                            # Handle list entities
+                            if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
+                                if entity_name not in package_data:
+                                    package_data[entity_name] = []
+                                if isinstance(result, list):
+                                    package_data[entity_name].extend(result)
+                                else:
+                                    package_data[entity_name].append(result)
+                            
+                            # Handle clixsign special case
+                            elif entity_name == 'clixsign_all':
+                                if isinstance(result, dict):
+                                    if 'clixsign_sender' in result:
+                                        package_data['clixsign_sender'] = result['clixsign_sender']
+                                    if 'clixsign_signers' in result:
+                                        package_data['clixsign_signers'] = result['clixsign_signers']
+                            
+                            # Handle single entities
+                            else:
+                                package_data[entity_name] = result
+                            
+                            logger.info(f"Successfully extracted {entity_name}")
+                            return True
                         else:
-                            # Create placeholder so DB gets a row with file_id
-                            package_data[entity_name] = { 'file_id': file_id }
-                            logger.warning(f"{entity_name}.placeholder_created_for_storage")
+                            logger.warning(f"No data extracted for {entity_name}")
+                            return False
+                            
                     except Exception as e:
-                        package_data[entity_name] = { 'file_id': file_id }
-                        logger.warning(f"{entity_name}.forced_extraction_failed; placeholder_created: {e}")
-
-            # Fallback: ensure engagement_term is not skipped if section naming varies
-            if 'engagement_term' not in package_data:
-                try:
-                    logger.warning("engagement_term.not_detected_in_sections; attempting fallback extraction")
-                    fallback_engagement = await self._extract_engagement_term(pdf_data, file_id)
-                    if fallback_engagement:
-                        package_data['engagement_term'] = fallback_engagement
-                        extracted_entities.add('engagement_term')
-                        logger.info("engagement_term.fallback_extracted")
-                except Exception as e:
-                    logger.warning(f"engagement_term.fallback_failed: {e}")
-
-            # Fallback: ensure financial_analysis is not skipped if section naming varies
-            if 'financial_analysis' not in package_data:
-                try:
-                    logger.warning("financial_analysis.not_detected_in_sections; attempting fallback extraction")
-                    fallback_fin = await self._extract_financial_analysis(pdf_data, file_id)
-                    if fallback_fin:
-                        package_data['financial_analysis'] = fallback_fin
-                        extracted_entities.add('financial_analysis')
-                        logger.info("financial_analysis.fallback_extracted")
-                except Exception as e:
-                    logger.warning(f"financial_analysis.fallback_failed: {e}")
-
+                        logger.error(f"Failed to extract {entity_name}: {e}")
+                        return False
+            
+            # Launch extraction tasks
+            extraction_results = await asyncio.gather(
+                *[extract_one(section, entity_name, extractor) 
+                  for section, entity_name, extractor in entity_extraction_tasks],
+                return_exceptions=True
+            )
+            
+            # Critical entities that MUST be attempted if detected but failed
+            critical_entities = {
+                'engagement_term': ('client service agreement', self._extract_engagement_term),
+                'financial_analysis': ('financial analysis', self._extract_financial_analysis),
+                'payment_gateway_agreement': ('account agreement', self._extract_payment_gateway)
+            }
+            
+            # Ensure critical entities are extracted if they were detected
+            for entity_name, (section_hint, extractor) in critical_entities.items():
+                # Check if this entity type was detected in sections
+                was_detected = any(
+                    section_hint in section.lower() 
+                    for section in detected_sections
+                )
+                
+                # If detected but not successfully extracted, try again
+                if was_detected and entity_name not in package_data:
+                    logger.warning(f"Critical entity {entity_name} was detected but not extracted. Attempting fallback extraction.")
+                    try:
+                        result = await extractor(pdf_data, file_id)
+                        if result:
+                            package_data[entity_name] = result
+                            logger.info(f"Fallback extraction successful for {entity_name}")
+                        else:
+                            # Create minimal placeholder to ensure DB row
+                            package_data[entity_name] = {'file_id': file_id}
+                            logger.warning(f"Fallback extraction failed for {entity_name}, using placeholder")
+                    except Exception as e:
+                        logger.error(f"Fallback extraction error for {entity_name}: {e}")
+                        package_data[entity_name] = {'file_id': file_id}
+            
             # Add file_id to all entities
             self._add_file_id_to_entities(package_data, file_id)
             
@@ -410,7 +431,7 @@ class GeminiClient:
             # Stage 3: Validate and create package
             try:
                 package = ExtractedDocumentPackage(**package_data)
-                logger.info(f"Successfully created package via staged extraction")
+                logger.info(f"Successfully created package via staged extraction with {len(entity_extraction_tasks)} entities")
                 return package
             except Exception as e:
                 logger.error(f"Package creation failed in staged extraction: {e}")
@@ -423,7 +444,7 @@ class GeminiClient:
                 except Exception as lenient_e:
                     logger.error(f"Even lenient package creation failed: {lenient_e}")
                     return None
-                    
+                
         except Exception as e:
             logger.error(f"Staged extraction failed: {e}")
             return None
