@@ -316,6 +316,7 @@ class GeminiClient:
                             try:
                                 logger.info(f"Extracting {entity_name} from section: {section}")
                                 result = await extractor(pdf_data, file_id)
+                                logger.info(f"Extractor result for {entity_name}: {type(result)} with {len(result) if isinstance(result, dict) else 'N/A'} fields")
                                 if result:
                                     if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
                                         if entity_name not in package_data:
@@ -332,7 +333,10 @@ class GeminiClient:
                                                 package_data['clixsign_signers'] = result['clixsign_signers']
                                     else:
                                         package_data[entity_name] = result
+                                        logger.info(f"Successfully stored {entity_name} in package_data")
                                     extracted_entities.add(entity_name)
+                                else:
+                                    logger.warning(f"Extractor returned None/empty result for {entity_name}")
                             except Exception as e:
                                 logger.warning(f"Failed to extract {entity_name}: {e}")
             
@@ -407,6 +411,10 @@ class GeminiClient:
             
             # Stage 3: Validate and create package
             try:
+                logger.info(f"Final package_data keys: {list(package_data.keys())}")
+                logger.info(f"engagement_term in package_data: {'engagement_term' in package_data}")
+                if 'engagement_term' in package_data:
+                    logger.info(f"engagement_term data: {type(package_data['engagement_term'])} with {len(package_data['engagement_term']) if isinstance(package_data['engagement_term'], dict) else 'N/A'} fields")
                 package = ExtractedDocumentPackage(**package_data)
                 logger.info(f"Successfully created package via staged extraction")
                 return package
