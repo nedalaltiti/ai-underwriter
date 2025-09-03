@@ -2136,19 +2136,54 @@ class GeminiClient:
         This handles cases where Gemini returns explanatory text or partial data.
         """
         try:
-            # Look for key-value pairs in various formats
+            # First try to fix the JSON and parse it properly
+            from utils.json_parser import clean_json_text
+            
+            # Try to fix common JSON issues
+            cleaned_text = clean_json_text(text)
+            try:
+                import json
+                result = json.loads(cleaned_text)
+                if isinstance(result, dict) and len(result) > 0:
+                    logger.info(f"Fallback JSON parsing successful with {len(result)} fields")
+                    return result
+            except json.JSONDecodeError:
+                pass
+            
+            # If JSON parsing still fails, extract key-value pairs
             data = {}
             
-            # Pattern 1: "field: value" format
-            kv_pattern = r'([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([^\n\r]+)'
-            matches = re.findall(kv_pattern, text, re.IGNORECASE)
+            # Pattern 1: "field": "value" format (JSON-like)
+            json_kv_pattern = r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:\s*"([^"]*)"'
+            matches = re.findall(json_kv_pattern, text, re.IGNORECASE)
             
             for key, value in matches:
-                # Clean up the value
-                value = value.strip().strip('"\'')
                 if value.lower() in ['null', 'none', 'n/a', 'not found']:
                     value = None
                 data[key.lower()] = value
+            
+            # Pattern 2: "field": value format (without quotes on value)
+            json_kv_pattern2 = r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:\s*([^,\n\r}]+)'
+            matches2 = re.findall(json_kv_pattern2, text, re.IGNORECASE)
+            
+            for key, value in matches2:
+                if key.lower() not in data:  # Don't override existing values
+                    value = value.strip().strip('"\'')
+                    if value.lower() in ['null', 'none', 'n/a', 'not found']:
+                        value = None
+                    data[key.lower()] = value
+            
+            # Pattern 3: "field: value" format (colon with space)
+            kv_pattern = r'([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([^\n\r]+)'
+            matches3 = re.findall(kv_pattern, text, re.IGNORECASE)
+            
+            for key, value in matches3:
+                if key.lower() not in data:  # Don't override existing values
+                    # Clean up the value
+                    value = value.strip().strip('"\'')
+                    if value.lower() in ['null', 'none', 'n/a', 'not found']:
+                        value = None
+                    data[key.lower()] = value
             
             # Pattern 2: Look for structured text blocks
             if not data:

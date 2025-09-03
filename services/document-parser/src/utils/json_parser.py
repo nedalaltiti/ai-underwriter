@@ -197,8 +197,11 @@ def clean_json_text(text: str) -> str:
     if text.startswith('\ufeff'):
         text = text[1:]
     
-    # Remove trailing commas before closing braces/brackets
+    # Remove trailing commas before closing braces/bracket
     text = re.sub(r',\s*([}\]])', r'\1', text)
+    # Handle multiple trailing commas or commas with newlines
+    text = re.sub(r',\s*,\s*([}\]])', r'\1', text)  # Remove double commas
+    text = re.sub(r',\s*\n\s*([}\]])', r'\n\1', text)  # Remove comma before newline and closing brace
     
     # Replace single quotes with double quotes (careful with apostrophes)
     # Only replace single quotes that are likely JSON string delimiters
