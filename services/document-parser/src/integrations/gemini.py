@@ -222,6 +222,11 @@ class GeminiClient:
         - Member Information Sheet
         - Veritas Legal Plan
         - Attorney Client Privileged / Client Information
+        - 11 USC § 527(a) DISCLOSURE
+        - 11 USC § 527(b) DISCLOSURE  
+        - USC § 527 Disclosure
+        - Disclosure
+        - Disclosure of Services
         - High Interest Disclosure
         - FCRA Consent
         - Cancellation Notice
@@ -237,6 +242,9 @@ class GeminiClient:
           always include "Primary Account Information" in your sections list.
         - If you see ANY digital signature information, ClixSign data, or electronic signature certificates,
           always include "Clixsign Completion Certificate" in your sections list.
+        - If you see federal disclosure language like "11 USC § 527(a)" or "11 USC § 527(b)" or "Federal law mandates",
+          always include the specific disclosure type (e.g., "11 USC § 527(a) DISCLOSURE").
+        - If you see general disclosure content without USC references, include "Disclosure".
         - Look carefully at the END of the document for signature completion pages.
         """
         
