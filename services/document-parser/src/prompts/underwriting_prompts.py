@@ -72,8 +72,8 @@ Extract ALL these fields (use null if not found):
   "coclient_name": "Co-client name if present",
   "coclient_signature": "Actual co-client name from signature line if present",
   "coclient_signature_date": "Co-client date if present",
-  "client_initials": "Client initials found in engagement term section (e.g., EE, JD, ABC) - the SAME initials that appear multiple times",
-  "client_initials_count": "EXACT count of how many times the client initials appear in the Engagement Term section ONLY - be methodical and count each occurrence",
+  "client_initials": "Client initials found in engagement term section (e.g., EE, JD, ABC) - ONLY if they actually exist, use null if no initials found",
+  "client_initials_count": "EXACT count of how many times the client initials appear in the Engagement Term section ONLY - if no initials exist, use 0 not 1",
   "coclient_initials": "Co-client initials if present (e.g., MJ, XYZ)",
   "coclient_initials_count": "Total count of co-client initials ONLY within the Engagement Term section (NOT other sections)",
   "page_count": "Total pages in engagement term section",
@@ -86,9 +86,12 @@ Extract ALL these fields (use null if not found):
 Focus on: Company letterhead, fee structures, signature blocks, initials throughout document
 
 INITIAL COUNTING INSTRUCTIONS:
+CRITICAL: NEVER add phantom initials that don't exist. If you don't see any initials, use null and count 0.
+
 1. Scan ONLY the Engagement Term section pages for CLIENT initials (typically pages 1-6 of the engagement term)
 2. Do NOT count initials from other document sections (Financial Analysis, Debt Schedule, Legal Plan, etc.)
 3. Count each individual occurrence of the SAME client initials within the engagement term section only
+4. NEVER assume there are initials if you don't see them - use null and 0 count
 4. EXCLUDE these from counting:
    - Company initials or attorney initials (different from client initials)
    - Initials in signature blocks or signature lines
@@ -105,10 +108,12 @@ INITIAL COUNTING INSTRUCTIONS:
 
 COUNTING METHODOLOGY:
 - Start from page 1 of engagement term, scan line by line
-- Mark each occurrence of client initials (e.g., "EE", "JD", etc.)
+- Mark each occurrence of client initials (e.g., "AD", "EE", "JD", etc.)
 - Keep a running total as you go through each page
 - Skip initials that are clearly company/attorney names
 - Focus on initials that appear to be client acknowledgments
+- CRITICAL: If you see 10 initials, count exactly 10 - don't add 1
+- CRITICAL: If you see 0 initials, count exactly 0 - don't assume there should be 1
 - Final count should reflect the actual number of times client initials appear
 """
 
@@ -175,14 +180,23 @@ Extract ALL these fields (use null if not found):
   "coclient_middle_initial": "Co-client middle initial",
   "coclient_ssn": "Co-client SSN - if masked, keep masked format",
   "coclient_dob": "Co-client date of birth",
-  "client_initials": "Client initials",
-  "coclient_initials": "Co-client initials if present",
-  "client_signature": "Actual client name from signature line",
-  "client_signature_date": "Date client signed",
-  "coclient_signature": "Actual co-client name from signature line if present",
-  "coclient_signature_date": "Date co-client signed",
+  "client_initials": "Client initials (e.g., 'EE', 'JD') - scan entire document, check bottom of pages",
+  "coclient_initials": "Co-client initials if present (e.g., 'MJ', 'XYZ') - scan entire document, check bottom of pages",
+  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams') - scan entire document",
+  "client_signature_date": "Date client signed (YYYY-MM-DD)",
+  "coclient_signature": "Actual co-client name from signature line if present (e.g., 'Mary Adams') - scan entire document", 
+  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)",
   "pages_count": "Total pages"
 }}
+
+CRITICAL SCANNING INSTRUCTIONS:
+1. Scan the ENTIRE document from top to bottom
+2. Look for account/bank information in the main sections
+3. ALWAYS check the BOTTOM of pages for:
+   - Client initials (usually 2-4 letters like "EE", "JD", "ABC")
+   - Signature lines with actual names
+   - Date fields near signatures
+4. Check multiple pages - signatures may be on different pages
 
 Focus on: Client Information section, signatures
 """
@@ -227,8 +241,8 @@ Extract ALL these financial fields (use null if not found):
   "client_signature_date": "Date signed (YYYY-MM-DD)",
   "coclient_signature": "Actual co-client name from signature line if present",
   "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)",
-  "client_initials": "Client initials - IMPORTANT: Check the BOTTOM of the page after all tables and data",
-  "coclient_initials": "Co-client initials if present - Check bottom of page",
+  "client_initials": "Client initials - IMPORTANT: Check the BOTTOM of the page after all tables and data - ONLY if they actually exist, use null if no initials found",
+  "coclient_initials": "Co-client initials if present - Check bottom of page - ONLY if they actually exist, use null if no initials found",
 }}
 
 CRITICAL SCANNING INSTRUCTIONS:
@@ -238,7 +252,12 @@ CRITICAL SCANNING INSTRUCTIONS:
    - Client initials (usually 2-4 letters like "GK", "AD", "LR")
    - Signature lines
    - Any additional fields after the financial tables
-4. Client initials are typically found at the very bottom, separate from the main financial data
+4. ANTI-HALLUCINATION RULES:
+   - If you don't see initials, DON'T make them up - use null
+   - If the bottom of the page is blank, initials should be null
+   - Only extract initials that are clearly visible in the document
+   - Don't assume there should be initials if you can't find them
+5. Client initials are typically found at the very bottom, separate from the main financial data
 """
 
 DEBT_SCHEDULE_PROMPT = f"""
@@ -281,11 +300,20 @@ Extract ALL these fields (use null if not found):
   "file_id": null,
   "cancellation_deadline": "Cancellation deadline date (YYYY-MM-DD)",
   "cancellation_date": "Actual cancellation date (YYYY-MM-DD)",
-  "client_signature": "Actual client name from signature line",
+  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams') - scan entire document",
   "client_signature_date": "Date client signed (YYYY-MM-DD)",
-  "coclient_signature": "Actual co-client name from signature line if present",
+  "coclient_signature": "Actual co-client name from signature line if present (e.g., 'Mary Adams') - scan entire document",
   "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)"
 }}
+
+CRITICAL SCANNING INSTRUCTIONS:
+1. Scan the ENTIRE document from top to bottom
+2. Look for cancellation terms and deadlines in the main sections
+3. ALWAYS check the BOTTOM of pages for:
+   - Client initials (usually 2-4 letters like "EE", "JD", "ABC")
+   - Signature lines with actual names
+   - Date fields near signatures
+4. Check multiple pages - signatures may be on different pages
 
 Look for: Cancellation terms, deadlines, signature lines
 """
@@ -423,10 +451,10 @@ Extract ALL these fields from the Client Information section (use null if not fo
   "has_security_clearance": "Security clearance question (true/false)",
   "is_in_bankruptcy": "Currently involved in bankruptcy proceeding? (true/false)",
   "is_enrolled_in_credit_counseling": "Currently enrolled in credit counseling program? (true/false)",
-  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams')",
-  "client_signature_date": "Client signature date (YYYY-MM-DD)",
-  "coclient_signature": "Actual co-client name from signature line if present",
-  "coclient_signature_date": "Co-client signature date (YYYY-MM-DD)"
+  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams') - scan entire document",
+  "client_signature_date": "Date client signed (YYYY-MM-DD)",
+  "coclient_signature": "Actual co-client name from signature line if present (e.g., 'Mary Adams') - scan entire document",
+  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)"
 }}
 
 Focus on:
@@ -960,28 +988,45 @@ Rules:
 def get_targeted_disclosure_prompt() -> str:
     """Prompt to extract Disclosure signatures and dates."""
     return f"""
-You are extracting ONLY the Disclosure signature fields. Look for sections labeled "Disclosure", or acknowledgement blocks with lines like "Client Signature", "Co-Client Signature", and their dates.
+You are extracting data from a Disclosure document. This may include federal bankruptcy disclosures (11 USC § 527), general disclosures, or other disclosure statements.
 
 {BASE_EXTRACTION_RULES}
+
+KEY IDENTIFIERS:
+- Document titles: "11 USC § 527(a) DISCLOSURE", "11 USC § 527(b) DISCLOSURE", "Disclosure", etc.
+- Signature blocks at the bottom of disclosure pages
+- Client acknowledgment sections
+- Federal law mandated disclosure statements
+
+Look for signature sections that may appear at the bottom of disclosure pages, typically with:
+- "Client Signature" and "Date" fields
+- "Co-Client Signature" and "Date" fields  
+- Client initials in acknowledgment sections
 
 Return STRICT JSON with exactly this shape:
 {{
   "disclosure": {{
     "file_id": null,
-    "client_signature": "Signature text/indicator if present",
-    "client_signature_date": "YYYY-MM-DD or null",
-    "coclient_signature": "Co-client signature indicator if present",
-    "coclient_signature_date": "YYYY-MM-DD or null",
-    "additional_disclosure_client_signature": "Client signature indicator if present",
-    "additional_disclosure_client_signature_date": "YYYY-MM-DD or null",
-    "additional_disclosure_coclient_signature": "Co-client signature indicator if present",
-    "additional_disclosure_coclient_signature_date": "YYYY-MM-DD or null"
+    "disclosure_type": "Type of disclosure (e.g., '11 USC 527(a)', '11 USC 527(b)', 'General Disclosure')",
+    "client_signature": "Actual client name from signature line if present",
+    "client_signature_date": "Date signed by client (YYYY-MM-DD)",
+    "coclient_signature": "Actual co-client name from signature line if present",
+    "coclient_signature_date": "Date signed by co-client (YYYY-MM-DD)",
+    "client_initials": "Client initials if present in disclosure acknowledgment",
+    "coclient_initials": "Co-client initials if present in disclosure acknowledgment",
+    "additional_disclosure_client_signature": "Additional client signature if multiple disclosure sections",
+    "additional_disclosure_client_signature_date": "Additional client signature date (YYYY-MM-DD)",
+    "additional_disclosure_coclient_signature": "Additional co-client signature if multiple disclosure sections", 
+    "additional_disclosure_coclient_signature_date": "Additional co-client signature date (YYYY-MM-DD)"
   }}
 }}
 
 Rules:
-- If signature lines are blank, keep signature fields null.
-- Normalize dates to YYYY-MM-DD; if you see split dates (e.g., 09/28/1 and 971), combine correctly.
+- Extract signatures from ALL disclosure pages in the document
+- If signature lines are blank, keep signature fields null
+- Look for actual names in signature lines, not just "Client Signature"
+- Normalize dates to YYYY-MM-DD format
+- Include disclosure type based on document headers/titles
 """
 
 def get_targeted_power_of_attorney_prompt() -> str:

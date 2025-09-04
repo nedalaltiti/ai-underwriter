@@ -318,6 +318,13 @@ class GeminiClient:
                 ('notice of right of rescission', 'cancellation_notice', self._extract_cancellation),
                 
                 # Disclosure sections - specific first to avoid conflicts
+                ('11 usc § 527(a) disclosure', 'disclosure', self._extract_disclosure),
+                ('11 usc § 527(b) disclosure', 'disclosure', self._extract_disclosure),
+                ('usc § 527 disclosure', 'disclosure', self._extract_disclosure),
+                ('527(a) disclosure', 'disclosure', self._extract_disclosure),
+                ('527(b) disclosure', 'disclosure', self._extract_disclosure),
+                ('exhibit a disclosure of services', 'program_disclosure', self._extract_program_disclosure),
+                ('disclosure of services', 'program_disclosure', self._extract_program_disclosure),
                 ('high interest disclosure', 'high_interest_disclosure', self._extract_high_interest),
                 ('program disclosure', 'program_disclosure', self._extract_program_disclosure),
                 ('disclosure', 'disclosure', self._extract_disclosure),  # Most generic last
@@ -734,7 +741,15 @@ class GeminiClient:
                             elif 'service fees' in indicator_lower:
                                 detected_sections.append('payment_service_fees')
                             elif 'disclosure' in indicator_lower:
-                                detected_sections.append('disclosure')
+                                # Check for specific disclosure types first
+                                if any(pattern in indicator_lower for pattern in ['527(a)', '527(b)', 'usc § 527', '11 usc']):
+                                    detected_sections.append('disclosure')
+                                elif 'exhibit a' in indicator_lower and 'disclosure' in indicator_lower:
+                                    detected_sections.append('program_disclosure')
+                                elif 'disclosure of services' in indicator_lower:
+                                    detected_sections.append('program_disclosure')
+                                else:
+                                    detected_sections.append('disclosure')
                             elif 'fcra consent' in indicator_lower:
                                 detected_sections.append('fcra_consent')
                             elif 'high interest disclosure' in indicator_lower:
@@ -1705,6 +1720,29 @@ class GeminiClient:
                             entity[key] = match.group(1)
                         else:
                             entity[key] = None
+                    continue
+                
+                # Validate initial counts against actual initials to prevent phantom counting
+                if key.endswith('_initials_count') and isinstance(value, (int, str)):
+                    # Get the corresponding initials field
+                    initials_field = key.replace('_count', '')
+                    actual_initials = entity.get(initials_field)
+                    
+                    # Convert count to integer
+                    try:
+                        count_value = int(value) if value not in (None, '', 'null') else 0
+                    except (ValueError, TypeError):
+                        count_value = 0
+                    
+                    # If no initials found but count > 0, this is likely phantom counting
+                    if actual_initials in (None, '', 'null') and count_value > 0:
+                        logger.warning(f"Phantom initial count detected: {key}={count_value} but {initials_field}={actual_initials}, setting count to 0")
+                        entity[key] = 0
+                    elif actual_initials and count_value == 0:
+                        logger.warning(f"Initial count is 0 but initials exist: {initials_field}={actual_initials}, setting count to 1")
+                        entity[key] = 1
+                    else:
+                        entity[key] = count_value
                     continue
                 
                 # Clean up empty strings and placeholders to None for optional fields
