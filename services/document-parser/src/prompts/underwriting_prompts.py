@@ -48,10 +48,11 @@ SPECIFIC EXTRACTION GUIDANCE:
 - Settlement fee percentage often appears as "25%" or "25.00%" 
 - Monthly payment amounts are in program details
 - Client signatures appear at the bottom
-- Initials: Look for 2-4 capital letters (e.g., "JD", "ABC", "JJCS") written by client in the ENGAGEMENT TERM section ONLY
-- Initial counts: Count EVERY occurrence of client initials ONLY within the Engagement Term section (NOT the entire document)
-- Example: If "JD" appears 5 times in the engagement term section only, client_initials_count = 5
+- Initials: Look for 2-4 capital letters (e.g., "EE", "JD", "ABC") written by CLIENT in the ENGAGEMENT TERM section ONLY
+- Initial counts: ACCURACY IS CRITICAL - Count EVERY occurrence of client initials within the Engagement Term section
+- Example: If "EE" appears 22 times in the engagement term section, client_initials_count = 22 (not 21, not 23)
 - DO NOT count initials from other sections like Legal Plan, Financial Analysis, etc.
+- DO NOT count attorney/company initials that are different from client initials
 
 Extract ALL these fields (use null if not found):
 
@@ -71,8 +72,8 @@ Extract ALL these fields (use null if not found):
   "coclient_name": "Co-client name if present",
   "coclient_signature": "Actual co-client name from signature line if present",
   "coclient_signature_date": "Co-client date if present",
-  "client_initials": "Client initials found in document (e.g., JD, ABC, JJCS)",
-  "client_initials_count": "Total count of client initials ONLY within the Engagement Term section (NOT the entire document or other sections)",
+  "client_initials": "Client initials found in engagement term section (e.g., EE, JD, ABC) - the SAME initials that appear multiple times",
+  "client_initials_count": "EXACT count of how many times the client initials appear in the Engagement Term section ONLY - be methodical and count each occurrence",
   "coclient_initials": "Co-client initials if present (e.g., MJ, XYZ)",
   "coclient_initials_count": "Total count of co-client initials ONLY within the Engagement Term section (NOT other sections)",
   "page_count": "Total pages in engagement term section",
@@ -85,13 +86,30 @@ Extract ALL these fields (use null if not found):
 Focus on: Company letterhead, fee structures, signature blocks, initials throughout document
 
 INITIAL COUNTING INSTRUCTIONS:
-1. Scan ONLY the Engagement Term section pages for client initials (typically pages 0-6)
-2. Do NOT count initials from other document sections (Financial Analysis, Debt Schedule, etc.)
-3. Count each individual occurrence within the engagement term section only
-4. Stop counting when you reach the end of the engagement term section (usually marked by "Page X of Y")
-5. Initials are typically 2-4 capital letters written by the client (e.g., "JD", "ABC", "JJCS")
-6. Common locations within engagement term: next to paragraphs, at section breaks, near signature lines
-7. Example: If engagement term section has 6 pages and initials appear 8 times, count = 8
+1. Scan ONLY the Engagement Term section pages for CLIENT initials (typically pages 1-6 of the engagement term)
+2. Do NOT count initials from other document sections (Financial Analysis, Debt Schedule, Legal Plan, etc.)
+3. Count each individual occurrence of the SAME client initials within the engagement term section only
+4. EXCLUDE these from counting:
+   - Company initials or attorney initials (different from client initials)
+   - Initials in signature blocks or signature lines
+   - Initials that appear in headers/footers
+   - Initials in example text or instructions
+5. INCLUDE these in counting:
+   - Client initials next to paragraphs or clauses
+   - Client initials at section breaks within engagement term
+   - Client initials in acknowledgment boxes or checkboxes
+   - Client initials confirming understanding of specific terms
+6. Be systematic: Go through each page of the engagement term section and count every occurrence
+7. If the same initials appear 22 times in the engagement term section, the count should be exactly 22
+8. Double-check your count by reviewing each page methodically
+
+COUNTING METHODOLOGY:
+- Start from page 1 of engagement term, scan line by line
+- Mark each occurrence of client initials (e.g., "EE", "JD", etc.)
+- Keep a running total as you go through each page
+- Skip initials that are clearly company/attorney names
+- Focus on initials that appear to be client acknowledgments
+- Final count should reflect the actual number of times client initials appear
 """
 
 POWER_OF_ATTORNEY_PROMPT = f"""
