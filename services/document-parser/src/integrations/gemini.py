@@ -479,12 +479,13 @@ class GeminiClient:
                         ])
                         for section in detected_sections
                     )
-                    # Check for typical Legal Plan Agreement document structure
-                    # These documents often have Account Agreement + Cancellation Notice + no Engagement Term
+                    
                     has_typical_structure = (
                         any('account agreement' in section.lower() for section in detected_sections) and
                         any('cancellation notice' in section.lower() for section in detected_sections) and
-                        not any('engagement' in section.lower() or 'service agreement' in section.lower() for section in detected_sections)
+                        not any('engagement' in section.lower() or 'service agreement' in section.lower() for section in detected_sections) and
+                        # Additional validation: must have some legal/member related indicators
+                        any(keyword in ' '.join(detected_sections).lower() for keyword in ['member', 'legal', 'veritas', 'plan'])
                     )
                     was_detected = explicit_patterns or has_typical_structure
                 else:
@@ -583,20 +584,6 @@ class GeminiClient:
                         elif entity_name != 'clixsign_all':  # Skip clixsign_all
                             package_data[entity_name] = {'file_id': file_id}
             
-            # Final safety net: Always attempt engagement_term if missing (it's in every document)
-            if 'engagement_term' not in package_data:
-                logger.warning("engagement_term missing despite all fallbacks - final attempt")
-                try:
-                    engagement_result = await self._extract_engagement_term(pdf_data, file_id)
-                    if engagement_result:
-                        package_data['engagement_term'] = engagement_result
-                        logger.info("Final engagement_term extraction successful")
-                    else:
-                        package_data['engagement_term'] = {'file_id': file_id}
-                        logger.warning("Final engagement_term extraction failed - using placeholder")
-                except Exception as e:
-                    logger.error(f"Final engagement_term extraction error: {e}")
-                    package_data['engagement_term'] = {'file_id': file_id}
             
             # Comprehensive signature and initials backfill for ALL sections
             signature_critical_fields = {
