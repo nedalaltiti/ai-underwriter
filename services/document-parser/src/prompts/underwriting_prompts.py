@@ -67,13 +67,13 @@ Extract ALL these fields (use null if not found):
   "monthly_payment": "Monthly payment amount",
   "client_name": "Primary client full name",
   "client_address": "Client address",
-  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams')",
-  "client_signature_date": "Date signed (YYYY-MM-DD)",
+  "client_signature": "Actual client name from signature line in ENGAGEMENT TERM section ONLY - if engagement term has blank signature lines, use null",
+  "client_signature_date": "Date signed in ENGAGEMENT TERM section ONLY (YYYY-MM-DD) - if no date in engagement term, use null",
   "coclient_name": "Co-client name if present",
-  "coclient_signature": "Actual co-client name from signature line if present",
-  "coclient_signature_date": "Co-client date if present",
+  "coclient_signature": "Actual co-client name from signature line in ENGAGEMENT TERM section ONLY - if engagement term has no co-client signature, use null",
+  "coclient_signature_date": "Co-client date in ENGAGEMENT TERM section ONLY (YYYY-MM-DD) - if no co-client date in engagement term, use null",
   "client_initials": "Client initials found in engagement term section (e.g., EE, JD, ABC) - ONLY if they actually exist, use null if no initials found",
-  "client_initials_count": "EXACT count of how many times the client initials appear in the Engagement Term section ONLY - if no initials exist, use 0 not 1",
+  "client_initials_count": "EXACT count of how many times the client initials appear in the Engagement Term section ONLY - be precise, if actual count is 10, report 10 not 12",
   "coclient_initials": "Co-client initials if present (e.g., MJ, XYZ)",
   "coclient_initials_count": "Total count of co-client initials ONLY within the Engagement Term section (NOT other sections)",
   "page_count": "Total pages in engagement term section",
@@ -105,6 +105,7 @@ CRITICAL: NEVER add phantom initials that don't exist. If you don't see any init
 6. Be systematic: Go through each page of the engagement term section and count every occurrence
 7. If the same initials appear 22 times in the engagement term section, the count should be exactly 22
 8. Double-check your count by reviewing each page methodically
+9. VALIDATION STEP: After counting, review your total - if you counted 12 but only see 10 clear client acknowledgment initials, recount and exclude non-client initials
 
 COUNTING METHODOLOGY:
 - Start from page 1 of engagement term, scan line by line
@@ -112,9 +113,14 @@ COUNTING METHODOLOGY:
 - Keep a running total as you go through each page
 - Skip initials that are clearly company/attorney names
 - Focus on initials that appear to be client acknowledgments
-- CRITICAL: If you see 10 initials, count exactly 10 - don't add 1
+- CRITICAL: If you see 10 initials, count exactly 10 - don't add 1 or 2
 - CRITICAL: If you see 0 initials, count exactly 0 - don't assume there should be 1
-- Final count should reflect the actual number of times client initials appear
+- COMMON OVER-COUNTING PATTERNS TO AVOID:
+  * Counting initials near signature lines (exclude these)
+  * Counting company/attorney "DD" that's not client initials
+  * Double-counting the same initial in overlapping sections
+  * Including "DD" from headers, footers, or page numbers
+- Final count should reflect ONLY client acknowledgment initials in engagement term section
 """
 
 POWER_OF_ATTORNEY_PROMPT = f"""
@@ -131,12 +137,12 @@ Extract the following information and return as JSON:
   "attorney_address": "Attorney office address",
   "attorney_phone": "Attorney contact phone",
   "client_name": "Primary client full name",
-  "client_ssn": "Client SSN (format: 123-45-6789)",
+  "client_ssn": "Client SSN - extract the full unmasked number (format: 123-45-6789)",
   "client_dob": "Client date of birth (YYYY-MM-DD). If split across lines like '09/28/1' and '971', combine to '1971-09-28'",
   "client_signature": "Actual client name from signature line",
   "client_signature_date": "Date client signed (YYYY-MM-DD)",
   "coclient_name": "Co-client full name if present",
-  "coclient_ssn": "Co-client SSN (format: 123-45-6789)",
+  "coclient_ssn": "Co-client SSN - extract the full unmasked number (format: 123-45-6789)",
   "coclient_dob": "Co-client date of birth (YYYY-MM-DD)",
   "coclient_signature": "Actual co-client name from signature line if present",
   "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)"
@@ -329,7 +335,7 @@ Extract the following information and return as JSON:
   "file_id": null,
   "legal_plan_provider": "Legal plan provider company",
   "member_name": "Primary member name",
-  "member_ssn": "Member SSN (format: 123-45-6789)",
+  "member_ssn": "Member SSN - if masked (XXX-XX-1234), keep masked format",
   "member_dob": "Member date of birth (YYYY-MM-DD)",
   "coapplicant_name": "Co-applicant name",
   "coapplicant_ssn": "Co-applicant SSN",
@@ -402,18 +408,29 @@ Extract ALL these fields (use null if not found):
   "file_id": null,
   "company_name": "Debt settlement company name",
   "settlement_fee_percent": "Settlement fee percentage",
-  "client_initials": "Client initials found ONLY in the Program Disclosure section",
-  "coclient_initials": "Co-client initials if present ONLY in the Program Disclosure section",
-  "client_initials_count": "Total count of client initials ONLY within the Program Disclosure section (NOT other sections)",
-  "coclient_initials_count": "Total count of co-client initials ONLY within the Program Disclosure section (NOT other sections)",
+  "client_initials": "Client initials found ONLY in the Program Disclosure section - ONLY if they actually exist, use null if no initials found",
+  "coclient_initials": "Co-client initials if present ONLY in the Program Disclosure section - ONLY if they actually exist, use null if no initials found",
+  "client_initials_count": "EXACT count of client initials ONLY within the Program Disclosure section - if no initials exist, use 0 not 1",
+  "coclient_initials_count": "EXACT count of co-client initials ONLY within the Program Disclosure section - if no initials exist, use 0 not 1",
   "is_all_initials_present": "Are all required initials present in this section? (true/false)"
 }}
 
 CRITICAL SECTION-SPECIFIC INSTRUCTIONS:
+CRITICAL: NEVER add phantom initials that don't exist. If you don't see any initials, use null and count 0.
+
 1. Count initials ONLY within the Program Disclosure section
 2. DO NOT count initials from Engagement Terms, Legal Plan, Financial Analysis, or other sections
 3. Each section has its own independent initial count
 4. Look for signature blocks within this specific section
+5. NEVER assume there are initials if you don't see them - use null and 0 count
+
+COUNTING METHODOLOGY FOR PROGRAM DISCLOSURE:
+- Scan ONLY the Program Disclosure pages/section
+- Look for client initials (usually 2-4 letters like "AD", "EE", "JD")
+- Check near acknowledgment statements or checkboxes
+- CRITICAL: If you see 5 initials, count exactly 5 - don't add 1
+- CRITICAL: If you see 0 initials, count exactly 0 - don't assume there should be 1
+- Final count should reflect actual initials in this section only
 
 Focus on: Program terms, disclosure statements, initial requirements for this section only
 """
@@ -428,7 +445,7 @@ Extract ALL these fields from the Client Information section (use null if not fo
 {{
   "file_id": null,
   "client_name": "Client full name",
-  "client_ssn": "Client SSN - if masked, keep masked format",
+  "client_ssn": "Client SSN - if masked (XXX-XX-1234), keep masked format",
   "client_dob": "Client date of birth (YYYY-MM-DD)",
   "client_employer": "Main App Employer",
   "client_title": "Job title",
@@ -441,7 +458,7 @@ Extract ALL these fields from the Client Information section (use null if not fo
   "client_home_phone": "Home phone",
   "client_cell_phone": "Cell phone",
   "coclient_name": "Co-client full name",
-  "coclient_ssn": "Co-client SSN",
+  "coclient_ssn": "Co-client SSN - if masked (XXX-XX-1234), keep masked format",
   "coclient_dob": "Co-client date of birth (YYYY-MM-DD)",
   "coclient_employer": "Co App Employer",
   "coclient_title": "Co-client job title",
@@ -1045,12 +1062,12 @@ Return STRICT JSON with exactly this shape:
     "attorney_address": null,
     "attorney_phone": null,
     "client_name": "Primary client name",
-    "client_ssn": null,
+    "client_ssn": "Client SSN - if masked (XXX-XX-1234), keep masked format",
     "client_dob": "YYYY-MM-DD or null",
     "client_signature": "Client signature indicator if present",
     "client_signature_date": "YYYY-MM-DD or null",
     "coclient_name": "Co-client name",
-    "coclient_ssn": null,
+    "coclient_ssn": "Co-client SSN - if masked (XXX-XX-1234), keep masked format",
     "coclient_dob": "YYYY-MM-DD or null",
     "coclient_signature": "Co-client signature indicator if present",
     "coclient_signature_date": "YYYY-MM-DD or null"
@@ -1077,7 +1094,7 @@ def get_targeted_account_agreement_prompt() -> str:
         "client_first_name": null,
         "client_last_name": null,
         "client_middle_initial": null,
-        "client_ssn": null,
+        "client_ssn": "Client SSN - if masked (XXX-XX-1234), keep masked format",
         "client_dob": null,
         "client_address": null,
         "client_city": null,
@@ -1088,7 +1105,7 @@ def get_targeted_account_agreement_prompt() -> str:
         "coclient_first_name": null,
         "coclient_last_name": null,
         "coclient_middle_initial": null,
-        "coclient_ssn": null,
+        "coclient_ssn": "Co-client SSN - if masked (XXX-XX-1234), keep masked format",
         "coclient_dob": null,
         "client_initials": null,
         "client_signature": null,

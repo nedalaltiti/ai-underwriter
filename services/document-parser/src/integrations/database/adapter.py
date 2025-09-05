@@ -735,17 +735,19 @@ class UnderwritingDatabaseAdapter:
         """Store program disclosure data."""
         await connection.execute("""
             INSERT INTO underwriting.program_disclosure 
-            (file_id, company_name, settlement_fee_percent, client_initials, coclient_initials, is_all_initials_present, updated_at)
+            (file_id, company_name, settlement_fee_percent, client_initials, coclient_initials, client_initials_count, coclient_initials_count, is_all_initials_present, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (file_id) DO UPDATE SET
                 company_name = COALESCE(EXCLUDED.company_name, program_disclosure.company_name),
                 settlement_fee_percent = COALESCE(EXCLUDED.settlement_fee_percent, program_disclosure.settlement_fee_percent),
                 client_initials = COALESCE(EXCLUDED.client_initials, program_disclosure.client_initials),
                 coclient_initials = COALESCE(EXCLUDED.coclient_initials, program_disclosure.coclient_initials),
+                client_initials_count = COALESCE(EXCLUDED.client_initials_count, program_disclosure.client_initials_count),
+                coclient_initials_count = COALESCE(EXCLUDED.coclient_initials_count, program_disclosure.coclient_initials_count),
                 is_all_initials_present = COALESCE(EXCLUDED.is_all_initials_present, program_disclosure.is_all_initials_present),
                 updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.company_name, entity.settlement_fee_percent,
-            entity.client_initials, entity.coclient_initials, entity.is_all_initials_present, datetime.now())
+            entity.client_initials, entity.coclient_initials, entity.client_initials_count, entity.coclient_initials_count, entity.is_all_initials_present, datetime.now())
     
     async def _store_cancellation_notice(self, connection, entity: CancellationNotice):
         """Store cancellation notice data."""

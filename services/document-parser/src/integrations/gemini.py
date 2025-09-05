@@ -602,7 +602,7 @@ class GeminiClient:
                 'legal_plan_agreement': ['member_agreement_client_signature', 'member_agreement_signature_date', 'member_acknowledge_client_signature', 'member_acknowledge_signature_date', 'member_info_client_signature', 'member_info_signature_date', 'member_acknowledge_client_initials', 'member_acknowledge_client_initials_count'],
                 'cancellation_notice': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date'],
                 'disclosure': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date', 'client_initials', 'coclient_initials'],
-                'program_disclosure': ['client_initials', 'coclient_initials'],
+                'program_disclosure': ['client_initials', 'coclient_initials', 'client_initials_count', 'coclient_initials_count'],
                 'payment_bank_info': ['client_signature', 'client_signature_date']
             }
             
@@ -617,25 +617,27 @@ class GeminiClient:
                             # Create targeted prompt for missing signature/initial fields
                             fields_json = ",\n  ".join([f'"{field}": null' for field in missing_fields])
                             targeted_prompt = f"""
-                            Extract ONLY the following missing fields from this document section.
+                            Extract ONLY the following missing fields from the {entity_name.upper()} section ONLY.
                             
-                            SCAN THE ENTIRE PAGE from top to bottom, especially:
-                            - Bottom of page for client initials (usually "Initials: XX" format)
-                            - Signature blocks and dates
-                            - Co-client information if joint account
+                            CRITICAL: ONLY scan the {entity_name.replace('_', ' ').title()} section pages. DO NOT look at other sections.
+                            
+                            Look for signatures/initials ONLY in the {entity_name.replace('_', ' ').title()} section:
+                            - Signature blocks at the END of the {entity_name.replace('_', ' ').title()} section
+                            - Client initials within the {entity_name.replace('_', ' ').title()} section only
+                            - DO NOT use signatures from Legal Plan Agreement, Financial Analysis, or other sections
                             
                             Return STRICT JSON with EXACTLY these keys:
                             {{
                               {fields_json}
                             }}
                             
-                            CRITICAL INSTRUCTIONS:
-                             - For initials: Check bottom of page after all content
-                             - For initial counts: Count ONLY within THIS specific section, NOT the entire document
-                             - For signatures: Extract ACTUAL CLIENT NAME from signature line
-                             - For dates: Use YYYY-MM-DD format
-                             - Section isolation: Each section has independent initials/signatures - don't cross-count
-                             - If not found, keep as null
+                            CRITICAL SECTION ISOLATION RULES:
+                             - ONLY extract from {entity_name.replace('_', ' ').title()} section pages
+                             - If {entity_name.replace('_', ' ').title()} section has NO signatures, keep signature fields null
+                             - If {entity_name.replace('_', ' ').title()} section has blank signature lines, keep null
+                             - DO NOT borrow signatures from other document sections
+                             - Each section must have its own independent signatures
+                             - If not found in THIS section, keep as null
                             """
                             
                             backfill_result = await self._make_gemini_request(targeted_prompt, pdf_data)
@@ -2126,18 +2128,7 @@ class GeminiClient:
     
     async def _extract_program_disclosure(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
         """Extract program disclosure data."""
-        prompt = """
-        Extract Program Disclosure information.
-        
-        Return JSON:
-        {
-          "company_name": null,
-          "settlement_fee_percent": null,
-          "client_initials": null,
-          "coclient_initials": null,
-          "is_all_initials_present": null
-        }
-        """
+        prompt = get_prompt_for_document_type('program_disclosure')
         result = await self._make_gemini_request(prompt, pdf_data)
         if result:
             result['file_id'] = file_id
