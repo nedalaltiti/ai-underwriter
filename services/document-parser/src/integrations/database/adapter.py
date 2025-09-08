@@ -736,7 +736,7 @@ class UnderwritingDatabaseAdapter:
         await connection.execute("""
             INSERT INTO underwriting.program_disclosure 
             (file_id, company_name, settlement_fee_percent, client_initials, coclient_initials, client_initials_count, coclient_initials_count, is_all_initials_present, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (file_id) DO UPDATE SET
                 company_name = COALESCE(EXCLUDED.company_name, program_disclosure.company_name),
                 settlement_fee_percent = COALESCE(EXCLUDED.settlement_fee_percent, program_disclosure.settlement_fee_percent),

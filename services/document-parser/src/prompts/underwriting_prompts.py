@@ -541,6 +541,8 @@ CRITICAL SUCCESS FACTORS:
 3. For lists (debt_schedule, payment_service_fees, etc.), extract ALL entries completely
 4. Use null for missing fields but ensure you check the entire document first
 5. Every document MUST contain at least one of the 17 required sections - there are no "unknown" documents
+6. NEVER cross-reference or merge data between different sections - each section must be extracted independently
+7. If a field is missing in one section, use null - DO NOT copy data from other sections to fill missing fields
 
 DOCUMENT TYPE DISAMBIGUATION:
 - Account Agreement/Client Information Sheet/Bank Info → payment_gateway_agreement
@@ -556,6 +558,14 @@ EXTRACTION STRATEGY:
 2. Second pass: Extract ALL fields for each identified type
 3. Third pass: Verify completeness of lists and critical fields
 4. Return complete JSON with ALL entities populated
+
+SECTION INDEPENDENCE RULES:
+- Each section (engagement_term, payment_gateway_agreement, etc.) must be extracted ONLY from its own content
+- NEVER use data from payment_gateway_agreement to fill missing engagement_term fields
+- NEVER use data from engagement_term to fill missing payment_gateway_agreement fields
+- If client_address is missing in engagement_term section, use null - DO NOT copy from payment_gateway
+- If client_address is missing in payment_gateway section, use null - DO NOT copy from engagement_term
+- Each section's data must stand alone - missing fields should remain null
 
 Return this complete structure:
 
