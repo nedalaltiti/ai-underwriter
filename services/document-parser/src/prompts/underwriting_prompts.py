@@ -31,7 +31,8 @@ CRITICAL EXTRACTION RULES:
 14. Process systematically: don't jump around, extract section by section
 15. For initial counts: CRITICAL - scan ONLY the specific section you're extracting, NOT the entire document. Each section has its own initial count that should be independent of other sections
 16. SECTION BOUNDARIES: Each document section has clear boundaries (usually ending at signature blocks). DO NOT extract data from one section to fill missing fields in another section
-17. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
+17. SIGNATURE BOUNDARIES: If a section has no signatures, use null. DO NOT copy signatures from other sections to fill missing signature fields
+18. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
 """
 
 ENGAGEMENT_TERM_PROMPT = f"""
@@ -85,8 +86,8 @@ Extract ALL these fields (use null if not found):
   "coclient_initials": "Co-client initials if present (e.g., MJ, XYZ)",
   "coclient_initials_count": "Total count of co-client initials ONLY within the Engagement Term section (NOT other sections)",
   "page_count": "Total pages in engagement term section",
-  "identified_debts_ack_client_signature": "Actual client name from signature line",
-  "identified_debts_ack_coclient_signature": "Actual co-client name from signature line if present",
+  "identified_debts_ack_client_signature": "Actual client name from signature line - ONLY from Engagement Term section, use null if no signature in this section",
+  "identified_debts_ack_coclient_signature": "Actual co-client name from signature line if present - ONLY from Engagement Term section, use null if no co-client signature in this section",
   "privacy_policy_client_initials": "Client initials",
   "privacy_policy_coclient_initials": "Co-client initials if present",
 }}
@@ -147,13 +148,13 @@ Extract the following information and return as JSON:
   "client_name": "Primary client full name",
   "client_ssn": "Client SSN - extract the full unmasked number (format: 123-45-6789)",
   "client_dob": "Client date of birth (YYYY-MM-DD). If split across lines like '09/28/1' and '971', combine to '1971-09-28'",
-  "client_signature": "Actual client name from signature line",
-  "client_signature_date": "Date client signed (YYYY-MM-DD)",
+  "client_signature": "Actual client name from signature line - ONLY from Power of Attorney section, use null if no signature in this section",
+  "client_signature_date": "Date client signed (YYYY-MM-DD) - ONLY from Power of Attorney section",
   "coclient_name": "Co-client full name if present",
   "coclient_ssn": "Co-client SSN - extract the full unmasked number (format: 123-45-6789)",
   "coclient_dob": "Co-client date of birth (YYYY-MM-DD)",
-  "coclient_signature": "Actual co-client name from signature line if present",
-  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)"
+  "coclient_signature": "Actual co-client name from signature line if present - ONLY from Power of Attorney section, use null if no co-client signature in this section",
+  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD) - ONLY from Power of Attorney section"
 }}
 
 Look for:
@@ -196,10 +197,10 @@ Extract ALL these fields (use null if not found):
   "coclient_dob": "Co-client date of birth",
   "client_initials": "Client initials (e.g., 'EE', 'JD') - scan entire document, check bottom of pages",
   "coclient_initials": "Co-client initials if present (e.g., 'MJ', 'XYZ') - scan entire document, check bottom of pages",
-  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams') - scan entire document",
-  "client_signature_date": "Date client signed (YYYY-MM-DD)",
-  "coclient_signature": "Actual co-client name from signature line if present (e.g., 'Mary Adams') - scan entire document", 
-  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)",
+  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams') - ONLY from Payment Gateway Agreement section, use null if no signature in this section",
+  "client_signature_date": "Date client signed (YYYY-MM-DD) - ONLY from Payment Gateway Agreement section",
+  "coclient_signature": "Actual co-client name from signature line if present (e.g., 'Mary Adams') - ONLY from Payment Gateway Agreement section, use null if no co-client signature in this section", 
+  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD) - ONLY from Payment Gateway Agreement section",
   "pages_count": "Total pages"
 }}
 
@@ -251,10 +252,10 @@ Extract ALL these financial fields (use null if not found):
   "estimated_program_savings": "Estimated savings",
   "estimated_total_cost": "Estimated total cost",
   "hardship_details": "Hardship description",
-  "client_signature": "Actual client name from signature line",
-  "client_signature_date": "Date signed (YYYY-MM-DD)",
-  "coclient_signature": "Actual co-client name from signature line if present",
-  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)",
+  "client_signature": "Actual client name from signature line - ONLY from Financial Analysis section, use null if no signature in this section",
+  "client_signature_date": "Date signed (YYYY-MM-DD) - ONLY from Financial Analysis section",
+  "coclient_signature": "Actual co-client name from signature line if present - ONLY from Financial Analysis section, use null if no co-client signature in this section",
+  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD) - ONLY from Financial Analysis section",
   "client_initials": "Client initials - IMPORTANT: Check the BOTTOM of the page after all tables and data - ONLY if they actually exist, use null if no initials found",
   "coclient_initials": "Co-client initials if present - Check bottom of page - ONLY if they actually exist, use null if no initials found",
 }}
@@ -291,11 +292,11 @@ Extract ALL fields for each debt (use null if not found):
       "current_balance": "Balance amount",
       "debt_type": "Type of debt (credit card, loan, etc.)",
       "client_name": "Client name if shown",
-      "client_signature": "Actual client name from signature line if present",
-      "client_signature_date": "Client signature date if present",
+      "client_signature": "Actual client name from signature line if present - ONLY from Debt Schedule section, use null if no signature in this section",
+      "client_signature_date": "Client signature date if present - ONLY from Debt Schedule section",
       "coclient_name": "Co-client name if shown", 
-      "coclient_signature": "Actual co-client name from signature line if present",
-      "coclient_signature_date": "Co-client signature date if present"
+      "coclient_signature": "Actual co-client name from signature line if present - ONLY from Debt Schedule section, use null if no co-client signature in this section",
+      "coclient_signature_date": "Co-client signature date if present - ONLY from Debt Schedule section"
     }}
   ]
 }}
@@ -314,10 +315,10 @@ Extract ALL these fields (use null if not found):
   "file_id": null,
   "cancellation_deadline": "Cancellation deadline date (YYYY-MM-DD)",
   "cancellation_date": "Actual cancellation date (YYYY-MM-DD)",
-  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams') - scan entire document",
-  "client_signature_date": "Date client signed (YYYY-MM-DD)",
-  "coclient_signature": "Actual co-client name from signature line if present (e.g., 'Mary Adams') - scan entire document",
-  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)"
+  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams') - ONLY from Cancellation Notice section, use null if no signature in this section",
+  "client_signature_date": "Date client signed (YYYY-MM-DD) - ONLY from Cancellation Notice section",
+  "coclient_signature": "Actual co-client name from signature line if present (e.g., 'Mary Adams') - ONLY from Cancellation Notice section, use null if no co-client signature in this section",
+  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD) - ONLY from Cancellation Notice section"
 }}
 
 CRITICAL SCANNING INSTRUCTIONS:
@@ -477,10 +478,10 @@ Extract ALL these fields from the Client Information section (use null if not fo
   "has_security_clearance": "Security clearance question (true/false)",
   "is_in_bankruptcy": "Currently involved in bankruptcy proceeding? (true/false)",
   "is_enrolled_in_credit_counseling": "Currently enrolled in credit counseling program? (true/false)",
-  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams') - scan entire document",
-  "client_signature_date": "Date client signed (YYYY-MM-DD)",
-  "coclient_signature": "Actual co-client name from signature line if present (e.g., 'Mary Adams') - scan entire document",
-  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD)"
+  "client_signature": "Actual client name from signature line (e.g., 'Robert Adams') - ONLY from Attorney Privileged Client Info section, use null if no signature in this section",
+  "client_signature_date": "Date client signed (YYYY-MM-DD) - ONLY from Attorney Privileged Client Info section",
+  "coclient_signature": "Actual co-client name from signature line if present (e.g., 'Mary Adams') - ONLY from Attorney Privileged Client Info section, use null if no co-client signature in this section",
+  "coclient_signature_date": "Date co-client signed (YYYY-MM-DD) - ONLY from Attorney Privileged Client Info section"
 }}
 
 Focus on:
@@ -582,6 +583,12 @@ ENGAGEMENT TERM SPECIFIC BOUNDARY RULES:
 - DO NOT scan beyond engagement term signatures to find client address
 - If engagement term has no client address before the signature, use null
 - Common mistake: looking at payment gateway or account agreement sections for missing engagement term address
+
+SIGNATURE BOUNDARY RULES FOR ALL SECTIONS:
+- Each section's signatures must come ONLY from that specific section
+- DO NOT use signatures from other sections to fill missing signature fields
+- If a section has no signatures, use null - do not copy signatures from other sections
+- Common sections with signature boundaries: engagement_term, power_of_attorney, payment_gateway_agreement, financial_analysis, debt_schedule, cancellation_notice, attorney_privileged_client_info, disclosure
 
 Return this complete structure:
 
@@ -1051,16 +1058,16 @@ Return STRICT JSON with exactly this shape:
   "disclosure": {{
     "file_id": null,
     "disclosure_type": "Type of disclosure (e.g., '11 USC 527(a)', '11 USC 527(b)', 'General Disclosure')",
-    "client_signature": "Actual client name from signature line if present",
-    "client_signature_date": "Date signed by client (YYYY-MM-DD)",
-    "coclient_signature": "Actual co-client name from signature line if present",
-    "coclient_signature_date": "Date signed by co-client (YYYY-MM-DD)",
+    "client_signature": "Actual client name from signature line if present - ONLY from Disclosure section, use null if no signature in this section",
+    "client_signature_date": "Date signed by client (YYYY-MM-DD) - ONLY from Disclosure section",
+    "coclient_signature": "Actual co-client name from signature line if present - ONLY from Disclosure section, use null if no co-client signature in this section",
+    "coclient_signature_date": "Date signed by co-client (YYYY-MM-DD) - ONLY from Disclosure section",
     "client_initials": "Client initials if present in disclosure acknowledgment",
     "coclient_initials": "Co-client initials if present in disclosure acknowledgment",
-    "additional_disclosure_client_signature": "Additional client signature if multiple disclosure sections",
-    "additional_disclosure_client_signature_date": "Additional client signature date (YYYY-MM-DD)",
-    "additional_disclosure_coclient_signature": "Additional co-client signature if multiple disclosure sections", 
-    "additional_disclosure_coclient_signature_date": "Additional co-client signature date (YYYY-MM-DD)"
+    "additional_disclosure_client_signature": "Additional client signature if multiple disclosure sections - ONLY from Disclosure section, use null if no additional signature in this section",
+    "additional_disclosure_client_signature_date": "Additional client signature date (YYYY-MM-DD) - ONLY from Disclosure section",
+    "additional_disclosure_coclient_signature": "Additional co-client signature if multiple disclosure sections - ONLY from Disclosure section, use null if no additional co-client signature in this section", 
+    "additional_disclosure_coclient_signature_date": "Additional co-client signature date (YYYY-MM-DD) - ONLY from Disclosure section"
   }}
 }}
 
