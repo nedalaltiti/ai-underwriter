@@ -30,7 +30,8 @@ CRITICAL EXTRACTION RULES:
 13. Match the EXACT field names and JSON shape requested
 14. Process systematically: don't jump around, extract section by section
 15. For initial counts: CRITICAL - scan ONLY the specific section you're extracting, NOT the entire document. Each section has its own initial count that should be independent of other sections
-16. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
+16. SECTION BOUNDARIES: Each document section has clear boundaries (usually ending at signature blocks). DO NOT extract data from one section to fill missing fields in another section
+17. ROUTING NUMBER: Always exactly 9 digits (e.g., "241279616"). DO NOT confuse with account number.
 """
 
 ENGAGEMENT_TERM_PROMPT = f"""
@@ -54,6 +55,13 @@ SPECIFIC EXTRACTION GUIDANCE:
 - DO NOT count initials from other sections like Legal Plan, Financial Analysis, etc.
 - DO NOT count attorney/company initials that are different from client initials
 
+CRITICAL SECTION BOUNDARY RULES:
+- ONLY extract data from the ENGAGEMENT TERM section (typically ends at client/co-client signature lines)
+- DO NOT look beyond the engagement term signature lines for any information
+- If client_address is not found within the engagement term section boundaries, use null
+- DO NOT use client address from Payment Gateway, Account Agreement, or any other sections
+- Stop scanning at the engagement term signature block - do not continue to other document sections
+
 Extract ALL these fields (use null if not found):
 
 {{
@@ -66,7 +74,7 @@ Extract ALL these fields (use null if not found):
   "settlement_fee_percentage": "Settlement fee as percentage (e.g., 25.00 for 25%)",
   "monthly_payment": "Monthly payment amount",
   "client_name": "Primary client full name",
-  "client_address": "Client address",
+  "client_address": "Client address ONLY from within the Engagement Term section - if not found in engagement term, use null (DO NOT use address from other sections)",
   "client_signature": "Actual client name from signature line in ENGAGEMENT TERM section ONLY - if engagement term has blank signature lines, use null",
   "client_signature_date": "Date signed in ENGAGEMENT TERM section ONLY (YYYY-MM-DD) - if no date in engagement term, use null",
   "coclient_name": "Co-client name if present",
@@ -567,6 +575,12 @@ SECTION INDEPENDENCE RULES:
 - If client_address is missing in payment_gateway section, use null - DO NOT copy from engagement_term
 - Each section's data must stand alone - missing fields should remain null
 
+ENGAGEMENT TERM SPECIFIC BOUNDARY RULES:
+- Engagement term section typically ends at the client signature block
+- DO NOT scan beyond engagement term signatures to find client address
+- If engagement term has no client address before the signature, use null
+- Common mistake: looking at payment gateway or account agreement sections for missing engagement term address
+
 Return this complete structure:
 
 {{
@@ -609,7 +623,7 @@ Return this complete structure:
     "settlement_fee_percentage": null,
     "monthly_payment": null,
     "client_name": null,
-    "client_address": null,
+    "client_address": null,  // ONLY from engagement term section - use null if not in engagement term
     "client_signature": null,
     "client_signature_date": null,
     "coclient_name": null,
