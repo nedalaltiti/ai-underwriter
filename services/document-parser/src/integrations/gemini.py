@@ -1580,7 +1580,10 @@ class GeminiClient:
                     'cancellation_deadline', 'cancellation_date',
                     'first_payment_date', 'process_date', 'first_debit_date', 'program_start_date',
                     'estimated_program_start_date', 'date', 'cancel_by_date', 'date_of_first_debit',
-                    'credit_card_expiration_date', 'monthly_recurring_date'
+                    'credit_card_expiration_date', 'monthly_recurring_date',
+                    'member_agreement_signature_date', 'member_acknowledge_signature_date', 'member_info_signature_date',
+                    'additional_disclosure_client_signature_date', 'additional_disclosure_coclient_signature_date',
+                    'contract_date'
                 ]
                 
                 # ClixSign datetime fields that need full datetime parsing
