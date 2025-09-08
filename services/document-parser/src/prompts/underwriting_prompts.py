@@ -434,8 +434,9 @@ CRITICAL: NEVER add phantom initials that don't exist. If you don't see any init
 
 COUNTING METHODOLOGY FOR PROGRAM DISCLOSURE:
 - Scan ONLY the Program Disclosure pages/section
-- Look for client initials (usually 2-4 letters like "AD", "EE", "JD")
+- Look for client initials (usually 2-4 letters like "AD", "EE", "JD", "SS")
 - Check near acknowledgment statements or checkboxes
+- In your example, "SS" appears multiple times next to disclosure paragraphs
 - CRITICAL: If you see 5 initials, count exactly 5 - don't add 1
 - CRITICAL: If you see 0 initials, count exactly 0 - don't assume there should be 1
 - Final count should reflect actual initials in this section only
@@ -535,6 +536,7 @@ Look for key indicators:
 INDICATOR KEYWORDS:
 - payment_gateway_agreement (Account Agreement): "Account Agreement", "Client Information Sheet", "Account ID", "ACH", "recurring debit authorization", "routing number", "account number", "payment schedule", processor names like "FORTH", "RAM", "CFT".
 - engagement_term (Company Agreement, Client Services Agreement): "Engagement Terms", "Terms of Engagement", "Company Agreement", provider names like "Clarity", "Concordia", "Resync", "Aspire", "Palisade", phrases like "settlement fee", "settlement fee percentage", "monthly program payment".
+- program_disclosure: "Program Disclosure", "Program Disclosures", "Debt Resolution Program Disclosure", "Debt Resolution Program Disclosures", "Disclosure of Services".
 """
 
 # Comprehensive extraction prompt for multi-section documents

@@ -335,6 +335,9 @@ class GeminiClient:
                 ('disclosure of services', 'program_disclosure', self._extract_program_disclosure),
                 ('high interest disclosure', 'high_interest_disclosure', self._extract_high_interest),
                 ('program disclosure', 'program_disclosure', self._extract_program_disclosure),
+                ('program disclosures', 'program_disclosure', self._extract_program_disclosure),
+                ('debt resolution program disclosure', 'program_disclosure', self._extract_program_disclosure),
+                ('debt resolution program disclosures', 'program_disclosure', self._extract_program_disclosure),
                 ('disclosure', 'disclosure', self._extract_disclosure),  # Most generic last
                 
                 # Clixsign sections
@@ -449,7 +452,7 @@ class GeminiClient:
                 'disclosure': ('disclosure', self._extract_disclosure),
                 'fcra_consent': ('fcra consent', self._extract_fcra),
                 'high_interest_disclosure': ('high interest disclosure', self._extract_high_interest),
-                'program_disclosure': ('program disclosure', self._extract_program_disclosure),
+                'program_disclosure': ('program disclosures', self._extract_program_disclosure),
                 'cancellation_notice': ('cancellation notice', self._extract_cancellation),
                 'clixsign_sender': ('clixsign sender', self._extract_clixsign_data),
                 'clixsign_signers': ('clixsign signers', self._extract_clixsign_data),
@@ -751,7 +754,7 @@ class GeminiClient:
                                 detected_sections.append('fcra_consent')
                             elif 'high interest disclosure' in indicator_lower:
                                 detected_sections.append('high_interest_disclosure')
-                            elif 'program disclosure' in indicator_lower:
+                            elif any(pattern in indicator_lower for pattern in ['program disclosure', 'program disclosures', 'debt resolution program disclosure', 'debt resolution program disclosures']):
                                 detected_sections.append('program_disclosure')
                             elif 'cancellation notice' in indicator_lower:
                                 detected_sections.append('cancellation_notice')
