@@ -947,7 +947,7 @@ class GeminiClient:
                             meaningful_fields = ['company_name', 'client_name', 'client_signature']
                             if any(poa.get(k) not in (None, "", "null") for k in meaningful_fields):
                                 poa['file_id'] = file_id
-                                self._fix_entity_data_formats(poa)
+                                self._fix_entity_data_formats(poa, 'power_of_attorney')
                                 package_data['power_of_attorney'] = poa
                                 logger.info("Targeted power of attorney extraction")
                     elif 'power_of_attorney' not in detected_sections:
@@ -1489,7 +1489,10 @@ class GeminiClient:
                           'program_disclosure', 'cancellation_notice', 'payment_bank_info', 
                           'legal_plan_agreement', 'attorney_privileged_client_info', 'clixsign_sender']:
                     value['file_id'] = file_id
-                    self._fix_entity_data_formats(value)
+                    if key == 'power_of_attorney':
+                        self._fix_entity_data_formats(value, 'power_of_attorney')
+                    else:
+                        self._fix_entity_data_formats(value)
                     
             elif isinstance(value, list):
                 # Add file_id to list entities
@@ -1499,7 +1502,7 @@ class GeminiClient:
                             item['file_id'] = file_id
                             self._fix_entity_data_formats(item)
     
-    def _fix_entity_data_formats(self, entity: Dict[str, Any]) -> None:
+    def _fix_entity_data_formats(self, entity: Dict[str, Any], document_type: str = None) -> None:
         """Fix common data format issues in entities."""
         # Field name mappings to fix mismatches between extraction and model fields
         field_mappings = {
@@ -1778,37 +1781,51 @@ class GeminiClient:
             if f in entity and isinstance(entity[f], str):
                 raw = re.sub(r"\s+", "", entity[f])
                 
-                # Handle masked SSNs (XXX-XX-1234 format)
-                if raw.startswith('XXX-XX-') or raw.startswith('xxx-xx-'):
-                    entity[f] = raw.upper()  # Keep masked format, ensure uppercase
-                elif 'XXX' in raw.upper() and len(raw) >= 7:
-                    # Handle variations like "XXX-XX-1072" or "XXXXX1072"
-                    if '-' in raw:
-                        entity[f] = raw.upper()  # Keep existing format
-                    else:
-                        # Format as XXX-XX-#### if unformatted masked SSN
-                        digits = re.sub(r"[^0-9]", "", raw)
-                        if len(digits) == 4:  # Only last 4 digits
-                            entity[f] = f"XXX-XX-{digits}"
-                        else:
-                            entity[f] = raw.upper()
-                else:
-                    # Handle full SSNs - but check if this should be masked based on document
+                # Special handling for Power of Attorney - always use full SSNs, never mask
+                if document_type == 'power_of_attorney':
                     digits = re.sub(r"[^0-9]", "", raw)
                     if len(digits) == 9:
-                        # Check if original value suggests masking (e.g., contains X)
-                        if 'X' in entity[f].upper():
-                            # Extract last 4 digits and mask the rest
-                            last_four = digits[-4:]
-                            entity[f] = f"XXX-XX-{last_four}"
-                        else:
-                            entity[f] = f"{digits[0:3]}-{digits[3:5]}-{digits[5:9]}"
+                        # Always format as full SSN for Power of Attorney
+                        entity[f] = f"{digits[0:3]}-{digits[3:5]}-{digits[5:9]}"
                     elif len(digits) == 4:
-                        # Only last 4 digits provided - assume masked
-                        entity[f] = f"XXX-XX-{digits}"
+                        # If only 4 digits, this might be an extraction error - keep as is for validation
+                        entity[f] = raw
                     else:
                         # leave as-is; validator may null it
                         entity[f] = raw
+                else:
+                    # Standard SSN processing for other document types
+                    # Handle masked SSNs (XXX-XX-1234 format)
+                    if raw.startswith('XXX-XX-') or raw.startswith('xxx-xx-'):
+                        entity[f] = raw.upper()  # Keep masked format, ensure uppercase
+                    elif 'XXX' in raw.upper() and len(raw) >= 7:
+                        # Handle variations like "XXX-XX-1072" or "XXXXX1072"
+                        if '-' in raw:
+                            entity[f] = raw.upper()  # Keep existing format
+                        else:
+                            # Format as XXX-XX-#### if unformatted masked SSN
+                            digits = re.sub(r"[^0-9]", "", raw)
+                            if len(digits) == 4:  # Only last 4 digits
+                                entity[f] = f"XXX-XX-{digits}"
+                            else:
+                                entity[f] = raw.upper()
+                    else:
+                        # Handle full SSNs - but check if this should be masked based on document
+                        digits = re.sub(r"[^0-9]", "", raw)
+                        if len(digits) == 9:
+                            # Check if original value suggests masking (e.g., contains X)
+                            if 'X' in entity[f].upper():
+                                # Extract last 4 digits and mask the rest
+                                last_four = digits[-4:]
+                                entity[f] = f"XXX-XX-{last_four}"
+                            else:
+                                entity[f] = f"{digits[0:3]}-{digits[3:5]}-{digits[5:9]}"
+                        elif len(digits) == 4:
+                            # Only last 4 digits provided - assume masked
+                            entity[f] = f"XXX-XX-{digits}"
+                        else:
+                            # leave as-is; validator may null it
+                            entity[f] = raw
     
     def _fix_null_strings(self, data: Dict[str, Any]) -> None:
         """Convert string 'null' values to actual None for nested objects."""
@@ -1850,7 +1867,7 @@ class GeminiClient:
         result = await self._make_gemini_request(prompt, pdf_data)
         if result:
             result['file_id'] = file_id
-            self._fix_entity_data_formats(result)
+            self._fix_entity_data_formats(result, 'power_of_attorney')
         return result
     
     async def _extract_financial_analysis(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
