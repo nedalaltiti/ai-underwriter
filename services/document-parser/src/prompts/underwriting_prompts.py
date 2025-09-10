@@ -135,6 +135,10 @@ COUNTING METHODOLOGY:
 POWER_OF_ATTORNEY_PROMPT = f"""
 You are extracting data from a Power of Attorney document for debt settlement representation.
 
+CRITICAL: Power of Attorney documents ALWAYS contain FULL SSNs (123-45-6789). 
+NEVER extract masked SSNs (XXX-XX-####) - these are references, not the actual SSN.
+The complete SSN is always present elsewhere in the document - find it!
+
 {BASE_EXTRACTION_RULES}
 
 Extract the following information and return as JSON:
@@ -146,12 +150,12 @@ Extract the following information and return as JSON:
   "attorney_address": "Attorney office address",
   "attorney_phone": "Attorney contact phone",
   "client_name": "Primary client full name",
-  "client_ssn": "Client SSN - CRITICAL: extract the COMPLETE FULL 9-digit number, never masked (format: 123-45-6789). Power of Attorney documents contain full SSNs, do NOT use XXX-XX-#### format",
+  "client_ssn": "Client SSN - MANDATORY: Must be complete 9-digit number (123-45-6789). FORBIDDEN: XXX-XX-#### format. IGNORE masked references and find the real full SSN in the document",
   "client_dob": "Client date of birth (YYYY-MM-DD). If split across lines like '09/28/1' and '971', combine to '1971-09-28'",
   "client_signature": "Actual client name from signature line - ONLY from Power of Attorney section, use null if no signature in this section",
   "client_signature_date": "Date client signed (YYYY-MM-DD) - ONLY from Power of Attorney section",
   "coclient_name": "Co-client full name if present",
-  "coclient_ssn": "Co-client SSN - CRITICAL: extract the COMPLETE FULL 9-digit number, never masked (format: 123-45-6789). Power of Attorney documents contain full SSNs, do NOT use XXX-XX-#### format",
+  "coclient_ssn": "Co-client SSN - MANDATORY: Must be complete 9-digit number (123-45-6789). FORBIDDEN: XXX-XX-#### format. IGNORE masked references and find the real full SSN in the document",
   "coclient_dob": "Co-client date of birth (YYYY-MM-DD)",
   "coclient_signature": "Actual co-client name from signature line if present - ONLY from Power of Attorney section, use null if no co-client signature in this section",
   "coclient_signature_date": "Date co-client signed (YYYY-MM-DD) - ONLY from Power of Attorney section"

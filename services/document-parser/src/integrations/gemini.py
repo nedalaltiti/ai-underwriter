@@ -1783,16 +1783,24 @@ class GeminiClient:
                 
                 # Special handling for Power of Attorney - always use full SSNs, never mask
                 if document_type == 'power_of_attorney':
-                    digits = re.sub(r"[^0-9]", "", raw)
-                    if len(digits) == 9:
-                        # Always format as full SSN for Power of Attorney
-                        entity[f] = f"{digits[0:3]}-{digits[3:5]}-{digits[5:9]}"
-                    elif len(digits) == 4:
-                        # If only 4 digits, this might be an extraction error - keep as is for validation
-                        entity[f] = raw
+                    # CRITICAL: Reject any masked SSNs for Power of Attorney documents
+                    if 'XXX' in raw.upper() or 'xxx' in raw:
+                        # This is a masked SSN which should NEVER happen in Power of Attorney
+                        # Set to null to force re-extraction or manual review
+                        entity[f] = None
+                        logger.warning(f"Rejected masked SSN in Power of Attorney: {raw}. Power of Attorney documents must have full SSNs.")
                     else:
-                        # leave as-is; validator may null it
-                        entity[f] = raw
+                        digits = re.sub(r"[^0-9]", "", raw)
+                        if len(digits) == 9:
+                            # Always format as full SSN for Power of Attorney
+                            entity[f] = f"{digits[0:3]}-{digits[3:5]}-{digits[5:9]}"
+                        elif len(digits) == 4:
+                            # If only 4 digits, this is likely an extraction error - set to null
+                            entity[f] = None
+                            logger.warning(f"Incomplete SSN in Power of Attorney: {raw}. Expected full 9-digit SSN.")
+                        else:
+                            # leave as-is; validator may null it
+                            entity[f] = raw
                 else:
                     # Standard SSN processing for other document types
                     # Handle masked SSNs (XXX-XX-1234 format)
