@@ -1703,6 +1703,11 @@ class GeminiClient:
                 if key in address_fields:
                     # Remove curly braces, trailing commas, and clean up formatting
                     cleaned_address = value.replace('{', '').replace('}', '').strip()
+                    # Handle literal \n characters and actual newlines
+                    cleaned_address = cleaned_address.replace('\\n', ', ').replace('\n', ', ')
+                    # Clean up multiple commas and spaces
+                    cleaned_address = re.sub(r',\s*,', ',', cleaned_address)  # Remove double commas
+                    cleaned_address = re.sub(r'\s+', ' ', cleaned_address)    # Normalize spaces
                     if cleaned_address.endswith(','):
                         cleaned_address = cleaned_address[:-1].strip()
                     entity[key] = cleaned_address if cleaned_address else None

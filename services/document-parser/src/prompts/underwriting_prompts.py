@@ -18,7 +18,7 @@ CRITICAL EXTRACTION RULES:
 6. For monetary amounts, use decimal format without currency symbols (e.g., "1250.00")
 
 7. For SSNs, maintain format with dashes (e.g., "123-45-6789" or "XXX-XX-6789" if masked)
-8. For addresses, extract as clean text without brackets, braces, or trailing commas
+8. For addresses, extract as clean single-line text without brackets, braces, trailing commas, or newlines (e.g., "1204 Lake Forest Dr, Grand Prairie, TX 75052")
 9. For signatures, extract the ACTUAL CLIENT NAME that appears on the signature line (e.g., "Robert Adams", "John Smith")
 10. For initials, look for 2-4 capital letters (e.g., "JJCS", "AA", "CW") - ALWAYS check the bottom of each page
 11. CRITICAL: Scan the ENTIRE page from top to bottom - client initials are often at the very bottom
@@ -68,7 +68,7 @@ Extract ALL these fields (use null if not found):
 {{
   "file_id": null,
   "company_name": "Debt settlement company name",
-  "company_address": "Complete company address",
+  "company_address": "Complete company address - format as single line with commas (e.g., '123 Main St, Dallas, TX 75201')",
   "company_phone": "Company phone number",
   "company_type": "Type of company (LLC, Corp, etc.)",
   "settlement_fee": "Total settlement fee amount",
@@ -147,7 +147,7 @@ Extract the following information and return as JSON:
   "file_id": null,
   "company_name": "Debt settlement company name",
   "attorney_name": "Attorney or representative name",
-  "attorney_address": "Attorney office address",
+  "attorney_address": "Attorney office address - format as single line with commas (e.g., '1204 Lake Forest Dr, Grand Prairie, TX 75052')",
   "attorney_phone": "Attorney contact phone",
   "client_name": "Primary client full name",
   "client_ssn": "Client SSN - MANDATORY: Must be complete 9-digit number (123-45-6789). FORBIDDEN: XXX-XX-#### format. IGNORE masked references and find the real full SSN in the document",
@@ -188,7 +188,7 @@ Extract ALL these fields (use null if not found):
   "client_middle_initial": "Middle initial",
   "client_ssn": "SSN - if masked (XXX-XX-1234), keep masked format",
   "client_dob": "Date of birth (YYYY-MM-DD)",
-  "client_address": "Street address",
+  "client_address": "Street address - format as single line with commas (e.g., '1204 Lake Forest Dr, Grand Prairie, TX 75052')",
   "client_city": "City",
   "client_state": "State (2-letter code)",
   "client_zipcode": "ZIP code",
