@@ -1782,12 +1782,24 @@ class GeminiClient:
 
         # Normalize SSN-like fields specifically after general cleanup
         ssn_fields = {'client_ssn', 'coclient_ssn', 'member_ssn', 'coapplicant_ssn'}
+        
+        # Log missing SSN fields for Power of Attorney debugging
+        if document_type == 'power_of_attorney':
+            for f in ssn_fields:
+                if f not in entity:
+                    logger.warning(f"Power of Attorney missing SSN field: {f}")
+                elif entity[f] is None:
+                    logger.warning(f"Power of Attorney SSN field is null: {f}")
+                elif not isinstance(entity[f], str):
+                    logger.warning(f"Power of Attorney SSN field is not string: {f} = {entity[f]} (type: {type(entity[f])})")
+        
         for f in ssn_fields:
             if f in entity and isinstance(entity[f], str):
                 raw = re.sub(r"\s+", "", entity[f])
                 
                 # Special handling for Power of Attorney - always use full SSNs, never mask
                 if document_type == 'power_of_attorney':
+                    logger.info(f"Processing Power of Attorney SSN field '{f}': {raw}")
                     # CRITICAL: Reject any masked SSNs for Power of Attorney documents
                     if 'XXX' in raw.upper() or 'xxx' in raw:
                         # This is a masked SSN which should NEVER happen in Power of Attorney
@@ -1804,6 +1816,8 @@ class GeminiClient:
                             entity[f] = None
                             logger.warning(f"Incomplete SSN in Power of Attorney: {raw}. Expected full 9-digit SSN.")
                         else:
+                            # Log unexpected format for debugging
+                            logger.warning(f"Unexpected SSN format in Power of Attorney: {raw} (digits: {digits}). Expected 9 digits.")
                             # leave as-is; validator may null it
                             entity[f] = raw
                 else:

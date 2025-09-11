@@ -17,7 +17,7 @@ CRITICAL EXTRACTION RULES:
 5. For dates split across lines (e.g., "09/28/1" on one line, "971" on next), combine them (e.g., "09/28/1971")
 6. For monetary amounts, use decimal format without currency symbols (e.g., "1250.00")
 
-7. For SSNs, maintain format with dashes (e.g., "123-45-6789" or "XXX-XX-6789" if masked)
+7. For SSNs, maintain format with dashes (e.g., "123-45-6789" or "XXX-XX-6789" if masked). If split across lines like "216-62" and "-6648", combine to "216-62-6648"
 8. For addresses, extract as clean single-line text without brackets, braces, trailing commas, or newlines (e.g., "1204 Lake Forest Dr, Grand Prairie, TX 75052")
 9. For signatures, extract the ACTUAL CLIENT NAME that appears on the signature line (e.g., "Robert Adams", "John Smith")
 10. For initials, look for 2-4 capital letters (e.g., "JJCS", "AA", "CW") - ALWAYS check the bottom of each page
@@ -150,12 +150,12 @@ Extract the following information and return as JSON:
   "attorney_address": "Attorney office address - format as single line with commas (e.g., '1204 Lake Forest Dr, Grand Prairie, TX 75052')",
   "attorney_phone": "Attorney contact phone",
   "client_name": "Primary client full name",
-  "client_ssn": "Client SSN - MANDATORY: Must be complete 9-digit number (123-45-6789). FORBIDDEN: XXX-XX-#### format. IGNORE masked references and find the real full SSN in the document",
+  "client_ssn": "Client SSN - MANDATORY: Must be complete 9-digit number (123-45-6789). If split across lines like '216-62' and '-6648', combine to '216-62-6648'. FORBIDDEN: XXX-XX-#### format. IGNORE masked references and find the real full SSN in the document",
   "client_dob": "Client date of birth (YYYY-MM-DD). If split across lines like '09/28/1' and '971', combine to '1971-09-28'",
   "client_signature": "Actual client name from signature line - ONLY from Power of Attorney section, use null if no signature in this section",
   "client_signature_date": "Date client signed (YYYY-MM-DD) - ONLY from Power of Attorney section",
   "coclient_name": "Co-client full name if present",
-  "coclient_ssn": "Co-client SSN - MANDATORY: Must be complete 9-digit number (123-45-6789). FORBIDDEN: XXX-XX-#### format. IGNORE masked references and find the real full SSN in the document",
+  "coclient_ssn": "Co-client SSN - MANDATORY: Must be complete 9-digit number (123-45-6789). If split across lines like '216-62' and '-6648', combine to '216-62-6648'. FORBIDDEN: XXX-XX-#### format. IGNORE masked references and find the real full SSN in the document",
   "coclient_dob": "Co-client date of birth (YYYY-MM-DD)",
   "coclient_signature": "Actual co-client name from signature line if present - ONLY from Power of Attorney section, use null if no co-client signature in this section",
   "coclient_signature_date": "Date co-client signed (YYYY-MM-DD) - ONLY from Power of Attorney section"
