@@ -1,14 +1,13 @@
-# services/document-parser/src/integrations/gemini.py
+# services/document-parser/src/integrations/gemini_simple.py
 """
-Gemini client for underwriting document extraction with anti-hallucination measures.
+Simplified Gemini client for efficient underwriting document extraction.
+Focused on accuracy and token efficiency.
 """
 
 import json
-import re
-import httpx
 import time
-import asyncio
-from typing import Dict, Any, Optional, List, Tuple
+import httpx
+from typing import Dict, Any, Optional
 from datetime import datetime
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -16,57 +15,45 @@ from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 
 from models.underwriting_entities import ExtractedDocumentPackage
-from prompts.underwriting_prompts import (
-    get_prompt_for_document_type, 
-    get_validation_prompt,
-    get_targeted_financial_analysis_prompt,
-    get_targeted_service_fees_prompt,
-    get_targeted_disclosure_prompt,
-    get_targeted_power_of_attorney_prompt,
-    get_targeted_account_agreement_prompt
-)
+from prompts.underwriting_prompts import get_prompt_for_document_type, get_comprehensive_prompt
 from utils.json_parser import extract_json_from_response
 
 
 class GeminiClient:
-    """
-     Gemini client with robust validation and anti-hallucination measures.
-    """
+    """Gemini client focused on efficiency and accuracy."""
     
     def __init__(self, service_account_info: Dict[str, Any] = None, config_instance=None):
-        # Use provided config or import global config
+        # Configuration
         if config_instance:
             self.config = config_instance
         else:
             from config import config
             self.config = config
             
-        # Use provided service account info or get from config
+        # Service account setup
         if service_account_info:
             self.service_account_info = service_account_info
         else:
-            # Load service account info from config
-            import json
             service_account_json = self.config.gemini_service_account_json.get_secret_value()
             self.service_account_info = json.loads(service_account_json)
             
         self.project_id = self.service_account_info.get("project_id", self.config.gemini.project_id)
         self.region = self.config.gemini.region
         self.model_name = self.config.gemini.model_name
-        self.temperature = self.config.gemini.temperature
+        
+        # Optimized settings for accuracy
+        self.temperature = 0.1  # Lower temperature for less hallucination
+        self.top_k = 20  # More focused sampling
+        self.top_p = 0.8  # Balanced creativity/accuracy
+        self.max_output_tokens = 8192
+        
         self.credentials = None
         self.last_token_usage = {}
-        
-        # Anti-hallucination settings
-        self.max_retries = self.config.max_retries
-        self.validation_threshold = 0.8
-        self.confidence_threshold = 0.7
-        self.timeout = self.config.gemini.timeout
         
         self._initialize_credentials()
     
     def _initialize_credentials(self):
-        """Initialize Google Cloud credentials with proper key handling."""
+        """Initialize Google Cloud credentials."""
         try:
             service_account_info = self.service_account_info.copy()
             
@@ -81,7 +68,7 @@ class GeminiClient:
                 scopes=["https://www.googleapis.com/auth/cloud-platform"]
             )
             self.credentials.refresh(Request())
-            logger.info(" Gemini credentials initialized successfully")
+            logger.info("Gemini credentials initialized")
             
         except Exception as e:
             logger.error(f"Failed to initialize Gemini credentials: {e}")
@@ -106,22 +93,22 @@ class GeminiClient:
         }
     
     def _prepare_payload(self, prompt: str, pdf_data: Dict[str, str]) -> Dict[str, Any]:
-        """Prepare the request payload for Gemini API."""
+        """Prepare optimized request payload."""
         return {
             "contents": [
                 {
-                "role": "user",
-                "parts": [
+                    "role": "user",
+                    "parts": [
                         {"text": prompt},
-                    {"inlineData": pdf_data}
-                ]
+                        {"inlineData": pdf_data}
+                    ]
                 }
             ],
             "generationConfig": {
                 "temperature": self.temperature,
-                "topK": self.config.gemini.top_k,
-                "topP": self.config.gemini.top_p,
-                "maxOutputTokens": self.config.gemini.max_output_tokens,
+                "topK": self.top_k,
+                "topP": self.top_p,
+                "maxOutputTokens": self.max_output_tokens,
                 "candidateCount": 1
             },
             "safetySettings": [
@@ -136,987 +123,90 @@ class GeminiClient:
             ]
         }
     
-
-    async def extract_with_validation(self, pdf_data: Dict[str, str], file_id: int, attempts: int = 3) -> Optional[ExtractedDocumentPackage]:
-        """Extract with validation - using staged extraction for better accuracy."""
-        
-        # Try staged extraction first (most accurate)
-        try:
-            logger.info(f"Using staged extraction approach for file {file_id}")
-            result = await self.extract_with_staged_approach(pdf_data, file_id)
-            if result:
-                return result
-        except Exception as e:
-            logger.warning(f"Staged extraction failed, falling back to parallel: {e}")
-        
-        # Fallback to parallel extraction
-        pdf_size_estimate = len(pdf_data.get('data', '')) if 'data' in pdf_data else 0
-        pdf_size_mb = pdf_size_estimate / 1024 / 1024 * 0.75
-        
-        if pdf_size_mb > 1.0 or getattr(self.config, 'enable_parallel_extraction', True):
-            try:
-                logger.info(f"Using parallel extraction for {pdf_size_mb:.1f}MB document")
-                from core.parallel_extractor import ParallelDocumentExtractor
-                extractor = ParallelDocumentExtractor(self)
-                result = await extractor.extract_parallel(pdf_data, file_id)
-                if result:
-                    return result
-            except Exception as e:
-                logger.warning(f"Parallel extraction failed, falling back to sequential: {e}")
-        
-        # Fallback to original sequential extraction
-        for attempt in range(max(1, attempts)):
-            is_final_attempt = (attempt == attempts - 1)
-            logger.info(f"Sequential extraction attempt {attempt + 1}/{attempts}, final_attempt={is_final_attempt}")
-            
-            try:
-                # Always try normal validation first (even on final attempt)
-                result = await self.extract_document_entities(pdf_data, file_id, lenient_mode=False)
-                if result:
-                    return result
-            except Exception as e:
-                logger.warning(f"Attempt {attempt + 1} failed: {e}")
-                if "no pages" in str(e).lower() or "corrupted PDF" in str(e):
-                    logger.error(f"Permanent PDF issue detected, stopping attempts: {e}")
-                    raise  # Don't retry corrupted/empty PDFs
-                    
-                if is_final_attempt:
-                    # On final attempt, if normal validation failed, try lenient storage
-                    logger.info("Final attempt with normal validation failed, trying lenient storage...")
-                    try:
-                        result = await self.extract_document_entities(pdf_data, file_id, lenient_mode=True, force_lenient=True)
-                        if result:
-                            logger.warning("Stored document with cleaned validation issues on final attempt")
-                            return result
-                    except Exception as final_e:
-                        logger.error(f"Even lenient storage failed: {final_e}")
-                    raise
-        return None
-    
-    async def extract_with_staged_approach(self, pdf_data: Dict[str, str], file_id: int) -> Optional[ExtractedDocumentPackage]:
-        """Extract documents using a staged approach for better accuracy."""
-        
-        # Stage 1: Document detection and sectioning
-        detection_prompt = """
-        Identify ALL document sections in this PDF. List each distinct section/form you see:
-        Return JSON: {"sections": ["section_name1", "section_name2", ...]}
-        
-        Look for:
-        - Account Agreement
-        - Primary Account Information (bank details section)
-        - Company Agreement / Engagement Terms
-        - Customer Service Agreement
-        - Limited Scope Retainer Agreement
-        - Power of Attorney
-        - Financial Budget
-        - Attorney Client Privileged Financial Budget
-        - Income/Expense Analysis
-        - Budget Analysis
-        - Financial Information
-        - Schedule D / Schedule of Enrolled Identified Debt
-        - Service Fees table
-        - Deposit Schedule table
-        - Legal Plan Agreement
-        - Member Agreement
-        - Member Acknowledgment Check List  
-        - Member Information Sheet
-        - Veritas Legal Plan
-        - Attorney Client Privileged / Client Information
-        - 11 USC § 527(a) DISCLOSURE
-        - 11 USC § 527(b) DISCLOSURE  
-        - USC § 527 Disclosure
-        - Disclosure
-        - Disclosure of Services
-        - High Interest Disclosure
-        - FCRA Consent
-        - Cancellation Notice
-        - Clixsign Completion Certificate
-        - Clixsign Certificate
-        - Clixsign Signers
-        - Clixsign Sender
-        - Payment Bank Info
-        - Program Disclosure
-        
-        IMPORTANT: 
-        - If you see bank information (bank name, routing number, account number, account type), 
-          always include "Primary Account Information" in your sections list.
-        - If you see ANY digital signature information, ClixSign data, or electronic signature certificates,
-          always include "Clixsign Completion Certificate" in your sections list.
-        - If you see federal disclosure language like "11 USC § 527(a)" or "11 USC § 527(b)" or "Federal law mandates",
-          always include the specific disclosure type (e.g., "11 USC § 527(a) DISCLOSURE").
-        - If you see general disclosure content without USC references, include "Disclosure".
-        - Look carefully at the END of the document for signature completion pages.
+    async def extract_document(self, pdf_data: Dict[str, str], file_id: int) -> Optional[ExtractedDocumentPackage]:
         """
-        
-        try:
-            detection_result = await self._make_gemini_request(detection_prompt, pdf_data)
-            detected_sections = detection_result.get('sections', []) if detection_result else []
-            
-            logger.info(f"Detected sections: {detected_sections}")
-            
-            # Stage 2: Extract each section individually with focused prompts
-            package_data = {
-                'file_id': file_id,
-                'document_type': 'multi_section',
-                'confidence_score': 0.85,
-                'extraction_metadata': {
-                    'extraction_time': datetime.now().isoformat(),
-                    'model': self.model_name,
-                    'temperature': self.temperature,
-                    'extraction_method': 'staged'
-                }
-            }
-            
-            # Enhanced extraction map with priority ordering to prevent conflicts
-            # Process in priority order - most specific matches first
-            extraction_priority = [
-                # Critical high-priority entities - extract first to avoid overwrites
-                ('account agreement', 'payment_gateway_agreement', self._extract_payment_gateway),
-                ('customer service agreement', 'engagement_term', self._extract_engagement_term),
-                ('client service agreement', 'engagement_term', self._extract_engagement_term),
-                ('company agreement', 'engagement_term', self._extract_engagement_term),
-                ('engagement terms', 'engagement_term', self._extract_engagement_term),
-                ('services agreement', 'engagement_term', self._extract_engagement_term),
-                ('csa', 'engagement_term', self._extract_engagement_term),
-                ('attorney client privileged financial budget', 'financial_analysis', self._extract_financial_analysis),
-                ('financial analysis', 'financial_analysis', self._extract_financial_analysis),
-                ('financial budget', 'financial_analysis', self._extract_financial_analysis),
-                ('income expense', 'financial_analysis', self._extract_financial_analysis),
-                ('budget analysis', 'financial_analysis', self._extract_financial_analysis),
-                ('financial information', 'financial_analysis', self._extract_financial_analysis),
-                
-                # Account/Bank information - high priority
-                ('primary account information', 'payment_bank_info', self._extract_payment_bank_info),
-                ('payment bank info', 'payment_bank_info', self._extract_payment_bank_info),
-                ('bank information', 'payment_bank_info', self._extract_payment_bank_info),
-                ('ach authorization', 'payment_bank_info', self._extract_payment_bank_info),
-                
-                # Document sections
-                ('power of attorney', 'power_of_attorney', self._extract_power_of_attorney),
-                ('schedule d', 'debt_schedule', self._extract_debt_schedule),
-                ('schedule of enrolled identified debt', 'debt_schedule', self._extract_debt_schedule),
-                ('enrolled identified debt', 'debt_schedule', self._extract_debt_schedule),
-                ('debt schedule', 'debt_schedule', self._extract_debt_schedule),
-                ('service fees table', 'payment_service_fees', self._extract_service_fees),
-                ('service fees', 'payment_service_fees', self._extract_service_fees),
-                ('payment schedule table', 'payment_deposit_schedule', self._extract_deposit_schedule),
-                ('deposit schedule table', 'payment_deposit_schedule', self._extract_deposit_schedule),
-                ('deposit schedule', 'payment_deposit_schedule', self._extract_deposit_schedule),
-                
-                # Legal documents
-                ('legal plan agreement', 'legal_plan_agreement', self._extract_legal_plan),
-                ('legal plan', 'legal_plan_agreement', self._extract_legal_plan),
-                ('member agreement', 'legal_plan_agreement', self._extract_legal_plan),
-                ('member acknowledgment check list', 'legal_plan_agreement', self._extract_legal_plan),
-                ('member acknowledgment', 'legal_plan_agreement', self._extract_legal_plan),
-                ('member information sheet', 'legal_plan_agreement', self._extract_legal_plan),
-                ('veritas legal plan', 'legal_plan_agreement', self._extract_legal_plan),
-                ('veritas', 'legal_plan_agreement', self._extract_legal_plan),  
-                ('member info', 'legal_plan_agreement', self._extract_legal_plan),  
-                ('member acknowledge', 'legal_plan_agreement', self._extract_legal_plan),  
-                
-                # Client information
-                ('attorney client privileged', 'attorney_privileged_client_info', self._extract_attorney_privileged),
-                ('attorney privileged', 'attorney_privileged_client_info', self._extract_attorney_privileged),
-                ('client information', 'attorney_privileged_client_info', self._extract_attorney_privileged),
-                
-                # Consent forms
-                ('fcra consent', 'fcra_consent', self._extract_fcra),
-                ('cancellation notice', 'cancellation_notice', self._extract_cancellation),
-                ('notice of right of rescission', 'cancellation_notice', self._extract_cancellation),
-                
-                # Disclosure sections - specific first to avoid conflicts
-                ('11 usc § 527(a) disclosure', 'disclosure', self._extract_disclosure),
-                ('11 usc § 527(b) disclosure', 'disclosure', self._extract_disclosure),
-                ('usc § 527 disclosure', 'disclosure', self._extract_disclosure),
-                ('527(a) disclosure', 'disclosure', self._extract_disclosure),
-                ('527(b) disclosure', 'disclosure', self._extract_disclosure),
-                ('exhibit a disclosure of services', 'program_disclosure', self._extract_program_disclosure),
-                ('disclosure of services', 'program_disclosure', self._extract_program_disclosure),
-                ('high interest disclosure', 'high_interest_disclosure', self._extract_high_interest),
-                ('program disclosure', 'program_disclosure', self._extract_program_disclosure),
-                ('program disclosures', 'program_disclosure', self._extract_program_disclosure),
-                ('debt resolution program disclosure', 'program_disclosure', self._extract_program_disclosure),
-                ('debt resolution program disclosures', 'program_disclosure', self._extract_program_disclosure),
-                ('disclosure', 'disclosure', self._extract_disclosure),  # Most generic last
-                
-                # Clixsign sections
-                ('clixsign completion certificate', 'clixsign_all', self._extract_clixsign_data),
-                ('clixsign certificate', 'clixsign_all', self._extract_clixsign_data),
-                ('clixsign signers', 'clixsign_all', self._extract_clixsign_data),
-                ('clixsign sender', 'clixsign_all', self._extract_clixsign_data),
-                ('sender information', 'clixsign_all', self._extract_clixsign_data),
-                ('signers', 'clixsign_all', self._extract_clixsign_data),
-                
-                # Additional aliases for better matching
-                ('limited scope retainer', 'engagement_term', self._extract_engagement_term),
-                ('retainer agreement', 'engagement_term', self._extract_engagement_term),
-                ('terms of engagement', 'engagement_term', self._extract_engagement_term)
-            ]
-            
-            # Track what we've already extracted to avoid duplicates
-            extracted_entities = set()
-            entity_extraction_tasks = []
-            
-            # Process each detected section with priority-based matching
-            for section in detected_sections:
-                section_lower = section.lower().strip()
-                
-                # Find best matching extraction based on priority order
-                for search_key, entity_name, extractor in extraction_priority:
-                    # Improved matching: exact phrase match or comprehensive word match
-                    if (search_key in section_lower or 
-                        section_lower in search_key or 
-                        (len(search_key.split()) > 1 and all(word in section_lower for word in search_key.split()))):
-                        
-                        # Skip if already extracted
-                        if entity_name in extracted_entities:
-                            logger.debug(f"Skipping {entity_name} - already extracted")
-                            continue
-                        
-                        # Mark as extracted immediately to prevent duplicates
-                        extracted_entities.add(entity_name)
-                        entity_extraction_tasks.append((section, entity_name, extractor))
-                        logger.info(f"Scheduled extraction of {entity_name} from section: {section}")
-                        break  # Move to next section after finding first match
-            
-            # Log scheduling summary
-            logger.bind(file_id=file_id, detected_count=len(detected_sections), scheduled_count=len(entity_extraction_tasks)).info("staged_extraction.sections_detected")
-            
-            # Execute extractions with controlled concurrency
-            semaphore = asyncio.Semaphore(3)  # Reduced concurrency for stability
-            
-            async def extract_one(section: str, entity_name: str, extractor):
-                async with semaphore:
-                    try:
-                        logger.info(f"Extracting {entity_name} from section: {section}")
-                        # Add small delay to prevent rate limiting
-                        await asyncio.sleep(0.5)
-                        result = await extractor(pdf_data, file_id)
-                        
-                        if result:
-                            # Handle list entities
-                            if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
-                                if entity_name not in package_data:
-                                    package_data[entity_name] = []
-                                if isinstance(result, list):
-                                    package_data[entity_name].extend(result)
-                                else:
-                                    package_data[entity_name].append(result)
-                            
-                            # Handle clixsign special case
-                            elif entity_name == 'clixsign_all':
-                                if isinstance(result, dict):
-                                    if 'clixsign_sender' in result:
-                                        package_data['clixsign_sender'] = result['clixsign_sender']
-                                    if 'clixsign_signers' in result:
-                                        package_data['clixsign_signers'] = result['clixsign_signers']
-                            
-                            # Handle single entities
-                            else:
-                                package_data[entity_name] = result
-                            
-                            # Debug logging for financial_analysis client_initials
-                            if entity_name == 'financial_analysis' and isinstance(result, dict):
-                                logger.info(f"financial_analysis.client_initials_extracted: {result.get('client_initials', 'NOT_FOUND')}")
-                            
-                            logger.info(f"Successfully extracted {entity_name}")
-                            return True
-                        else:
-                            logger.warning(f"No data extracted for {entity_name}")
-                            return False
-                            
-                    except Exception as e:
-                        logger.error(f"Failed to extract {entity_name}: {e}")
-                        return False
-            
-            # Launch extraction tasks
-            extraction_results = await asyncio.gather(
-                *[extract_one(section, entity_name, extractor) 
-                  for section, entity_name, extractor in entity_extraction_tasks],
-                return_exceptions=True
-            )
-            
-            # Critical entities that MUST be attempted if detected but failed
-            critical_entities = {
-                'engagement_term': ('client service agreement', self._extract_engagement_term),
-                'financial_analysis': ('financial analysis', self._extract_financial_analysis),
-                'payment_gateway_agreement': ('account agreement', self._extract_payment_gateway),
-                'attorney_privileged_client_info': ('attorney client privileged financial budget', self._extract_attorney_privileged),
-                'payment_bank_info': ('primary account information', self._extract_payment_bank_info),
-                'payment_service_fees': ('service fees table', self._extract_service_fees),
-                'payment_deposit_schedule': ('deposit schedule table', self._extract_deposit_schedule),
-                'legal_plan_agreement': ('member agreement', self._extract_legal_plan),
-                'clixsign_all': ('clixsign completion certificate', self._extract_clixsign_data),
-                'debt_schedule': ('schedule d', self._extract_debt_schedule),
-                'disclosure': ('disclosure', self._extract_disclosure),
-                'fcra_consent': ('fcra consent', self._extract_fcra),
-                'high_interest_disclosure': ('high interest disclosure', self._extract_high_interest),
-                'program_disclosure': ('program disclosures', self._extract_program_disclosure),
-                'cancellation_notice': ('cancellation notice', self._extract_cancellation),
-                'clixsign_sender': ('clixsign sender', self._extract_clixsign_data),
-                'clixsign_signers': ('clixsign signers', self._extract_clixsign_data),
-                'power_of_attorney': ('power of attorney', self._extract_power_of_attorney),
-            }
-            
-            # Ensure critical entities are extracted if they were detected
-            for entity_name, (section_hint, extractor) in critical_entities.items():
-                # Check if this entity type was detected in sections
-                # Special handling for entities with multiple possible names
-                if entity_name == 'engagement_term':
-                    was_detected = any(
-                        any(pattern in section.lower() for pattern in [
-                            'customer service agreement', 'client service agreement', 
-                            'company agreement', 'engagement terms', 'limited scope retainer'
-                        ])
-                        for section in detected_sections
-                    )
-                elif entity_name == 'financial_analysis':
-                    was_detected = any(
-                        any(pattern in section.lower() for pattern in [
-                            'financial analysis', 'financial budget', 
-                            'attorney client privileged financial budget',
-                            'income expense', 'budget analysis', 'exhibit b'
-                        ])
-                        for section in detected_sections
-                    )
-                elif entity_name == 'legal_plan_agreement':
-                    # Check for explicit legal plan patterns
-                    explicit_patterns = any(
-                        any(pattern in section.lower() for pattern in [
-                            'legal plan agreement', 'legal plan', 'member agreement',
-                            'member acknowledgment', 'member information', 'veritas',
-                            'member info', 'member acknowledge'
-                        ])
-                        for section in detected_sections
-                    )
-                    
-                    has_typical_structure = (
-                        any('account agreement' in section.lower() for section in detected_sections) and
-                        any('cancellation notice' in section.lower() for section in detected_sections) and
-                        not any('engagement' in section.lower() or 'service agreement' in section.lower() for section in detected_sections) and
-                        # Additional validation: must have some legal/member related indicators
-                        any(keyword in ' '.join(detected_sections).lower() for keyword in ['member', 'legal', 'veritas', 'plan'])
-                    )
-                    was_detected = explicit_patterns or has_typical_structure
-                else:
-                    was_detected = any(
-                        section_hint in section.lower() 
-                        for section in detected_sections
-                    )
-                
-                # If detected but not successfully extracted, try again
-                if was_detected and entity_name not in package_data:
-                    logger.warning(f"Critical entity {entity_name} was detected but not extracted. Attempting fallback extraction.")
-                    try:
-                        result = await extractor(pdf_data, file_id)
-                        if result:
-                            package_data[entity_name] = result
-                            logger.info(f"Fallback extraction successful for {entity_name}")
-                        else:
-                            # Create minimal placeholder to ensure DB row
-                            package_data[entity_name] = {'file_id': file_id}
-                            logger.warning(f"Fallback extraction failed for {entity_name}, using placeholder")
-                    except Exception as e:
-                        logger.error(f"Fallback extraction error for {entity_name}: {e}")
-                        package_data[entity_name] = {'file_id': file_id}
-            
-            # Comprehensive aggressive fallback for ALL entities that were detected but not extracted
-            # Build a complete entity->extractor mapping
-            all_entity_extractors = {
-                'payment_gateway_agreement': self._extract_payment_gateway,
-                'engagement_term': self._extract_engagement_term,
-                'financial_analysis': self._extract_financial_analysis,
-                'power_of_attorney': self._extract_power_of_attorney,
-                'payment_bank_info': self._extract_payment_bank_info,
-                'debt_schedule': self._extract_debt_schedule,
-                'payment_service_fees': self._extract_service_fees,
-                'payment_deposit_schedule': self._extract_deposit_schedule,
-                'legal_plan_agreement': self._extract_legal_plan,
-                'attorney_privileged_client_info': self._extract_attorney_privileged,
-                'fcra_consent': self._extract_fcra,
-                'cancellation_notice': self._extract_cancellation,
-                'disclosure': self._extract_disclosure,
-                'high_interest_disclosure': self._extract_high_interest,
-                'program_disclosure': self._extract_program_disclosure,
-                'clixsign_all': self._extract_clixsign_data
-            }
-            
-            # Check what entities should exist based on detected sections
-            detected_entities = set()
-            for section in detected_sections:
-                section_lower = section.lower().strip()
-                for search_key, entity_name, extractor in extraction_priority:
-                    if (search_key in section_lower or 
-                        section_lower in search_key or 
-                        (len(search_key.split()) > 1 and all(word in section_lower for word in search_key.split()))):
-                        detected_entities.add(entity_name)
-                        break
-            
-            # Attempt aggressive extraction for any detected entity that's missing
-            for entity_name in detected_entities:
-                if entity_name not in package_data and entity_name in all_entity_extractors:
-                    logger.warning(f"Detected entity {entity_name} not extracted - attempting aggressive extraction")
-                    try:
-                        extractor = all_entity_extractors[entity_name]
-                        result = await extractor(pdf_data, file_id)
-                        if result:
-                            # Handle different entity types appropriately
-                            if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
-                                if isinstance(result, list):
-                                    package_data[entity_name] = result
-                                else:
-                                    package_data[entity_name] = [result]
-                            elif entity_name == 'clixsign_all':
-                                if isinstance(result, dict):
-                                    if 'clixsign_sender' in result:
-                                        package_data['clixsign_sender'] = result['clixsign_sender']
-                                    if 'clixsign_signers' in result:
-                                        package_data['clixsign_signers'] = result['clixsign_signers']
-                            else:
-                                package_data[entity_name] = result
-                            logger.info(f"Aggressive extraction successful for {entity_name}")
-                        else:
-                            # Create appropriate placeholder based on entity type
-                            if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
-                                package_data[entity_name] = []  # Empty list for list entities
-                                logger.warning(f"Aggressive extraction failed for {entity_name} - using empty list")
-                            elif entity_name == 'clixsign_all':
-                                # Skip placeholder for clixsign_all - it's handled specially
-                                logger.warning(f"Aggressive extraction failed for {entity_name} - skipping placeholder")
-                            else:
-                                package_data[entity_name] = {'file_id': file_id}
-                                logger.warning(f"Aggressive extraction failed for {entity_name} - using placeholder")
-                    except Exception as e:
-                        logger.error(f"Aggressive extraction error for {entity_name}: {e}")
-                        # Create appropriate placeholder based on entity type
-                        if entity_name in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule']:
-                            package_data[entity_name] = []  # Empty list for list entities
-                        elif entity_name != 'clixsign_all':  # Skip clixsign_all
-                            package_data[entity_name] = {'file_id': file_id}
-            
-            
-            # Comprehensive signature and initials backfill for ALL sections
-            signature_critical_fields = {
-                'engagement_term': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date', 'client_initials', 'coclient_initials'],
-                'financial_analysis': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date', 'client_initials', 'coclient_initials'],
-                'power_of_attorney': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date'],
-                'payment_gateway_agreement': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date', 'client_initials', 'coclient_initials'],
-                'legal_plan_agreement': ['member_agreement_client_signature', 'member_agreement_signature_date', 'member_acknowledge_client_signature', 'member_acknowledge_signature_date', 'member_info_client_signature', 'member_info_signature_date', 'member_acknowledge_client_initials', 'member_acknowledge_client_initials_count'],
-                'cancellation_notice': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date'],
-                'disclosure': ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date', 'client_initials', 'coclient_initials'],
-                'program_disclosure': ['client_initials', 'coclient_initials', 'client_initials_count', 'coclient_initials_count'],
-                'payment_bank_info': ['client_signature', 'client_signature_date']
-            }
-            
-            for entity_name, critical_fields in signature_critical_fields.items():
-                if entity_name in package_data and isinstance(package_data[entity_name], dict):
-                    entity_data = package_data[entity_name]
-                    missing_fields = [field for field in critical_fields if entity_data.get(field) in (None, '', 'null', 'NOT_FOUND')]
-                    
-                    if missing_fields:
-                        logger.warning(f"{entity_name}.signature_initials_missing: {missing_fields}")
-                        try:
-                            # Create targeted prompt for missing signature/initial fields
-                            fields_json = ",\n  ".join([f'"{field}": null' for field in missing_fields])
-                            targeted_prompt = f"""
-                            Extract ONLY the following missing fields from the {entity_name.upper()} section ONLY.
-                            
-                            CRITICAL: ONLY scan the {entity_name.replace('_', ' ').title()} section pages. DO NOT look at other sections.
-                            
-                            Look for signatures/initials ONLY in the {entity_name.replace('_', ' ').title()} section:
-                            - Signature blocks at the END of the {entity_name.replace('_', ' ').title()} section
-                            - Client initials within the {entity_name.replace('_', ' ').title()} section only
-                            - DO NOT use signatures from Legal Plan Agreement, Financial Analysis, or other sections
-                            
-                            Return STRICT JSON with EXACTLY these keys:
-                            {{
-                              {fields_json}
-                            }}
-                            
-                            CRITICAL SECTION ISOLATION RULES:
-                             - ONLY extract from {entity_name.replace('_', ' ').title()} section pages
-                             - If {entity_name.replace('_', ' ').title()} section has NO signatures, keep signature fields null
-                             - If {entity_name.replace('_', ' ').title()} section has blank signature lines, keep null
-                             - DO NOT borrow signatures from other document sections
-                             - Each section must have its own independent signatures
-                             - If not found in THIS section, keep as null
-                            """
-                            
-                            backfill_result = await self._make_gemini_request(targeted_prompt, pdf_data)
-                            if backfill_result:
-                                filled_count = 0
-                                for field in missing_fields:
-                                    if field in backfill_result and backfill_result[field] not in (None, '', 'null'):
-                                        entity_data[field] = backfill_result[field]
-                                        filled_count += 1
-                                
-                                if filled_count > 0:
-                                    logger.info(f"{entity_name}.signature_initials_backfilled: {filled_count}/{len(missing_fields)} fields")
-                                else:
-                                    logger.warning(f"{entity_name}.signature_initials_backfill_empty")
-                            else:
-                                logger.warning(f"{entity_name}.signature_initials_backfill_failed")
-                        except Exception as e:
-                            logger.debug(f"{entity_name}.signature_initials_backfill_error: {e}")
-            
-            # Add file_id to all entities
-            self._add_file_id_to_entities(package_data, file_id)
-            
-            # Fix data formats
-            self._fix_null_strings(package_data)
-            
-            # Stage 3: Validate and create package
-            try:
-                package = ExtractedDocumentPackage(**package_data)
-                logger.info(f"Successfully created package via staged extraction with {len(entity_extraction_tasks)} entities")
-                return package
-            except Exception as e:
-                logger.error(f"Package creation failed in staged extraction: {e}")
-                # Try lenient cleaning
-                try:
-                    cleaned_data = self._clean_invalid_fields(package_data, e)
-                    package = ExtractedDocumentPackage(**cleaned_data)
-                    logger.warning(f"Created package with lenient validation in staged extraction")
-                    return package
-                except Exception as lenient_e:
-                    logger.error(f"Even lenient package creation failed: {lenient_e}")
-                    return None
-                
-        except Exception as e:
-            logger.error(f"Staged extraction failed: {e}")
-            return None
-    
-    async def extract_document_entities(
-        self, 
-        pdf_data: Dict[str, str],
-        file_id: int,
-        lenient_mode: bool = False,
-        force_lenient: bool = False
-    ) -> Optional[ExtractedDocumentPackage]:
-        """
-        Extract entities from document using comprehensive extraction.
-        
-        Args:
-            pdf_data: Base64 encoded PDF data
-            
-        Returns:
-            ExtractedDocumentPackage or None if extraction fails
+        Document extraction - no retries, no complexity.
+        Extract everything in one efficient request.
         """
         start_time = time.time()
         
         try:
-            # Check document size limits
-            pdf_size_estimate = len(pdf_data.get('data', '')) if 'data' in pdf_data else 0
-            pdf_size_mb = pdf_size_estimate / 1024 / 1024 * 0.75
+            # Use comprehensive prompt for extraction
+            prompt = get_comprehensive_prompt()
             
-            if pdf_size_estimate > 26666666:  # >26.7MB base64 (~20MB PDF)
-                logger.error(f"Document too large ({pdf_size_mb:.1f}MB) for processing, skipping")
+            logger.bind(file_id=file_id).info("extraction.start")
+            
+            # Extraction call
+            response = await self._make_gemini_request(prompt, pdf_data)
+            
+            if not response:
+                logger.bind(file_id=file_id).error("extraction.no_response")
                 return None
-            
-            # First, detect what document types/sections are actually present
-            detection_prompt = get_prompt_for_document_type('document_detection')
-            detection_response = await self._make_gemini_request(detection_prompt, pdf_data)
-            
-            detected_sections = []
-            if detection_response:
-                # Look for section indicators in the detection response
-                if 'indicators' in detection_response:
-                    indicators = detection_response.get('indicators', [])
-                    for indicator in indicators:
-                        if isinstance(indicator, str):
-                            indicator_lower = indicator.lower()
-                            if 'power of attorney' in indicator_lower:
-                                detected_sections.append('power_of_attorney')
-                            elif 'account agreement' in indicator_lower:
-                                detected_sections.append('payment_gateway_agreement')
-                            elif 'attorney client privileged' in indicator_lower or 'attorney privileged' in indicator_lower or 'client information' in indicator_lower:
-                                detected_sections.append('attorney_privileged_client_info')
-                            elif 'engagement' in indicator_lower or 'client service' in indicator_lower or 'retainer' in indicator_lower or 'company agreement' in indicator_lower:
-                                detected_sections.append('engagement_term')
-                            elif 'financial analysis' in indicator_lower or 'financial budget' in indicator_lower or 'income' in indicator_lower or 'budget' in indicator_lower:
-                                detected_sections.append('financial_analysis')
-                            elif 'debt schedule' in indicator_lower:
-                                detected_sections.append('debt_schedule')
-                            elif 'service fees' in indicator_lower:
-                                detected_sections.append('payment_service_fees')
-                            elif 'disclosure' in indicator_lower:
-                                # Check for specific disclosure types first
-                                if any(pattern in indicator_lower for pattern in ['527(a)', '527(b)', 'usc § 527', '11 usc']):
-                                    detected_sections.append('disclosure')
-                                elif 'exhibit a' in indicator_lower and 'disclosure' in indicator_lower:
-                                    detected_sections.append('program_disclosure')
-                                elif 'disclosure of services' in indicator_lower:
-                                    detected_sections.append('program_disclosure')
-                                else:
-                                    detected_sections.append('disclosure')
-                            elif 'fcra consent' in indicator_lower:
-                                detected_sections.append('fcra_consent')
-                            elif 'high interest disclosure' in indicator_lower:
-                                detected_sections.append('high_interest_disclosure')
-                            elif any(pattern in indicator_lower for pattern in ['program disclosure', 'program disclosures', 'debt resolution program disclosure', 'debt resolution program disclosures']):
-                                detected_sections.append('program_disclosure')
-                            elif 'cancellation notice' in indicator_lower:
-                                detected_sections.append('cancellation_notice')
-                            elif 'payment bank info' in indicator_lower:
-                                detected_sections.append('payment_bank_info')
-                            elif 'payment deposit schedule' in indicator_lower:
-                                detected_sections.append('payment_deposit_schedule')
-                            elif 'legal plan agreement' in indicator_lower:
-                                detected_sections.append('legal_plan_agreement')
-                            elif 'clixsign certificate' in indicator_lower:
-                                detected_sections.append('clixsign_certificate')
-                            elif 'clixsign signers' in indicator_lower:
-                                detected_sections.append('clixsign_signers')
-                            elif 'clixsign sender' in indicator_lower:
-                                detected_sections.append('clixsign_sender')
-                            elif 'primary account' in indicator_lower:
-                                detected_sections.append('payment_bank_info')
-                            elif 'bank information' in indicator_lower:
-                                detected_sections.append('payment_bank_info')
-                            elif 'ach authorization' in indicator_lower:
-                                detected_sections.append('payment_bank_info')
-                                
-            logger.info(f"Detected document sections: {detected_sections}")
-            
-            # Use comprehensive extraction prompt directly
-            prompt = get_prompt_for_document_type('comprehensive')
-            
-            # Extract data with retries (reduced for large files)
-            max_attempts = 1 if pdf_size_estimate > 7000000 else 3
-            
-            extracted_data = None
-            for attempt in range(max_attempts):
-                try:
-                    logger.info(f"Comprehensive extraction attempt {attempt + 1}")
-                    
-                    response = await self._make_gemini_request(prompt, pdf_data)
-                    if response:
-                        extracted_data = response
-                        break
-                        
-                except Exception as e:
-                    logger.warning(f"Extraction attempt {attempt + 1} failed: {e}")
-                    if attempt == self.max_retries:
-                        raise
-            
-            if not extracted_data:
-                logger.error("All extraction attempts failed")
-                return None
-            
-            # Validate extracted data to improve accuracy
-            try:
-                validation_passed, corrected_data = await self._validate_extracted_data(
-                    extracted_data, pdf_data
-                )
-                if corrected_data:
-                    extracted_data.update(corrected_data)
-            except Exception:
-                validation_passed = True
-                corrected_data = None
             
             # Create document package
             package_data = {
                 'file_id': file_id,
-                'document_type': 'multi_section',
-                'confidence_score': 1.0,  
+                'document_type': 'comprehensive',
+                'confidence_score': 0.9,
                 'extraction_metadata': {
                     'extraction_time': datetime.now().isoformat(),
                     'processing_time_ms': int((time.time() - start_time) * 1000),
                     'model': self.model_name,
                     'temperature': self.temperature,
-                    'validation_passed': validation_passed,
-                    'attempts': attempt + 1
+                    'method': 'single_pass'
                 }
             }
             
-            # Map extracted data to package structure and add file_id
-            mapped_data = self._map_extracted_data_to_package(extracted_data, 'comprehensive')
-            package_data.update(mapped_data)
+            # Map response to package structure
+            self._map_response_to_package(response, package_data)
             
             # Add file_id to all entities
-            self._add_file_id_to_entities(package_data, file_id)
+            self._add_file_ids(package_data, file_id)
             
-            # Fix string 'null' values to actual None for nested objects
-            self._fix_null_strings(package_data)
+            # Clean data formats
+            self._clean_data_formats(package_data)
             
-            # Create and validate package
+            # Create and return package
             try:
                 package = ExtractedDocumentPackage(**package_data)
-                logger.info(f"Successfully created comprehensive document package")
-                
-                # Targeted backfill for missing critical FA fields
-                try:
-                    missing_fa_fields: List[str] = []
-                    fa = package_data.get('financial_analysis') or {}
-                    critical_keys = [
-                        'draft_type', 'fixed_income', 'day_phone', 'evening_phone', 'cell_phone',
-                        'estimated_program_settle_amount', 'fee_method',
-                        'client_signature', 'client_signature_date', 
-                        'client_initials', 'client_initials_count'
-                    ]
-                    for key in critical_keys:
-                        if not fa.get(key):
-                            missing_fa_fields.append(key)
-                    if missing_fa_fields:
-                        prompt2 = get_targeted_financial_analysis_prompt(missing_fa_fields)
-                        response2 = await self._make_gemini_request(prompt2, pdf_data)
-                        if response2:
-                            # merge backfilled fields with proper cleaning
-                            for k, v in response2.items():
-                                if k in missing_fa_fields and v is not None:
-                                    # Apply same decimal cleaning as main processing
-                                    financial_decimal_fields = [
-                                        'fixed_income', 'lump_sum', 'applicant_monthly_income', 'coapplicant_monthly_income',
-                                        'applicant_expenses', 'coapplicant_expenses', 'applicant_total_net_income', 'coapplicant_total_net_income',
-                                        'total_enrolled_debt', 'estimated_program_length', 'monthly_program_deposit',
-                                        'estimated_program_settle_amount', 'total_program_fees', 'estimated_program_savings', 'estimated_total_cost'
-                                    ]
-                                    if k in financial_decimal_fields:
-                                        # Clean currency formatting
-                                        cleaned_value = str(v).replace(',', '').replace('$', '').replace('%', '').strip()
-                                        if cleaned_value.startswith('(') and cleaned_value.endswith(')'):
-                                            cleaned_value = '-' + cleaned_value[1:-1]
-                                        if re.match(r'^-?\d+(?:\.\d+)?$', cleaned_value):
-                                            fa[k] = cleaned_value
-                                        else:
-                                            fa[k] = None
-                                    else:
-                                        fa[k] = v
-                            # Ensure file_id is set in the updated financial_analysis
-                            fa['file_id'] = file_id
-                            package_data['financial_analysis'] = fa
-                            package = ExtractedDocumentPackage(**package_data)
-                            logger.info("Applied targeted backfill for missing financial analysis fields")
-                except Exception as e:
-                    logger.warning(f"Backfill step skipped/failed: {e}")
-
-                # Targeted backfill
-                
-                # 1. Service fees
-                try:
-                    if 'payment_service_fees' in detected_sections:
-                        fees = package_data.get('payment_service_fees')
-                        if not fees or (isinstance(fees, list) and len(fees) == 0):
-                            prompt_fees = get_targeted_service_fees_prompt()
-                            response_fees = await self._make_gemini_request(prompt_fees, pdf_data)
-                            if response_fees and isinstance(response_fees.get('payment_service_fees'), list):
-                                merged_fees = response_fees['payment_service_fees']
-                                # Only keep fees with actual amounts
-                                valid_fees = []
-                                for item in merged_fees:
-                                    if isinstance(item, dict) and item.get('service_amount'):
-                                        item['file_id'] = file_id
-                                        self._fix_entity_data_formats(item)
-                                        valid_fees.append(item)
-                                if valid_fees:
-                                    package_data['payment_service_fees'] = valid_fees
-                                    logger.info(f"Targeted service fees extraction: {len(valid_fees)} fees")
-                    elif 'payment_service_fees' not in detected_sections:
-                        logger.debug("Service fees section not detected - skipping extraction")
-                except Exception as e:
-                    logger.warning(f"Service fees extraction failed: {e}")
-
-                # 2. Disclosure 
-                try:
-                    if 'disclosure' in detected_sections and not package_data.get('disclosure'):
-                        prompt_disc = get_targeted_disclosure_prompt()
-                        response_disc = await self._make_gemini_request(prompt_disc, pdf_data)
-                        disc = response_disc.get('disclosure') if response_disc else None
-                        if isinstance(disc, dict):
-                            # Only store if it has meaningful data
-                            meaningful_fields = ['client_signature', 'client_signature_date', 'coclient_signature', 'coclient_signature_date']
-                            if any(disc.get(k) not in (None, "", "null") for k in meaningful_fields):
-                                disc['file_id'] = file_id
-                                self._fix_entity_data_formats(disc)
-                                package_data['disclosure'] = disc
-                                logger.info("Targeted disclosure extraction")
-                    elif 'disclosure' not in detected_sections:
-                        logger.debug("Disclosure section not detected - skipping extraction")
-                except Exception as e:
-                    logger.warning(f"Disclosure extraction failed: {e}")
-
-                # 3. Power of Attorney
-                try:
-                    if 'power_of_attorney' in detected_sections and not package_data.get('power_of_attorney'):
-                        prompt_poa = get_targeted_power_of_attorney_prompt()
-                        response_poa = await self._make_gemini_request(prompt_poa, pdf_data)
-                        poa = response_poa.get('power_of_attorney') if response_poa else None
-                        if isinstance(poa, dict):
-                            # Only store if it has meaningful data
-                            meaningful_fields = ['company_name', 'client_name', 'client_signature']
-                            if any(poa.get(k) not in (None, "", "null") for k in meaningful_fields):
-                                poa['file_id'] = file_id
-                                self._fix_entity_data_formats(poa, 'power_of_attorney')
-                                package_data['power_of_attorney'] = poa
-                                logger.info("Targeted power of attorney extraction")
-                    elif 'power_of_attorney' not in detected_sections:
-                        logger.debug("Power of attorney section not detected - skipping extraction")
-                except Exception as e:
-                    logger.warning(f"Power of attorney extraction failed: {e}")
-
-                # 4. Account Agreement
-                try:
-                    if 'payment_gateway_agreement' in detected_sections:
-                        pga = package_data.get('payment_gateway_agreement')
-                        critical_fields = ['client_first_name', 'client_last_name', 'client_email']
-                        needs_backfill = not pga or not any(pga.get(k) for k in critical_fields)
-                        
-                        if needs_backfill:
-                            prompt_pga = get_targeted_account_agreement_prompt()
-                            response_pga = await self._make_gemini_request(prompt_pga, pdf_data)
-                            pga_new = response_pga.get('payment_gateway_agreement') if response_pga else None
-                            if isinstance(pga_new, dict):
-                                # Only store if it has meaningful data
-                                if any(pga_new.get(k) not in (None, "", "null") for k in critical_fields):
-                                    if pga:
-                                        # Merge with existing
-                                        for k, v in pga_new.items():
-                                            if k not in pga or pga.get(k) in (None, "", "null"):
-                                                pga[k] = v
-                                        pga['file_id'] = file_id
-                                        self._fix_entity_data_formats(pga)
-                                        package_data['payment_gateway_agreement'] = pga
-                                    else:
-                                        # New entity
-                                        pga_new['file_id'] = file_id
-                                        self._fix_entity_data_formats(pga_new)
-                                        package_data['payment_gateway_agreement'] = pga_new
-                                    logger.info("Targeted account agreement extraction")
-                    elif 'payment_gateway_agreement' not in detected_sections:
-                        logger.debug("Account agreement section not detected - skipping extraction")
-                except Exception as e:
-                    logger.warning(f"Account agreement extraction failed: {e}")
-
-                # 5. Engagement Term
-                try:
-                    if 'engagement_term' in detected_sections:
-                        et = package_data.get('engagement_term')
-                        critical_fields = ['company_name', 'settlement_fee_percentage', 'client_name']
-                        needs_backfill = not et or not any(et.get(k) for k in critical_fields)
-                        
-                        if needs_backfill:
-                            prompt_et = get_prompt_for_document_type('engagement_term')
-                            response_et = await self._make_gemini_request(prompt_et, pdf_data)
-                            if response_et:
-                                # Only store if it has meaningful data
-                                if any(response_et.get(k) not in (None, "", "null") for k in critical_fields):
-                                    if et:
-                                        # Merge with existing
-                                        for k, v in response_et.items():
-                                            if k not in et or et.get(k) in (None, "", "null"):
-                                                et[k] = v
-                                        et['file_id'] = file_id
-                                        self._fix_entity_data_formats(et)
-                                        package_data['engagement_term'] = et
-                                    else:
-                                        # New entity
-                                        response_et['file_id'] = file_id
-                                        self._fix_entity_data_formats(response_et)
-                                        package_data['engagement_term'] = response_et
-                                    logger.info("Targeted engagement term extraction")
-                    elif 'engagement_term' not in detected_sections:
-                        logger.debug("Engagement term section not detected - skipping extraction")
-                except Exception as e:
-                    logger.warning(f"Engagement term extraction failed: {e}")
-
-                # 6. Debt Schedule
-                try:
-                    if 'debt_schedule' in detected_sections:
-                        debts = package_data.get('debt_schedule')
-                        if not debts or (isinstance(debts, list) and len(debts) == 0):
-                            prompt_debt = get_prompt_for_document_type('debt_schedule')
-                            response_debt = await self._make_gemini_request(prompt_debt, pdf_data)
-                            if response_debt and 'debt_schedule' in response_debt:
-                                debt_list = response_debt['debt_schedule']
-                                if isinstance(debt_list, list):
-                                    # Only keep debts with creditor names
-                                    valid_debts = []
-                                    for item in debt_list:
-                                        if isinstance(item, dict) and item.get('creditor_name'):
-                                            item['file_id'] = file_id
-                                            self._fix_entity_data_formats(item)
-                                            valid_debts.append(item)
-                                    if valid_debts:
-                                        package_data['debt_schedule'] = valid_debts
-                                        logger.info(f"Targeted debt schedule extraction: {len(valid_debts)} debts")
-                    elif 'debt_schedule' not in detected_sections:
-                        logger.debug("Debt schedule section not detected - skipping extraction")
-                except Exception as e:
-                    logger.warning(f"Debt schedule extraction failed: {e}")
-
-                package = ExtractedDocumentPackage(**package_data)
+                logger.bind(
+                    file_id=file_id,
+                    processing_time_ms=package_data['extraction_metadata']['processing_time_ms']
+                ).info("extraction.success")
                 return package
                 
             except Exception as e:
-                if lenient_mode or force_lenient:
-                    # On final attempt or force lenient, try to store with cleaned data
-                    logger.warning(f"Validation failed, attempting lenient storage: {e}")
-                    try:
-                        cleaned_package_data = self._clean_invalid_fields(package_data, e)
-                        package = ExtractedDocumentPackage(**cleaned_package_data)
-                        logger.warning(f"Successfully created package with lenient validation - some fields may be null")
-                        return package
-                    except Exception as lenient_e:
-                        logger.error(f"Even lenient validation failed: {lenient_e}")
-                        if force_lenient:
-                            return None
-                
-                logger.error(f"Failed to create document package: {e}")
-                logger.debug(f"Package data: {package_data}")
+                logger.bind(file_id=file_id, error=str(e)).error("extraction.validation_failed")
                 return None
                 
         except Exception as e:
-            logger.error(f"Document extraction failed: {e}")
+            logger.bind(file_id=file_id, error=str(e)).error("extraction.failed")
             return None
     
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=4, max=60),
+        stop=stop_after_attempt(2),  # Only 2 attempts max
+        wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type(httpx.HTTPStatusError),
         reraise=True
     )
     async def _make_gemini_request(self, prompt: str, pdf_data: Dict[str, str]) -> Optional[Dict[str, Any]]:
-        """Make request to Gemini API with error handling."""
+        """Make optimized Gemini API request."""
         try:
-            logger.info(f"Making Gemini API request with timeout: {self.timeout}s")
-            
             url = self._build_endpoint_url()
             headers = self._prepare_headers()
             payload = self._prepare_payload(prompt, pdf_data)
             
-            # Adaptive timeout based on PDF size
-            pdf_size_estimate = len(pdf_data.get('data', '')) if 'data' in pdf_data else 0
-            pdf_size_mb = pdf_size_estimate / 1024 / 1024 * 0.75  # Approximate PDF size in MB
-            
-            if pdf_size_estimate > 40000000:  # >40MB base64 (~30MB PDF)
-                timeout_seconds = 900  # 15 minutes for extremely large files
-                logger.warning(f"Processing extremely large PDF (~{pdf_size_mb:.1f}MB), using maximum timeout")
-            elif pdf_size_estimate > 26666667:  # >26.7MB base64 (~20MB PDF)
-                timeout_seconds = 720  # 12 minutes for very large files
-                logger.warning(f"Processing very large PDF (~{pdf_size_mb:.1f}MB), using extended timeout")
-            elif pdf_size_estimate > 20000000:  # >20MB base64 (~15MB PDF)
-                timeout_seconds = 600  # 10 minutes for large files
-                logger.warning(f"Processing large PDF (~{pdf_size_mb:.1f}MB), using extended timeout")
-            elif pdf_size_estimate > 13333333:  # >13.3MB base64 (~10MB PDF)
-                timeout_seconds = 450  # 7.5 minutes for medium-large files
-                logger.info(f"Processing medium-large PDF (~{pdf_size_mb:.1f}MB), using extended timeout")
-            elif pdf_size_estimate > 7000000:  # >7MB base64 (~5MB PDF)
-                timeout_seconds = 300  # 5 minutes for medium files
-                logger.info(f"Processing medium PDF (~{pdf_size_mb:.1f}MB), using standard timeout")
-            else:
-                timeout_seconds = 180  # 3 minutes for normal files
-                logger.info(f"Processing PDF (~{pdf_size_mb:.1f}MB), using standard timeout")
+            # Calculate timeout based on PDF size
+            pdf_size_mb = len(pdf_data.get('data', '')) / 1024 / 1024 * 0.75
+            timeout_seconds = min(600, max(120, int(pdf_size_mb * 60)))  # 60s per MB, max 10min
             
             timeout = httpx.Timeout(float(timeout_seconds))
             
-            logger.info(f"Sending request to Gemini API (timeout: {timeout_seconds}s)")
+            logger.info(f"gemini.request size={pdf_size_mb:.1f}MB timeout={timeout_seconds}s")
             
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
-                
-                logger.info(f"Received response from Gemini API: {response.status_code}")
                 
                 response_data = response.json()
                 
@@ -1128,1166 +218,251 @@ class GeminiClient:
                 if 'candidates' in response_data and response_data['candidates']:
                     candidate = response_data['candidates'][0]
                     
-                    # Check for content safety blocks
-                    if 'finishReason' in candidate:
-                        finish_reason = candidate['finishReason']
-                        if finish_reason != 'STOP':
-                            logger.error(f"Gemini response blocked due to: {finish_reason}")
-                            if finish_reason == 'SAFETY':
-                                logger.error("Content blocked by safety filters")
-                            elif finish_reason == 'RECITATION':
-                                logger.error("Content blocked due to recitation concerns")
-                            elif finish_reason == 'MAX_TOKENS':
-                                logger.error("Response truncated due to max tokens limit")
-                            return None
+                    # Check finish reason
+                    if 'finishReason' in candidate and candidate['finishReason'] != 'STOP':
+                        logger.error(f"gemini.blocked reason={candidate['finishReason']}")
+                        return None
                     
                     if 'content' in candidate and 'parts' in candidate['content']:
                         text_content = candidate['content']['parts'][0].get('text', '')
                         
-                        # Parse JSON from response
+                        # Parse JSON response
                         json_data = extract_json_from_response(text_content)
                         if json_data:
                             return json_data
                         else:
-                            # Log more details about the failed response
-                            response_length = len(text_content)
-                            logger.warning(f"No valid JSON found in Gemini response (length: {response_length} chars)")
-                            
-                            # Log first and last parts of response for debugging
-                            if response_length > 0:
-                                logger.warning(f"Response start: {text_content[:200]}")
-                                logger.warning(f"Response end: {text_content[-200:]}")
-                                
-                                # Check if response contains common error indicators
-                                if "I cannot" in text_content or "I'm unable" in text_content:
-                                    logger.error("Gemini declined to process the request")
-                                elif "error" in text_content.lower():
-                                    logger.error("Gemini response contains error message")
-                                elif response_length < 50:
-                                    logger.error("Gemini response is too short")
-                                elif not any(char in text_content for char in ['{', '[', '"']):
-                                    logger.error("Gemini response contains no JSON-like characters")
-                                else:
-                                    # Try a fallback: if response seems to have content but no JSON,
-                                    # attempt to extract any structured data manually
-                                    logger.warning("Attempting manual data extraction from non-JSON response")
-                                    fallback_data = self._attempt_fallback_extraction(text_content)
-                                    if fallback_data:
-                                        logger.info("Successfully extracted data using fallback method")
-                                        return fallback_data
-                            else:
-                                logger.error("Gemini returned empty response")
-                            
+                            logger.warning("gemini.no_json_found")
                             return None
-                    else:
-                        logger.error("Gemini candidate has no content or parts")
-                        return None
                 
-                logger.warning("Unexpected Gemini response structure")
+                logger.warning("gemini.unexpected_response_structure")
                 return None
                 
         except httpx.TimeoutException as e:
-            logger.error(f"Gemini API request timed out after {timeout_seconds}s: {e}")
+            logger.error(f"gemini.timeout after {timeout_seconds}s")
             raise
         except httpx.HTTPStatusError as e:
             status_code = e.response.status_code
             error_text = e.response.text
             
-            # Handle specific error codes with better logging
-            if status_code == 400:
-                # Check for specific 400 error types
-                if "no pages" in error_text.lower():
-                    logger.error("gemini.invalid_pdf document_has_no_pages=true")
-                    # Don't retry - this is a permanent document issue
-                    from core.exceptions import NonRetryableError
-                    raise NonRetryableError(f"Document has no pages - likely corrupted PDF")
-                else:
-                    logger.error(f"Gemini API 400 error - invalid request: {error_text}")
-                # For 400 errors, don't retry immediately - it's likely a parameter issue
+            if status_code == 400 and "no pages" in error_text.lower():
+                logger.error("gemini.invalid_pdf")
+                from core.exceptions import NonRetryableError
+                raise NonRetryableError("Document has no pages")
             elif status_code == 429:
-                logger.warning(f"Gemini API rate limit hit: {error_text}")
+                logger.warning("gemini.rate_limit")
                 raise
-            elif status_code in [500, 502, 503, 504]:
-                logger.warning(f"Gemini API server error {status_code}: {error_text}")
-                # Server errors - will be retried
             else:
-                logger.error(f"Gemini API HTTP error: {status_code} - {error_text}")
-            
-            raise
+                logger.error(f"gemini.http_error status={status_code}")
+                raise
         except Exception as e:
-            logger.error(f"Gemini API request failed: {e}")
+            logger.error(f"gemini.request_failed error={str(e)}")
             raise
     
-    async def _validate_extracted_data(
-        self, 
-        extracted_data: Dict[str, Any], 
-        pdf_data: Dict[str, str]
-    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        """
-        Validate extracted data for hallucination and accuracy.
+    def _map_response_to_package(self, response: Dict[str, Any], package_data: Dict[str, Any]) -> None:
+        """Map Gemini response to package structure."""
+        # Direct mapping of entities
+        entity_mappings = [
+            'engagement_term', 'financial_analysis', 'payment_gateway_agreement',
+            'payment_bank_info', 'power_of_attorney', 'legal_plan_agreement',
+            'debt_schedule', 'disclosure', 'program_disclosure', 'fcra_consent',
+            'payment_service_fees', 'payment_deposit_schedule', 'attorney_privileged_client_info',
+            'clixsign_sender', 'clixsign_signers', 'cancellation_notice'
+        ]
         
-        Returns:
-            Tuple of (validation_passed, corrected_data)
-        """
-        try:
-            validation_prompt = get_validation_prompt(extracted_data)
-            
-            validation_response = await self._make_gemini_request(validation_prompt, pdf_data)
-            
-            if validation_response:
-                validation_passed = validation_response.get('validation_passed', False)
-                confidence_score = validation_response.get('confidence_score', 0.0)
-                corrected_data = validation_response.get('corrected_data', {})
-                flagged_fields = validation_response.get('flagged_fields', [])
-                
-                if flagged_fields:
-                    logger.warning(f"Validation flagged suspicious fields: {flagged_fields}")
-                
-                if confidence_score < self.confidence_threshold:
-                    logger.warning(f"Low validation confidence: {confidence_score}")
-                
-                return validation_passed and confidence_score >= self.confidence_threshold, corrected_data
-            
-            return True, None  # Default to pass if validation fails
-            
-        except Exception as e:
-            logger.warning(f"Validation failed: {e}")
-            return True, None  # Default to pass if validation fails
+        for entity_name in entity_mappings:
+            if entity_name in response and response[entity_name]:
+                package_data[entity_name] = response[entity_name]
     
-    def _map_extracted_data_to_package(
-        self, 
-        extracted_data: Dict[str, Any], 
-        document_type: str
-    ) -> Dict[str, Any]:
-        """Map extracted data to ExtractedDocumentPackage structure."""
-        package_data = {}
-        
-        # Handle different document types
-        if document_type == 'engagement_term' and extracted_data:
-            package_data['engagement_term'] = extracted_data
-            
-        elif document_type == 'power_of_attorney' and extracted_data:
-            package_data['power_of_attorney'] = extracted_data
-            
-        elif document_type == 'payment_gateway_agreement' and extracted_data:
-            package_data['payment_gateway_agreement'] = extracted_data
-            
-        elif document_type == 'financial_analysis' and extracted_data:
-            package_data['financial_analysis'] = extracted_data
-            
-        elif document_type == 'debt_schedule' and 'debt_schedule' in extracted_data:
-            package_data['debt_schedule'] = extracted_data['debt_schedule']
-            
-        elif document_type == 'legal_plan_agreement' and extracted_data:
-            package_data['legal_plan_agreement'] = extracted_data
-            
-        elif document_type == 'comprehensive':
-            # Map all possible entities from comprehensive extraction
-            entity_mappings = {
-                'engagement_term': 'engagement_term',
-                'power_of_attorney': 'power_of_attorney', 
-                'payment_gateway_agreement': 'payment_gateway_agreement',
-                'financial_analysis': 'financial_analysis',
-                'debt_schedule': 'debt_schedule',
-                'fcra_consent': 'fcra_consent',
-                'disclosure': 'disclosure',
-                'high_interest_disclosure': 'high_interest_disclosure',
-                'program_disclosure': 'program_disclosure',
-                'cancellation_notice': 'cancellation_notice',
-                'payment_service_fees': 'payment_service_fees',
-                'payment_bank_info': 'payment_bank_info',
-                'payment_deposit_schedule': 'payment_deposit_schedule',
-                'legal_plan_agreement': 'legal_plan_agreement',
-                'attorney_privileged_client_info': 'attorney_privileged_client_info',
-                'attorney privileged': 'attorney_privileged_client_info',
-                'client information': 'attorney_privileged_client_info',
-                'clixsign_sender': 'clixsign_sender',
-                'clixsign_signers': 'clixsign_signers'
-            }
-            
-            for key, package_key in entity_mappings.items():
-                if key in extracted_data and extracted_data[key]:
-                    value = extracted_data[key]
-                    # Normalize financial analysis to match DB schema and improve consistency
-                    if package_key == 'financial_analysis' and isinstance(value, dict):
-                        package_data[package_key] = self._normalize_financial_analysis_fields(value)
-                    else:
-                        package_data[package_key] = value
-        
-        return package_data
-
-    def _clean_invalid_fields(self, package_data: Dict[str, Any], validation_error: Exception) -> Dict[str, Any]:
-        """Clean invalid fields to allow lenient storage on final attempt."""
-        from pydantic import ValidationError
-        import copy
-        
-        cleaned_data = copy.deepcopy(package_data)
-        
-        if isinstance(validation_error, ValidationError):
-            for error in validation_error.errors():
-                field_path = error.get('loc', ())
-                error_type = error.get('type', '')
-                
-                logger.info(f"Cleaning validation error: {'.'.join(map(str, field_path))} - {error_type}")
-                
-                # Navigate to the problematic field and fix it
-                current = cleaned_data
-                for i, key in enumerate(field_path[:-1]):
-                    if isinstance(current, dict) and key in current:
-                        current = current[key]
-                    elif isinstance(current, list) and isinstance(key, int) and 0 <= key < len(current):
-                        current = current[key]
-                    else:
-                        break
-                
-                if len(field_path) > 0:
-                    final_key = field_path[-1]
-                    
-                    # Handle specific validation error types
-                    if error_type == 'string_too_long':
-                        # Truncate string fields that are too long
-                        if isinstance(current, dict) and final_key in current:
-                            original_value = current[final_key]
-                            if isinstance(original_value, str):
-                                # Get max length from error message if possible
-                                max_length = self._extract_max_length_from_error(error)
-                                if max_length:
-                                    current[final_key] = original_value[:max_length]
-                                    logger.info(f"Truncated {'.'.join(map(str, field_path))} from {len(original_value)} to {max_length} chars")
-                                else:
-                                    current[final_key] = None
-                                    logger.info(f"Set {'.'.join(map(str, field_path))} to null due to length issue")
-                    
-                    elif error_type in ['date_from_datetime_parsing', 'datetime_parsing']:
-                        # Set invalid dates to None
-                        if isinstance(current, dict) and final_key in current:
-                            current[final_key] = None
-                            logger.info(f"Set invalid date {'.'.join(map(str, field_path))} to null")
-                    
-                    elif error_type in ['decimal_parsing', 'int_parsing', 'float_parsing']:
-                        # Set invalid numbers to None
-                        if isinstance(current, dict) and final_key in current:
-                            current[final_key] = None
-                            logger.info(f"Set invalid number {'.'.join(map(str, field_path))} to null")
-                    
-                    elif error_type == 'model_type':
-                        # Set invalid nested models to None
-                        if isinstance(current, dict) and final_key in current:
-                            current[final_key] = None
-                            logger.info(f"Set invalid nested model {'.'.join(map(str, field_path))} to null")
-                    
-                    else:
-                        # For any other validation error, set field to None
-                        if isinstance(current, dict) and final_key in current:
-                            current[final_key] = None
-                            logger.info(f"Set field {'.'.join(map(str, field_path))} to null due to {error_type}")
-        
-        return cleaned_data
-    
-    def _extract_max_length_from_error(self, error: Dict) -> Optional[int]:
-        """Extract max length constraint from validation error message."""
-        msg = str(error.get('msg', ''))
-        # Look for patterns like "String should have at most 10 characters"
-        import re
-        match = re.search(r'at most (\d+) characters', msg)
-        if match:
-            return int(match.group(1))
-        return None
-
-    def _normalize_financial_analysis_fields(self, fa: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize financial analysis dict to match model field names and fix common issues."""
-        # Helper to fetch a value by any of several possible keys (case-insensitive)
-        def get_any(keys: List[str]) -> Any:
-            lower_map = {k.lower(): v for k, v in fa.items()}
-            for k in keys:
-                if k.lower() in lower_map and lower_map[k.lower()] not in ['', None]:
-                    return lower_map[k.lower()]
-            return None
-
-        normalized: Dict[str, Any] = {}
-
-        # Straightforward mappings with synonyms
-        normalized['applicant_name'] = get_any(['applicant_name', 'client_name'])
-        normalized['applicant_email'] = get_any(['applicant_email', 'client_email'])
-        normalized['coapplicant_name'] = get_any(['coapplicant_name', 'co_applicant_name', 'co-applicant_name'])
-        normalized['coapplicant_email'] = get_any(['coapplicant_email', 'co_applicant_email', 'co-applicant_email'])
-        normalized['draft_type'] = get_any(['draft_type', 'draft method', 'draft'])
-        normalized['fixed_income'] = get_any(['fixed_income', 'fixed income'])
-        normalized['day_phone'] = get_any(['day_phone', 'day phone', 'dayphone'])
-        normalized['evening_phone'] = get_any(['evening_phone', 'evening phone', 'eveningphone'])
-        normalized['cell_phone'] = get_any(['cell_phone', 'cell phone', 'mobile_phone', 'mobile'])
-        normalized['program_start_date'] = get_any(['program_start_date', 'start_date', 'program start date'])
-        normalized['estimated_program_start_date'] = get_any(['estimated_program_start_date', 'estimated start date'])
-        normalized['lump_sum'] = get_any(['lump_sum', 'lump sum', 'lump_sum_if_applicable'])
-        normalized['applicant_monthly_income'] = get_any(['applicant_monthly_income', 'applicant monthly income (after taxes):', 'applicant_monthly_income_after_taxes', 'monthly_income_after_taxes'])
-        normalized['coapplicant_monthly_income'] = get_any(['coapplicant_monthly_income', 'co-applicant monthly income (after taxes):', 'co_applicant_monthly_income_after_taxes'])
-        normalized['applicant_expenses'] = get_any(['applicant_expenses', 'applicant expenses'])
-        normalized['coapplicant_expenses'] = get_any(['coapplicant_expenses', 'co-applicant expenses'])
-        normalized['applicant_total_net_income'] = get_any(['applicant_total_net_income', 'total net income'])
-        normalized['coapplicant_total_net_income'] = get_any(['coapplicant_total_net_income', 'co-applicant total net income'])
-        normalized['total_enrolled_debt'] = get_any(['total_enrolled_debt', 'total enrolled debt (from exhibit a)', 'total_enrolled_debt_from_exhibit_a'])
-        normalized['estimated_program_length'] = get_any(['estimated_program_length', 'estimated program length', 'program_length', 'program duration'])
-        normalized['monthly_program_deposit'] = get_any(['monthly_program_deposit', 'monthly program deposit', 'monthly_payment'])
-        # Handle multiple variants of settlement amount
-        normalized['estimated_program_settle_amount'] = get_any([
-            'estimated_program_settle_amount', 'estimated program settle amount',
-            'estimated_settlement_amount', 'estimated_settle_amount', 'estimated_program_settlement_amount'
-        ])
-        normalized['fee_method'] = get_any(['fee_method', 'fee method'])
-        normalized['total_program_fees'] = get_any(['total_program_fees', 'total program fees'])
-        normalized['estimated_program_savings'] = get_any(['estimated_program_savings', 'estimated program savings'])
-        normalized['estimated_total_cost'] = get_any(['estimated_total_cost', 'estimated total cost'])
-        normalized['hardship_details'] = get_any(['hardship_details', 'hardship details'])
-
-        # Ensure draft_type and fee_method mirror if only one provided
-        if not normalized.get('draft_type') and normalized.get('fee_method'):
-            normalized['draft_type'] = normalized['fee_method']
-        if not normalized.get('fee_method') and normalized.get('draft_type'):
-            normalized['fee_method'] = normalized['draft_type']
-
-        # Re-compute net incomes if missing or clearly wrong (income - expenses)
-        def to_decimal_like(x: Any) -> Optional[str]:
-            if x is None:
-                return None
-            s = str(x)
-            s = s.replace(',', '').replace('$', '').strip()
-            return s if s else None
-
-        ai = to_decimal_like(normalized.get('applicant_monthly_income'))
-        ae = to_decimal_like(normalized.get('applicant_expenses'))
-        if ai is not None and ae is not None:
-            try:
-                net = float(ai) - float(ae)
-                # Only set if missing or obviously equal to income (likely mis-extracted)
-                if not normalized.get('applicant_total_net_income') or str(normalized.get('applicant_total_net_income')).replace(',', '') == str(ai):
-                    normalized['applicant_total_net_income'] = f"{net:.2f}"
-            except Exception:
-                pass
-
-        ci = to_decimal_like(normalized.get('coapplicant_monthly_income'))
-        ce = to_decimal_like(normalized.get('coapplicant_expenses'))
-        if ci is not None and ce is not None:
-            try:
-                net = float(ci) - float(ce)
-                if not normalized.get('coapplicant_total_net_income'):
-                    normalized['coapplicant_total_net_income'] = f"{net:.2f}"
-            except Exception:
-                pass
-
-        return normalized
-    
-    def _add_file_id_to_entities(self, data: Dict[str, Any], file_id: int) -> None:
-        """Recursively add file_id to all entities and fix data formatting issues."""
-        for key, value in data.items():
-            if key == 'extraction_metadata':
-                continue  # Skip metadata
+    def _add_file_ids(self, package_data: Dict[str, Any], file_id: int) -> None:
+        """Add file_id to all entities."""
+        for key, value in package_data.items():
+            if key in ['extraction_metadata', 'validation_results']:
+                continue
                 
             if isinstance(value, dict):
-                # Add file_id to single entity
-                if key in ['engagement_term', 'power_of_attorney', 'payment_gateway_agreement', 
-                          'financial_analysis', 'fcra_consent', 'disclosure', 'high_interest_disclosure',
-                          'program_disclosure', 'cancellation_notice', 'payment_bank_info', 
-                          'legal_plan_agreement', 'attorney_privileged_client_info', 'clixsign_sender']:
-                    value['file_id'] = file_id
-                    if key == 'power_of_attorney':
-                        self._fix_entity_data_formats(value, 'power_of_attorney')
-                    else:
-                        self._fix_entity_data_formats(value)
-                    
+                value['file_id'] = file_id
             elif isinstance(value, list):
-                # Add file_id to list entities
-                if key in ['debt_schedule', 'payment_service_fees', 'payment_deposit_schedule', 'clixsign_signers']:
-                    for item in value:
-                        if isinstance(item, dict):
-                            item['file_id'] = file_id
-                            self._fix_entity_data_formats(item)
+                for item in value:
+                    if isinstance(item, dict):
+                        item['file_id'] = file_id
     
-    def _fix_entity_data_formats(self, entity: Dict[str, Any], document_type: str = None) -> None:
-        """Fix common data format issues in entities."""
-        # Field name mappings to fix mismatches between extraction and model fields
-        field_mappings = {
-            'signer_number': 'signer_name',  # Fix clixsign signer field name
-            'name': 'signer_name',           # Fix clixsign signer field name
-            'email_address': 'email',        # Common email field mapping
-            'consumer_signature': 'client_signature',  # FCRA consent mapping
-            'payment_number': 'payment_no',  # Payment schedule mapping
-            'process_date': 'process_date',  # Keep as is but validate format
-            'fee_type': 'service_type',      # Payment service fees mapping
-            'creditor_name': 'creditor_name', # Keep as is
-            'account_name': 'name_on_account', # Debt schedule mapping (applicant/c oapplicant/joint)
-            'account_no': 'account_number',
-            'acct_no': 'account_number',
-            'account_number': 'account_number',
-        }
-        
-        # Apply field name mappings
-        keys_to_update = {}
-        keys_to_remove = []
-        for old_key, new_key in field_mappings.items():
-            if old_key in entity and old_key != new_key:
-                keys_to_update[new_key] = entity[old_key]
-                keys_to_remove.append(old_key)
-        
-        # Update entity with new keys
-        entity.update(keys_to_update)
-        # Remove old keys
-        for key in keys_to_remove:
-            entity.pop(key, None)
-        
-        # Create a copy of items to avoid modification during iteration
-        items_to_process = list(entity.items())
-        for key, value in items_to_process:
-            if isinstance(value, str) and value is not None:
-                # General cleanup: collapse whitespace/newlines
-                raw_value = value
-                value = re.sub(r"\s+", " ", value).strip()
-                entity[key] = value
-                # Financial analysis decimal fields (based on actual database schema)
-                financial_decimal_fields = [
-                    'fixed_income', 'lump_sum', 'applicant_monthly_income', 'coapplicant_monthly_income',
-                    'applicant_expenses', 'coapplicant_expenses', 'applicant_total_net_income', 'coapplicant_total_net_income',
-                    'total_enrolled_debt', 'estimated_program_length', 'monthly_program_deposit',
-                    'estimated_program_settle_amount', 'total_program_fees', 'estimated_program_savings', 'estimated_total_cost'
-                ]
+    def _clean_data_formats(self, package_data: Dict[str, Any]) -> None:
+        """Clean and format data for database storage."""
+        for key, value in package_data.items():
+            if isinstance(value, dict):
+                self._clean_entity_data(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        self._clean_entity_data(item)
+    
+    def _clean_entity_data(self, entity: Dict[str, Any]) -> None:
+        """Clean individual entity data."""
+        for field, value in entity.items():
+            if isinstance(value, str):
+                # Clean whitespace and newlines for ALL string fields
+                value = value.strip()
                 
-                # Other decimal fields for other entities
-                other_decimal_fields = [
-                    'current_balance', 'amount', 'settlement_fee', 'monthly_payment',
-                    'settlement_fee_percentage', 'first_payment_amount', 'monthly_payment_amount',
-                    'members_accumulation_amount', 'recurring_debit_authorization'
-                ]
-                
-                decimal_fields = financial_decimal_fields + other_decimal_fields
-                if key in decimal_fields:
-                    # Remove commas, dollar signs, percentage signs, and other currency symbols
-                    cleaned_value = value.replace(',', '').replace('$', '').replace('€', '').replace('£', '').replace('%', '').strip()
-                    # Handle negative values in parentheses like "(538.51)"
-                    if cleaned_value.startswith('(') and cleaned_value.endswith(')'):
-                        cleaned_value = '-' + cleaned_value[1:-1]
-                    # If still non-numeric (e.g., long text), set to None to avoid decimal parsing errors
-                    if not re.match(r'^-?\d+(?:\.\d+)?$', cleaned_value):
-                        entity[key] = None
+                # Convert multi-line text to single line (generalized for all fields)
+                if '\n' in value or '\r' in value:
+                    # For address fields, use comma separation
+                    if 'address' in field:
+                        value = value.replace('\n', ', ').replace('\r', ', ')
+                        # Clean up multiple commas
+                        import re
+                        value = re.sub(r',\s*,', ',', value)
+                        value = value.strip().strip(',')
                     else:
-                        entity[key] = cleaned_value
+                        # For non-address fields, use space separation
+                        value = value.replace('\n', ' ').replace('\r', ' ')
+                        # Clean up multiple spaces
+                        import re
+                        value = re.sub(r'\s+', ' ', value)
+                        value = value.strip()
                 
-                # Fix percentage fields - ensure they're clean decimals
-                percentage_fields = ['settlement_fee_percentage', 'settlement_fee_percent']
-                if key in percentage_fields:
-                    cleaned_value = value.replace('%', '').replace(',', '').strip()
-                    entity[key] = cleaned_value
+                # Convert empty strings to None
+                if value == '' or value.lower() in ['null', 'none', 'n/a']:
+                    entity[field] = None
+                    continue
                 
-                # Fix date formats - convert various formats to yyyy-MM-dd or ISO datetime
-                date_fields = [
-                    'client_dob', 'coclient_dob', 'member_dob', 'coapplicant_dob',
-                    'signature_date', 'client_signature_date', 'coclient_signature_date',
-                    'cancellation_deadline', 'cancellation_date',
-                    'first_payment_date', 'process_date', 'first_debit_date', 'program_start_date',
-                    'estimated_program_start_date', 'date', 'cancel_by_date', 'date_of_first_debit',
-                    'credit_card_expiration_date', 'monthly_recurring_date',
-                    'member_agreement_signature_date', 'member_acknowledge_signature_date', 'member_info_signature_date',
-                    'additional_disclosure_client_signature_date', 'additional_disclosure_coclient_signature_date',
-                    'contract_date'
-                ]
+                # Clean monetary fields
+                if field in ['settlement_fee', 'monthly_payment', 'fixed_income', 'current_balance',
+                           'recurring_debit_authorization', 'first_payment_amount', 'monthly_payment_amount',
+                           'total_enrolled_debt', 'estimated_program_settle_amount', 'lump_sum',
+                           'applicant_monthly_income', 'coapplicant_monthly_income', 'applicant_expenses',
+                           'coapplicant_expenses', 'applicant_total_net_income', 'coapplicant_total_net_income',
+                           'monthly_program_deposit', 'total_program_fees', 'estimated_program_savings',
+                           'estimated_total_cost', 'members_accumulation_amount', 'service_amount', 'amount']:
+                    # Handle both English and Spanish number formats
+                    cleaned = value.replace(',', '').replace('$', '').replace('€', '').replace('£', '').strip()
+                    # Handle Spanish decimal separator (replace comma with period if needed)
+                    if ',' in cleaned and '.' not in cleaned:
+                        # This might be Spanish decimal format (e.g., "531,80")
+                        parts = cleaned.split(',')
+                        if len(parts) == 2 and len(parts[1]) <= 2:  # Decimal part should be 1-2 digits
+                            cleaned = f"{parts[0]}.{parts[1]}"
+                    
+                    if cleaned and cleaned.replace('.', '').replace('-', '').isdigit():
+                        entity[field] = cleaned
+                    else:
+                        entity[field] = None
                 
-                # ClixSign datetime fields that need full datetime parsing
-                datetime_fields = [
-                    'package_opened_at', 'signature_adopted_at', 'package_signed_at', 
-                    'package_declined_at', 'final_status_date'
-                ]
+                # Clean payment number fields
+                elif field in ['payment_no', 'payment_number']:
+                    # Ensure payment numbers are clean strings/integers
+                    cleaned = value.strip()
+                    if cleaned.isdigit():
+                        entity[field] = cleaned
+                    else:
+                        entity[field] = None
                 
-                if key in date_fields and isinstance(value, str):
-                    try:
-                        cleaned = re.sub(r"\s+", "", raw_value)
-                        
-                        # Handle invalid/partial dates - set to None
-                        if len(cleaned) <= 2 and cleaned.isdigit():
-                            # Just a day number like "15" - not a valid date
-                            entity[key] = None
-                            continue
-                        
-                        # Handle MM/dd/yyyy and M/d/yyyy
-                        if '/' in cleaned:
-                            parts = cleaned.split('/')
-                            if len(parts) == 3:
-                                # year-first e.g. 2025/8/15
-                                if len(parts[0]) == 4:
-                                    y, m, d = parts[0], parts[1], parts[2]
-                                    if len(y) == 4 and m.isdigit() and d.isdigit():
-                                        entity[key] = f"{y}-{m.zfill(2)}-{d.zfill(2)}"
-                                else:
-                                    # month-first e.g. 11/6/2024 or 09/28/1971 with noise removed
-                                    m, d, y = parts[0], parts[1], parts[2]
-                                    if len(y) == 4 and m.isdigit() and d.isdigit():
-                                        entity[key] = f"{y}-{m.zfill(2)}-{d.zfill(2)}"
-                        # Handle "Nov 21, 2024" format and other month-name patterns
-                        elif re.search(r"[A-Za-z]", value) and re.search(r"\d{4}", value):
-                            import datetime
-                            txt = value.replace('\n', ' ').replace('  ', ' ').strip()
-                            # Accept short/long month names with ordinal day
-                            m = re.search(r"([A-Za-z]+)\s*([0-9]{1,2})(?:st|nd|rd|th)?[, ]+([0-9]{4})", txt)
-                            if m:
-                                month_name, day, year = m.groups()
+                # Clean fields with strict length constraints
+                elif field in ['client_middle_initial', 'coclient_middle_initial']:
+                    # Middle initial should be 1 character only
+                    cleaned = value.strip()
+                    if cleaned and cleaned.isalpha():
+                        entity[field] = cleaned[0].upper()  # Take only first character
+                    else:
+                        entity[field] = None
+                
+                elif field in ['client_state', 'state']:
+                    # State should be 2 characters only
+                    cleaned = value.strip().upper()
+                    if cleaned and cleaned.isalpha() and len(cleaned) <= 2:
+                        entity[field] = cleaned
+                    else:
+                        entity[field] = None
+                
+                # Clean percentage fields
+                elif field in ['settlement_fee_percentage', 'settlement_fee_percent']:
+                    cleaned = value.replace('%', '').strip()
+                    if cleaned and cleaned.replace('.', '').isdigit():
+                        entity[field] = cleaned
+                    else:
+                        entity[field] = None
+                
+                # Clean date fields
+                elif 'date' in field or 'dob' in field or 'deadline' in field:
+                    if value:
+                        try:
+                            # Handle multiple date formats
+                            import re
+                            from datetime import datetime
+                            
+                            # Remove any extra whitespace
+                            date_str = value.strip()
+                            
+                            # Format 1: MM/DD/YYYY (e.g., "07/14/1980", "12/14/1953")
+                            if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', date_str):
+                                parts = date_str.split('/')
+                                if len(parts) == 3:
+                                    month, day, year = parts
+                                    entity[field] = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                            
+                            # Format 1b: MM-DD-YYYY (e.g., "09-01-2025")
+                            elif re.match(r'^\d{1,2}-\d{1,2}-\d{4}$', date_str):
+                                parts = date_str.split('-')
+                                if len(parts) == 3:
+                                    month, day, year = parts
+                                    entity[field] = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                            
+                            # Format 2: "Sep 25, 2025" or "September 25, 2025"
+                            elif re.match(r'^[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4}$', date_str):
                                 try:
-                                    parsed_date = datetime.datetime.strptime(f"{month_name} {day} {year}", '%B %d %Y')
-                                except ValueError:
+                                    parsed_date = datetime.strptime(date_str, "%b %d, %Y")
+                                    entity[field] = parsed_date.strftime("%Y-%m-%d")
+                                except:
                                     try:
-                                        parsed_date = datetime.datetime.strptime(f"{month_name} {day} {year}", '%b %d %Y')
-                                    except ValueError:
-                                        # Handle invalid patterns like "2025-Aug-Fri" by nulling them
-                                        entity[key] = None
-                                        continue
-                                entity[key] = parsed_date.strftime('%Y-%m-%d')
+                                        parsed_date = datetime.strptime(date_str, "%B %d, %Y")
+                                        entity[field] = parsed_date.strftime("%Y-%m-%d")
+                                    except:
+                                        entity[field] = None
+                            
+                            # Format 3: Already in YYYY-MM-DD format
+                            elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                                entity[field] = date_str
+                            
+                            # Format 4: YYYY/MM/DD
+                            elif re.match(r'^\d{4}/\d{1,2}/\d{1,2}$', date_str):
+                                parts = date_str.split('/')
+                                if len(parts) == 3:
+                                    year, month, day = parts
+                                    entity[field] = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                            
+                            # If no format matches, set to None
                             else:
-                                # Pattern like "2025-Aug-Fri" doesn't match our regex, set to None
-                                entity[key] = None
-                        # Handle "11-09-2024" format  
-                        elif '-' in value and value.count('-') == 2:
-                            parts = value.split('-')
-                            if len(parts) == 3:
-                                # Try month-first
-                                if len(parts[2]) == 4 and parts[0].isdigit() and parts[1].isdigit():
-                                    entity[key] = f"{parts[2]}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"
-                        else:
-                            # Invalid date format - set to None
-                            entity[key] = None
-                    except:
-                        entity[key] = None  # Set to None on any date parsing error
-                
-                # Fix ClixSign datetime formats - convert "MM/dd/yyyy h:mm:ss AM/PM" to ISO format
-                if key in datetime_fields and isinstance(value, str):
-                    try:
-                        import datetime
-                        # Handle "10/14/2022 2:17:37 PM" format
-                        if '/' in value and (' AM' in value or ' PM' in value):
-                            parsed_dt = datetime.datetime.strptime(value, '%m/%d/%Y %I:%M:%S %p')
-                            entity[key] = parsed_dt.isoformat()
-                        # Handle "10/14/2022 14:17:37" format (24-hour)
-                        elif '/' in value and ':' in value and ' AM' not in value and ' PM' not in value:
-                            parsed_dt = datetime.datetime.strptime(value, '%m/%d/%Y %H:%M:%S')
-                            entity[key] = parsed_dt.isoformat()
-                    except:
-                        pass  # Keep original if conversion fails
-                
-                # Fix account_type case sensitivity (must be lowercase)
-                if key == 'account_type':
-                    if value.lower() in ['checking', 'savings']:
-                        entity[key] = value.lower()
-                
-
-                
-                # Fix boolean fields that might come as strings
-                boolean_fields = [
-                    'dedicated_account_required', 'effective_immediately', 'local_counsel_disclosure',
-                    'credit_report_authorization', 'financial_info_disclosure_authorization',
-                    'termination_rights', 'arbitration_clause', 'class_action_waiver',
-                    'recurring_debit_authorization_bool', 'credit_counseling_disclosure',
-                    'bankruptcy_disclosure', 'debt_negotiation_disclosure', 'has_security_clearance',
-                    'is_married_to_coclient', 'is_in_bankruptcy', 'is_enrolled_in_credit_counseling'
-                ]
-                if key in boolean_fields:
-                    entity[key] = value.lower() in ['true', 'yes', '1', 'on']
-                
-                # Fix integer fields that might come as strings
-                integer_fields = [
-                    'estimated_program_length', 'debt_relief_program_duration',
-                    'signer_number', 'initials_count', 'page_count', 'pages_count', 'signers_count', 
-                    'client_initials_count', 'coclient_initials_count'
-                ]
-                if key in integer_fields and isinstance(value, str):
-                    numeric = re.sub(r"[^0-9]", "", value)
-                    if numeric.isdigit():
-                        entity[key] = int(numeric)
-                
-                # Clean up address formatting issues
-                address_fields = ['client_address', 'coclient_address', 'address', 'attorney_address', 'company_address', 'credit_card_billing_address', 'client_street', 'coclient_street']
-                if key in address_fields:
-                    # Remove curly braces, trailing commas, and clean up formatting
-                    cleaned_address = value.replace('{', '').replace('}', '').strip()
-                    # Handle literal \n characters and actual newlines
-                    cleaned_address = cleaned_address.replace('\\n', ', ').replace('\n', ', ')
-                    # Clean up multiple commas and spaces
-                    cleaned_address = re.sub(r',\s*,', ',', cleaned_address)  # Remove double commas
-                    cleaned_address = re.sub(r'\s+', ' ', cleaned_address)    # Normalize spaces
-                    if cleaned_address.endswith(','):
-                        cleaned_address = cleaned_address[:-1].strip()
-                    entity[key] = cleaned_address if cleaned_address else None
-                    continue
-                
-                # Clean up initials fields - extract unique initials only
-                initials_fields = ['client_initials', 'coclient_initials', 'member_acknowledge_client_initials']
-                if key in initials_fields:
-                    if isinstance(value, str) and ',' in value:
-                        # Extract unique initials from comma-separated list like "MH, MH, MH, MH, MH"
-                        initials_list = [initial.strip() for initial in value.split(',')]
-                        unique_initials = list(dict.fromkeys(initials_list))  # Preserve order but remove duplicates
-                        if unique_initials:
-                            entity[key] = unique_initials[0]  # Use the first (and should be only) unique initial
-                        else:
-                            entity[key] = None
-                    elif isinstance(value, str) and len(value) > 10:
-                        # If still too long, try to extract just the first initials
-                        match = re.search(r'\b([A-Z]{1,4})\b', value)
-                        if match:
-                            entity[key] = match.group(1)
-                        else:
-                            entity[key] = None
-                    continue
-                
-                # Validate initial counts against actual initials to prevent phantom counting
-                if key.endswith('_initials_count') and isinstance(value, (int, str)):
-                    # Get the corresponding initials field
-                    initials_field = key.replace('_count', '')
-                    actual_initials = entity.get(initials_field)
-                    
-                    # Convert count to integer
-                    try:
-                        count_value = int(value) if value not in (None, '', 'null') else 0
-                    except (ValueError, TypeError):
-                        count_value = 0
-                    
-                    # If no initials found but count > 0, this is likely phantom counting
-                    if actual_initials in (None, '', 'null') and count_value > 0:
-                        logger.warning(f"Phantom initial count detected: {key}={count_value} but {initials_field}={actual_initials}, setting count to 0")
-                        entity[key] = 0
-                    elif actual_initials and count_value == 0:
-                        logger.warning(f"Initial count is 0 but initials exist: {initials_field}={actual_initials}, setting count to 1")
-                        entity[key] = 1
+                                entity[field] = None
+                                
+                        except:
+                            entity[field] = None
                     else:
-                        entity[key] = count_value
-                    continue
+                        entity[field] = None
                 
-                # Clean up empty strings and placeholders to None for optional fields
-                if value.strip() == '' or value.lower() in ['null', 'none', 'n/a', 'na']:
-                    entity[key] = None
-                
-                # Fix placeholder values
-                if isinstance(value, str) and '{' in value and '}' in value:
-                    # Common placeholders that should be None
-                    placeholder_patterns = [
-                        '{COSIGNDATE}', '{SIGNDATE}', '{DATE}', '{SIGNATURE}', '{NAME}',
-                        '{AMOUNT}', '{PHONE}', '{EMAIL}', '{ADDRESS}', '{SSN}', '{CITY}', '{STATE}', '{ZIP}'
-                        '{RECURRINGDEBITAUTHORIZATION}', '{FIRSTDEBITDATE}', '{CLIENTSIGNATURE}', '{COCLIENTSIGNATURE}',
-                        '{CLIENTINITIALS}', '{COCLIENTINITIALS}'
-                    ]
-                    if value.upper() in placeholder_patterns:
-                        logger.bind(
-                            field=key,
-                            placeholder=value
-                        ).debug("gemini.placeholder_detected")
-                        entity[key] = None
-            
-            # Handle non-string values for payment_no (integers need to be converted to strings)
-            if key in ['payment_no', 'payment_number'] and isinstance(value, int):
-                entity[key] = str(value)
-
-        # Normalize SSN-like fields specifically after general cleanup
-        ssn_fields = {'client_ssn', 'coclient_ssn', 'member_ssn', 'coapplicant_ssn'}
-        
-        # Log missing SSN fields for Power of Attorney debugging
-        if document_type == 'power_of_attorney':
-            for f in ssn_fields:
-                if f not in entity:
-                    logger.warning(f"Power of Attorney missing SSN field: {f}")
-                elif entity[f] is None:
-                    logger.warning(f"Power of Attorney SSN field is null: {f}")
-                elif not isinstance(entity[f], str):
-                    logger.warning(f"Power of Attorney SSN field is not string: {f} = {entity[f]} (type: {type(entity[f])})")
-        
-        for f in ssn_fields:
-            if f in entity and isinstance(entity[f], str):
-                raw = re.sub(r"\s+", "", entity[f])
-                
-                # Special handling for Power of Attorney - always use full SSNs, never mask
-                if document_type == 'power_of_attorney':
-                    logger.info(f"Processing Power of Attorney SSN field '{f}': {raw}")
-                    # CRITICAL: Reject any masked SSNs for Power of Attorney documents
-                    if 'XXX' in raw.upper() or 'xxx' in raw:
-                        # This is a masked SSN which should NEVER happen in Power of Attorney
-                        # Set to null to force re-extraction or manual review
-                        entity[f] = None
-                        logger.warning(f"Rejected masked SSN in Power of Attorney: {raw}. Power of Attorney documents must have full SSNs.")
+                # Clean SSN fields
+                elif 'ssn' in field and value:
+                    # Ensure proper SSN format
+                    digits = ''.join(filter(str.isdigit, value))
+                    if len(digits) == 9:
+                        entity[field] = f"{digits[0:3]}-{digits[3:5]}-{digits[5:9]}"
+                    elif len(digits) == 4:
+                        entity[field] = f"XXX-XX-{digits}"
                     else:
-                        digits = re.sub(r"[^0-9]", "", raw)
-                        if len(digits) == 9:
-                            # Always format as full SSN for Power of Attorney
-                            entity[f] = f"{digits[0:3]}-{digits[3:5]}-{digits[5:9]}"
-                        elif len(digits) == 4:
-                            # If only 4 digits, this is likely an extraction error - set to null
-                            entity[f] = None
-                            logger.warning(f"Incomplete SSN in Power of Attorney: {raw}. Expected full 9-digit SSN.")
-                        else:
-                            # Log unexpected format for debugging
-                            logger.warning(f"Unexpected SSN format in Power of Attorney: {raw} (digits: {digits}). Expected 9 digits.")
-                            # leave as-is; validator may null it
-                            entity[f] = raw
+                        entity[field] = value
+                
+                # Clean account_type field
+                elif field == 'account_type' and value:
+                    # Normalize to lowercase for Pydantic validation
+                    normalized = value.lower().strip()
+                    if normalized in ['checking', 'savings']:
+                        entity[field] = normalized
+                    else:
+                        entity[field] = None
+                
                 else:
-                    # Standard SSN processing for other document types
-                    # Handle masked SSNs (XXX-XX-1234 format)
-                    if raw.startswith('XXX-XX-') or raw.startswith('xxx-xx-'):
-                        entity[f] = raw.upper()  # Keep masked format, ensure uppercase
-                    elif 'XXX' in raw.upper() and len(raw) >= 7:
-                        # Handle variations like "XXX-XX-1072" or "XXXXX1072"
-                        if '-' in raw:
-                            entity[f] = raw.upper()  # Keep existing format
-                        else:
-                            # Format as XXX-XX-#### if unformatted masked SSN
-                            digits = re.sub(r"[^0-9]", "", raw)
-                            if len(digits) == 4:  # Only last 4 digits
-                                entity[f] = f"XXX-XX-{digits}"
-                            else:
-                                entity[f] = raw.upper()
-                    else:
-                        # Handle full SSNs - but check if this should be masked based on document
-                        digits = re.sub(r"[^0-9]", "", raw)
-                        if len(digits) == 9:
-                            # Check if original value suggests masking (e.g., contains X)
-                            if 'X' in entity[f].upper():
-                                # Extract last 4 digits and mask the rest
-                                last_four = digits[-4:]
-                                entity[f] = f"XXX-XX-{last_four}"
-                            else:
-                                entity[f] = f"{digits[0:3]}-{digits[3:5]}-{digits[5:9]}"
-                        elif len(digits) == 4:
-                            # Only last 4 digits provided - assume masked
-                            entity[f] = f"XXX-XX-{digits}"
-                        else:
-                            # leave as-is; validator may null it
-                            entity[f] = raw
+                    entity[field] = value
     
-    def _fix_null_strings(self, data: Dict[str, Any]) -> None:
-        """Convert string 'null' values to actual None for nested objects."""
-        for key, value in data.items():
-            if isinstance(value, str) and value.lower() == 'null':
-                data[key] = None
-            elif isinstance(value, list):
-                # Fix null strings in list items
-                for i, item in enumerate(value):
-                    if isinstance(item, str) and item.lower() == 'null':
-                        value[i] = None
-                    elif isinstance(item, dict):
-                        self._fix_null_strings(item)
-            elif isinstance(value, dict):
-                # Recursively fix nested objects
-                self._fix_null_strings(value)
-
-    async def _extract_payment_gateway(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract payment gateway agreement data."""
-        prompt = get_prompt_for_document_type('payment_gateway_agreement')
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result:
-            result['file_id'] = file_id
-            self._fix_entity_data_formats(result)
-        return result
-    
-    async def _extract_engagement_term(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract engagement term data."""
-        prompt = get_prompt_for_document_type('engagement_term')
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result:
-            result['file_id'] = file_id
-            self._fix_entity_data_formats(result)
-        return result
-    
-    async def _extract_power_of_attorney(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract power of attorney data."""
-        prompt = get_prompt_for_document_type('power_of_attorney')
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result:
-            result['file_id'] = file_id
-            self._fix_entity_data_formats(result, 'power_of_attorney')
-        return result
-    
-    async def _extract_financial_analysis(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract financial analysis data."""
-        prompt = get_prompt_for_document_type('financial_analysis')
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result:
-            result['file_id'] = file_id
-            self._fix_entity_data_formats(result)
-            # Apply normalization for financial analysis
-            result = self._normalize_financial_analysis_fields(result)
-        return result
-    
-    async def _extract_debt_schedule(self, pdf_data: Dict[str, str], file_id: int) -> Optional[List]:
-        """Extract debt schedule data."""
-        prompt = get_prompt_for_document_type('debt_schedule')
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result and 'debt_schedule' in result:
-            debts = result['debt_schedule']
-            if isinstance(debts, list):
-                for debt in debts:
-                    debt['file_id'] = file_id
-                    self._fix_entity_data_formats(debt)
-                return debts
-        return None
-    
-    async def _extract_service_fees(self, pdf_data: Dict[str, str], file_id: int) -> Optional[List]:
-        """Extract service fees data."""
-        from prompts.underwriting_prompts import get_targeted_service_fees_prompt
-        prompt = get_targeted_service_fees_prompt()
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result and 'payment_service_fees' in result:
-            fees = result['payment_service_fees']
-            if isinstance(fees, list):
-                valid_fees = []
-                for fee in fees:
-                    if isinstance(fee, dict) and fee.get('service_amount'):
-                        fee['file_id'] = file_id
-                        self._fix_entity_data_formats(fee)
-                        valid_fees.append(fee)
-                return valid_fees if valid_fees else None
-        return None
-    
-    async def _extract_deposit_schedule(self, pdf_data: Dict[str, str], file_id: int) -> Optional[List]:
-        """Extract deposit schedule data."""
-        prompt = """
-        Extract the Payment Deposit Schedule table. Look for payment numbers, dates, and amounts.
-        
-        Return JSON:
-        {
-          "payment_deposit_schedule": [
-            {
-              "payment_no": "1",
-              "process_date": "2025-01-15",
-              "amount": "250.00"
-            }
-          ]
-        }
-        """
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result and 'payment_deposit_schedule' in result:
-            deposits = result['payment_deposit_schedule']
-            if isinstance(deposits, list):
-                for deposit in deposits:
-                    deposit['file_id'] = file_id
-                    self._fix_entity_data_formats(deposit)
-                return deposits
-        return None
-
-    async def _extract_payment_bank_info(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract Primary Account Information / Payment Bank Info."""
-        prompt = """
-        Find the "Primary Account Information" section. Look for a form layout with labeled fields:
-        
-        EXACT FIELDS TO EXTRACT:
-        - Bank Name field (e.g., "PNC BANK, NATIONAL ASSOCIATION", "JPMORGAN CHASE BANK, NA")
-        - Account Number field (e.g., "1036582879", "3134029178")  
-        - Routing Number field (9 digits, e.g., "043000096", "322271627")
-        - Account Type field ("Checking" or "Savings")
-        - "Authorizing Person's Name (as it appears on check)" field
-        - Address (Street address)
-        - City (City)
-        - State (State)
-        - Zip (Zip)
-        - "Recurring Debit Authorization" amount (e.g., "$651.57", "$631.23")
-        - "Date of First Debit" (e.g., "Sep 15, 2025", "Sep 03, 2025")
-        - Client Signature line and Date
-        
-        CRITICAL: Extract ONLY what is visibly filled in these specific labeled fields.
-        
-        Return JSON:
-        {
-          "payment_bank_info": {
-            "file_id": null,
-            "authorizing_person_name": "Exact name from the Authorizing Person field",
-            "bank_name": "Exact bank name from Bank Name field",
-            "account_number": "Exact account number from Account Number field",
-            "routing_number": "Exact routing number from Routing Number field",
-            "account_type": "checking or savings (lowercase)",
-            "address": "Street address from Address field",
-            "city": "City from City field",
-            "state": "State from State field",
-            "zip_code": "Zip from Zip field",
-            "recurring_debit_authorization": "Amount without $ symbol (e.g., 651.57)",
-            "first_debit_date": "Date in YYYY-MM-DD format",
-            "client_signature": "Client signature text if present",
-            "client_signature_date": "Signature date in YYYY-MM-DD format",
-            "coclient_signature": null,
-            "coclient_signature_date": null
-          }
-        }
-        """
-        # Use the dedicated prompt function which returns flat structure
-        from prompts.underwriting_prompts import get_payment_bank_info_prompt
-        prompt = get_payment_bank_info_prompt()
-        
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result and isinstance(result, dict):
-            result['file_id'] = file_id
-            self._fix_entity_data_formats(result)
-            logger.bind(
-                file_id=file_id, 
-                bank_name=result.get('bank_name'),
-                recurring_debit_authorization=result.get('recurring_debit_authorization')
-            ).debug("payment_bank_info.extracted")
-            return result
-        logger.bind(file_id=file_id).warning("payment_bank_info.not_found")
-        return None  
-    async def _extract_disclosure(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract disclosure data."""
-        from prompts.underwriting_prompts import get_targeted_disclosure_prompt
-        prompt = get_targeted_disclosure_prompt()
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result and 'disclosure' in result:
-            disc = result['disclosure']
-            if isinstance(disc, dict):
-                disc['file_id'] = file_id
-                self._fix_entity_data_formats(disc)
-                return disc
-        return None
-    
-    async def _extract_legal_plan(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract legal plan agreement data."""
-        prompt = get_prompt_for_document_type('legal_plan_agreement')
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result:
-            result['file_id'] = file_id
-            self._fix_entity_data_formats(result)
-        return result
-    
-    async def _extract_high_interest(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract high interest disclosure data."""
-        prompt = """
-        Extract High Interest Creditor Disclosure information.
-        
-        Return JSON:
-        {
-          "company_name": null,
-          "client_name": null,
-          "client_signature": null,
-          "client_signature_date": null,
-          "coclient_name": null,
-          "coclient_signature": null,
-          "coclient_signature_date": null
-        }
-        """
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result:
-            result['file_id'] = file_id
-            self._fix_entity_data_formats(result)
-        return result
-    
-    async def _extract_fcra(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract FCRA consent data."""
-        prompt = """
-        Extract FCRA Consumer Report Consent information.
-        
-        Return JSON:
-        {
-          "company_name": null,
-          "client_name": null,
-          "client_signature": null,
-          "client_signature_date": null
-        }
-        """
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result:
-            result['file_id'] = file_id
-            self._fix_entity_data_formats(result)
-        return result
-    
-    async def _extract_cancellation(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract cancellation notice data."""
-        prompt = get_prompt_for_document_type('cancellation_notice')
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result:
-            result['file_id'] = file_id
-            self._fix_entity_data_formats(result)
-        return result
-    
-    async def _extract_clixsign_data(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract ClixSign certificate data."""
-        prompt = """
-        Extract ClixSign Certificate or ClixSign Completion Certificate information.
-        
-        CRITICAL: Look for the exact data shown in these sections:
-        
-        1. SIGNATURE PACKAGE DETAILS section:
-           - Final Status (e.g., "Completed")
-           - Final Status Date (e.g., "2025-09-03T13:38:44-05:00")
-           - Package Title (e.g., "Aspire Contract EN")
-           - Package ID (e.g., "15570452")
-           - # of Signers (e.g., "1")
-        
-        2. SENDER INFORMATION section:
-           - Name (e.g., "Michael Tomaszkiewicz")
-           - Email Address (e.g., "michael.tomaszkiewicz@loanify.ai")
-           - IP Address (e.g., "184.98.77.246") 
-           - Sending Entity (e.g., "Loanify, Inc")
-        
-        3. SIGNERS section (for each signer):
-           - Signer name (e.g., "Joshua")
-           - Email Address (e.g., "joshuadk@gmail.com")
-           - IP Address (e.g., "100.8.7.225")
-           - User Agent (browser info)
-           - Package Opened At timestamp
-           - Signature Adopted At timestamp
-           - Package Signed At timestamp
-        
-        Return JSON with EXACT values from the certificate:
-        {
-          "clixsign_sender": {
-            "package_id": "exact Package ID from certificate",
-            "package_title": "exact Package Title from certificate", 
-            "final_status": "exact Final Status from certificate",
-            "final_status_date": "exact Final Status Date from certificate",
-            "sending_entity": "exact Sending Entity from certificate",
-            "sender_name": "exact Name from Sender Information",
-            "sender_email_address": "exact Email Address from Sender Information",
-            "sender_ip_address": "exact IP Address from Sender Information",
-            "signers_count": "exact # of Signers value"
-          },
-          "clixsign_signers": [
-            {
-              "package_id": "same Package ID as above",
-              "signer_name": "exact signer name from Signers section",
-              "signer_email_address": "exact Email Address from signer",
-              "signer_ip_address": "exact IP Address from signer", 
-              "signer_user_agent": "exact User Agent from signer",
-              "package_opened_at": "exact Package Opened At timestamp",
-              "signature_adopted_at": "exact Signature Adopted At timestamp", 
-              "package_signed_at": "exact Package Signed At timestamp"
-            }
-          ]
-        }
-        """
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result:
-            # Process sender
-            if 'clixsign_sender' in result and result['clixsign_sender']:
-                result['clixsign_sender']['file_id'] = file_id
-                self._fix_entity_data_formats(result['clixsign_sender'])
-            
-            # Process signers
-            if 'clixsign_signers' in result and isinstance(result['clixsign_signers'], list):
-                logger.bind(file_id=file_id, signer_count=len(result['clixsign_signers'])).debug("clixsign_signers.processing")
-                for i, signer in enumerate(result['clixsign_signers']):
-                    signer['file_id'] = file_id
-                    self._fix_entity_data_formats(signer)
-                    logger.bind(
-                        file_id=file_id,
-                        signer_index=i,
-                        signer_name=signer.get('signer_name'),
-                        signer_email=signer.get('signer_email_address')
-                    ).debug("clixsign_signer.processed")
-            else:
-                logger.bind(file_id=file_id).warning("clixsign_signers.not_found_in_result")
-            
-            return result
-        return None
-    
-    async def _extract_program_disclosure(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract program disclosure data."""
-        prompt = get_prompt_for_document_type('program_disclosure')
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result:
-            result['file_id'] = file_id
-            self._fix_entity_data_formats(result)
-        return result
-    
-    async def _extract_attorney_privileged(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract attorney privileged client info data."""
-        prompt = get_prompt_for_document_type('attorney_privileged_client_info')
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result:
-            result['file_id'] = file_id
-            self._fix_entity_data_formats(result)
-        return result
-    
-    async def _extract_payment_gateway(self, pdf_data: Dict[str, str], file_id: int) -> Optional[Dict]:
-        """Extract payment gateway data."""
-        prompt = get_prompt_for_document_type('payment_gateway_agreement')
-        result = await self._make_gemini_request(prompt, pdf_data)
-        if result:
-            result['file_id'] = file_id
-            self._fix_entity_data_formats(result)
-        return result
-    
-
-    def _attempt_fallback_extraction(self, text: str) -> Optional[Dict[str, Any]]:
-        """
-        Attempt to extract structured data from non-JSON responses.
-        This handles cases where Gemini returns explanatory text or partial data.
-        """
-        try:
-            # First try to fix the JSON and parse it properly
-            from utils.json_parser import clean_json_text
-            
-            # Try to fix common JSON issues
-            cleaned_text = clean_json_text(text)
-            try:
-                import json
-                result = json.loads(cleaned_text)
-                if isinstance(result, dict) and len(result) > 0:
-                    logger.info(f"Fallback JSON parsing successful with {len(result)} fields")
-                    return result
-            except json.JSONDecodeError:
-                pass
-            
-            # If JSON parsing still fails, extract key-value pairs
-            data = {}
-            
-            # Pattern 1: "field": "value" format (JSON-like)
-            json_kv_pattern = r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:\s*"([^"]*)"'
-            matches = re.findall(json_kv_pattern, text, re.IGNORECASE)
-            
-            for key, value in matches:
-                if value.lower() in ['null', 'none', 'n/a', 'not found']:
-                    value = None
-                data[key.lower()] = value
-            
-            # Pattern 2: "field": value format (without quotes on value)
-            json_kv_pattern2 = r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:\s*([^,\n\r}]+)'
-            matches2 = re.findall(json_kv_pattern2, text, re.IGNORECASE)
-            
-            for key, value in matches2:
-                if key.lower() not in data:  # Don't override existing values
-                    value = value.strip().strip('"\'')
-                    if value.lower() in ['null', 'none', 'n/a', 'not found']:
-                        value = None
-                    data[key.lower()] = value
-            
-            # Pattern 3: "field: value" format (colon with space)
-            kv_pattern = r'([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([^\n\r]+)'
-            matches3 = re.findall(kv_pattern, text, re.IGNORECASE)
-            
-            for key, value in matches3:
-                if key.lower() not in data:  # Don't override existing values
-                    # Clean up the value
-                    value = value.strip().strip('"\'')
-                    if value.lower() in ['null', 'none', 'n/a', 'not found']:
-                        value = None
-                    data[key.lower()] = value
-            
-            # Pattern 2: Look for structured text blocks
-            if not data:
-                # Try to find any structured information
-                lines = text.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if ':' in line and not line.startswith('#'):
-                        parts = line.split(':', 1)
-                        if len(parts) == 2:
-                            key = parts[0].strip().lower()
-                            value = parts[1].strip().strip('"\'')
-                            if value.lower() in ['null', 'none', 'n/a', 'not found']:
-                                value = None
-                            data[key] = value
-            
-            # Only return data if we found at least 3 fields
-            if len(data) >= 3:
-                logger.info(f"Fallback extraction found {len(data)} fields")
-                return data
-            else:
-                logger.warning(f"Fallback extraction only found {len(data)} fields, insufficient")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Fallback extraction failed: {e}")
-            return None
-
     def health_check(self) -> bool:
-        """Check if Gemini client is healthy."""
+        """Check if client is healthy."""
         try:
             return self.credentials and self.credentials.valid
         except Exception:

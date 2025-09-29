@@ -139,7 +139,7 @@ class UnderwritingDatabaseAdapter:
             transaction_success = False
             async with self.pool.acquire() as connection:
                 # Set a longer timeout for this specific transaction
-                await connection.execute("SET statement_timeout = '300s'")  # 5 minutes
+                await connection.execute("SET statement_timeout = '600s'")  # 10 minutes
                 async with connection.transaction():
                     stored_count = 0
                     
@@ -282,13 +282,23 @@ class UnderwritingDatabaseAdapter:
                                 try:
                                     await self._store_payment_deposit_schedule(connection, deposit)
                                     deposits_stored += 1
-                                except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError) as e:
-                                    logger.bind(file_id=package.file_id, payment_no=getattr(deposit, 'payment_no', 'unknown')).warning("db.deposit_skipped")
+                                except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError, asyncpg.DataError, asyncpg.IntegrityConstraintViolationError) as e:
+                                    logger.bind(
+                                        file_id=package.file_id, 
+                                        payment_no=getattr(deposit, 'payment_no', 'unknown'),
+                                        error=type(e).__name__
+                                    ).warning("db.deposit_skipped")
+                                except Exception as e:
+                                    logger.bind(
+                                        file_id=package.file_id,
+                                        payment_no=getattr(deposit, 'payment_no', 'unknown'),
+                                        error=type(e).__name__,
+                                        detail=str(e)
+                                    ).error("db.deposit_individual_failed")
                             stored_count += deposits_stored
                             logger.bind(file_id=package.file_id, stored=deposits_stored).debug("db.deposit_schedule_complete")
                         except Exception as e:
                             logger.bind(file_id=package.file_id, table="payment_deposit_schedule", error=type(e).__name__, detail=str(e)).error("db.table_failed")
-                            raise
                         
                     if package.clixsign_signers:
                         try:

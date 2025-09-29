@@ -33,8 +33,8 @@ set -a  # automatically export all variables
 source "$ENV_FILE"
 set +a  # stop automatically exporting
 
-# Set Python path
-export PYTHONPATH="$ROOT_DIR:${PYTHONPATH:-}"
+# Set Python path to include src directory and root
+export PYTHONPATH="${SCRIPT_DIR}/src:$ROOT_DIR:${PYTHONPATH:-}"
 
 # Change to src directory
 cd "${SCRIPT_DIR}/src"
@@ -44,8 +44,8 @@ echo -e "${YELLOW}📍 Service will be available at: http://localhost:${PARSER_P
 echo -e "${YELLOW}🔍 Health check: http://localhost:${PARSER_PORT:-8003}/api/v1/health${NC}"
 echo -e "${YELLOW}📚 API docs: http://localhost:${PARSER_PORT:-8003}/docs${NC}"
 
-# Run the service
-uvicorn main:app \
+# Run the service with Poetry
+poetry run uvicorn main:app \
     --reload \
     --host "${PARSER_HOST:-0.0.0.0}" \
     --port "${PARSER_PORT:-8003}" \

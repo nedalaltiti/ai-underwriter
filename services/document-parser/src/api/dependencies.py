@@ -6,7 +6,6 @@ from typing import Dict, Any
 
 from config import ServiceConfig
 from core.processor import DocumentProcessor
-from core.validator import UnderwritingValidator
 from integrations.gemini import GeminiClient
 
 
@@ -30,12 +29,6 @@ def get_document_processor() -> DocumentProcessor:
     """Get document processor instance."""
     gemini_client = get_gemini_client()
     return DocumentProcessor(gemini_client)
-
-
-@lru_cache()
-def get_underwriting_validator() -> UnderwritingValidator:
-    """Get underwriting validator instance."""
-    return UnderwritingValidator()
 
 
 def get_service_info() -> Dict[str, Any]:

@@ -14,7 +14,6 @@ from botocore.exceptions import ClientError, NoCredentialsError
 
 from config import config
 from core.processor import DocumentProcessor
-from core.validator import UnderwritingValidator
 from integrations.gemini import GeminiClient
 from models.extraction import ProcessingTask
 from utils.logging import get_logger, setup_logging
@@ -31,7 +30,6 @@ class DocumentWorker:
         self.sqs_client = None
         self.s3_client = None
         self.processor = None
-        self.validator = None
         self.sqs_adapter = None  # Add SQS adapter for DLQ support
         self._setup_aws_clients()
         self._setup_processors()
@@ -84,14 +82,13 @@ class DocumentWorker:
             service_account_info = config.get_gemini_service_account_dict()
             gemini_client = GeminiClient(service_account_info)
             
-            # Initialize processor and validator
+            # Initialize processor
             self.processor = DocumentProcessor(gemini_client)
-            self.validator = UnderwritingValidator()
             
             logger.info("Document processor and validator initialized")
             
         except Exception as e:
-            logger.error(f"Failed to initialize processors: {e}")
+            logger.error(f"Failed to initialize processor: {e}")
             raise
     
     async def start(self):
@@ -295,11 +292,6 @@ class DocumentWorker:
             
             # Process document
             result = await self.processor.process_document(task)
-            
-            # Validate if successful
-            if result.extracted_document:
-                validation_results = self.validator.validate_document(result.extracted_document)
-                logger.debug(f"parse.validated contact={task.contact_id} doc={task.doc_id} checks={len(validation_results)}")
             
             await self._log_processing_result(task, result, worker_id)
             
