@@ -160,6 +160,7 @@ class GeminiClient:
             # Map response to package structure
             self._map_response_to_package(response, package_data)
             
+            
             # Add file_id to all entities
             self._add_file_ids(package_data, file_id)
             
@@ -470,4 +471,5 @@ class GeminiClient:
     
     def get_last_token_usage(self) -> Dict[str, Any]:
         """Get token usage from last request."""
-        return self.last_token_usage.copy()
+        return self.last_token_usage
+    

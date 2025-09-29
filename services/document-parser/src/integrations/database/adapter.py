@@ -222,25 +222,26 @@ class UnderwritingDatabaseAdapter:
                             await self._store_payment_bank_info(connection, package.payment_bank_info)
                             stored_count += 1
                             logger.bind(file_id=package.file_id).debug("db.payment_bank_info_stored")
-                        except asyncpg.InvalidColumnReferenceError as e:
-                            logger.bind(file_id=package.file_id, table="payment_bank_info", error=str(e)).warning("db.constraint_error_skipped")
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="payment_bank_info", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                             
                         
                     if package.legal_plan_agreement:
                         try:
                             await self._store_legal_plan_agreement(connection, package.legal_plan_agreement)
                             stored_count += 1
-                        except asyncpg.InvalidColumnReferenceError as e:
-                            logger.bind(file_id=package.file_id, table="legal_plan_agreement", error=str(e)).warning("db.constraint_error_skipped")
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="legal_plan_agreement", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                         
                     if package.attorney_privileged_client_info:
                         try:
                             await self._store_attorney_privileged_client_info(connection, package.attorney_privileged_client_info)
                             stored_count += 1
-                        except asyncpg.InvalidColumnReferenceError as e:
-                            logger.bind(file_id=package.file_id, table="attorney_privileged_client_info", error=str(e)).warning("db.constraint_error_skipped")
-                        except asyncpg.InsufficientPrivilegeError as e:
-                            logger.bind(file_id=package.file_id, table="attorney_privileged_client_info", error=str(e)).warning("db.permission_denied_skipped")
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="attorney_privileged_client_info", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                         
                     if package.clixsign_sender:
                         try:
@@ -263,65 +264,34 @@ class UnderwritingDatabaseAdapter:
                             raise
                         
                     if package.payment_service_fees:
-                        logger.bind(file_id=package.file_id, count=len(package.payment_service_fees)).debug("db.storing_service_fees")
-                        fees_stored = 0
-                        for fee in package.payment_service_fees:
-                            try:
+                        try:
+                            logger.bind(file_id=package.file_id, count=len(package.payment_service_fees)).debug("db.storing_service_fees")
+                            for fee in package.payment_service_fees:
                                 await self._store_payment_service_fees(connection, fee)
-                                fees_stored += 1
-                            except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError) as e:
-                                logger.bind(file_id=package.file_id, service_name=getattr(fee, 'service_name', 'unknown')).warning("db.service_fee_skipped")
-                        stored_count += fees_stored
-                        logger.bind(file_id=package.file_id, stored=fees_stored).debug("db.service_fees_complete")
+                            stored_count += len(package.payment_service_fees)
+                            logger.bind(file_id=package.file_id).debug("db.service_fees_complete")
+                        except Exception as e:
+                            logger.bind(file_id=package.file_id, table="payment_service_fees", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                         
                     if package.payment_deposit_schedule:
                         try:
                             logger.bind(file_id=package.file_id, count=len(package.payment_deposit_schedule)).debug("db.storing_deposit_schedule")
-                            deposits_stored = 0
                             for deposit in package.payment_deposit_schedule:
-                                try:
-                                    await self._store_payment_deposit_schedule(connection, deposit)
-                                    deposits_stored += 1
-                                except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError, asyncpg.DataError, asyncpg.IntegrityConstraintViolationError) as e:
-                                    logger.bind(
-                                        file_id=package.file_id, 
-                                        payment_no=getattr(deposit, 'payment_no', 'unknown'),
-                                        error=type(e).__name__
-                                    ).warning("db.deposit_skipped")
-                                except Exception as e:
-                                    logger.bind(
-                                        file_id=package.file_id,
-                                        payment_no=getattr(deposit, 'payment_no', 'unknown'),
-                                        error=type(e).__name__,
-                                        detail=str(e)
-                                    ).error("db.deposit_individual_failed")
-                            stored_count += deposits_stored
-                            logger.bind(file_id=package.file_id, stored=deposits_stored).debug("db.deposit_schedule_complete")
+                                await self._store_payment_deposit_schedule(connection, deposit)
+                            stored_count += len(package.payment_deposit_schedule)
+                            logger.bind(file_id=package.file_id).debug("db.deposit_schedule_complete")
                         except Exception as e:
                             logger.bind(file_id=package.file_id, table="payment_deposit_schedule", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            raise
                         
                     if package.clixsign_signers:
                         try:
                             logger.bind(file_id=package.file_id, count=len(package.clixsign_signers)).debug("db.storing_clixsign_signers")
-                            signers_stored = 0
                             for signer in package.clixsign_signers:
-                                try:
-                                    logger.bind(
-                                        file_id=package.file_id,
-                                        signer_name=getattr(signer, 'signer_name', 'unknown'),
-                                        signer_email=getattr(signer, 'signer_email_address', 'unknown')
-                                    ).debug("db.storing_clixsign_signer")
-                                    await self._store_clixsign_signer(connection, signer)
-                                    signers_stored += 1
-                                    logger.bind(file_id=package.file_id).debug("db.clixsign_signer_stored")
-                                except (asyncpg.InvalidColumnReferenceError, asyncpg.UniqueViolationError) as e:
-                                    logger.bind(
-                                        file_id=package.file_id, 
-                                        signer_email=getattr(signer, 'signer_email_address', 'unknown'),
-                                        error=str(e)
-                                    ).error("db.signer_failed")
-                            stored_count += signers_stored
-                            logger.bind(file_id=package.file_id, stored=signers_stored).debug("db.clixsign_signers_complete")
+                                await self._store_clixsign_signer(connection, signer)
+                            stored_count += len(package.clixsign_signers)
+                            logger.bind(file_id=package.file_id).debug("db.clixsign_signers_complete")
                         except Exception as e:
                             logger.bind(file_id=package.file_id, table="clixsign_signers", error=type(e).__name__, detail=str(e)).error("db.table_failed")
                             raise

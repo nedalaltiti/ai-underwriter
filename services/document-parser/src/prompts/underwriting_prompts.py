@@ -6,15 +6,9 @@ Designed for maximum accuracy with minimal token usage.
 
 from typing import Dict, Any
 
-# Core extraction rules - simple and direct
 BASE_RULES = """
-RULES:
-1. Extract only what is clearly visible
-2. Use null for missing fields - never guess
-3. Dates: YYYY-MM-DD format
-4. Money: decimal without $ (e.g. "1250.00")
-5. SSNs: with dashes (e.g. "123-45-6789")
-6. Signatures: actual names, not labels
+Extract only visible data. Use null for missing fields.
+Dates: YYYY-MM-DD. Money: no $ symbol. SSNs: with dashes.
 """
 
 def get_engagement_term_prompt() -> str:
@@ -22,7 +16,9 @@ def get_engagement_term_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from Terms of Engagement section. Based on contracts, client initials appear on pages 2-6, signatures on page 6 or 11.
+Extract from Terms of Engagement section.
+
+CLIENT INITIALS: Look for 2-4 capital letters (e.g., "RL", "JD", "ABC") written by client next to paragraphs/acknowledgments in engagement section. Count all occurrences.
 
 Return JSON:
 {{
@@ -40,18 +36,12 @@ Return JSON:
   "client_initials": null,
   "coclient_initials": null
 }}
-
-Look for: Clarity/Concordia/Aspire companies, settlement fee %, client initials throughout engagement pages, signatures at end.
 """
 
 def get_financial_analysis_prompt() -> str:
-    """Financial Analysis / Budget extraction.""" 
     return f"""
 {BASE_RULES}
 
-Extract from Financial Analysis/Budget section. Look for income/expense tables and signature at end.
-
-Return JSON:
 {{
   "applicant_name": null,
   "applicant_email": null,
@@ -78,8 +68,6 @@ Return JSON:
   "coclient_signature_date": null,
   "client_initials": null
 }}
-
-Look for: Income/expense tables, program details, phone numbers, signatures.
 """
 
 def get_payment_gateway_prompt() -> str:
@@ -87,9 +75,6 @@ def get_payment_gateway_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from Account Agreement section. Based on contracts, initials on page 28 or 34, signatures on page 36 or 41.
-
-Return JSON:
 {{
   "account_id": null,
   "client_first_name": null,
@@ -111,8 +96,6 @@ Return JSON:
   "coclient_signature": null,
   "coclient_signature_date": null
 }}
-
-Look for: FORTH processor, client information grid, initials, signatures.
 """
 
 def get_payment_bank_info_prompt() -> str:
@@ -120,9 +103,6 @@ def get_payment_bank_info_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from Primary Account Information section. Based on contracts, signatures on page 29 or 35.
-
-Return JSON:
 {{
   "authorizing_person_name": null,
   "bank_name": null,
@@ -140,8 +120,6 @@ Return JSON:
   "coclient_signature": null,
   "coclient_signature_date": null
 }}
-
-Look for: Bank name, account/routing numbers, address components (street, city, state, zip), recurring debit amount, signature.
 """
 
 def get_power_of_attorney_prompt() -> str:
@@ -149,9 +127,6 @@ def get_power_of_attorney_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from Power of Attorney section. Based on contracts, signatures on page 17 or 31.
-
-Return JSON:
 {{
   "company_name": null,
   "attorney_name": null,
@@ -167,8 +142,6 @@ Return JSON:
   "coclient_signature": null,
   "coclient_signature_date": null
 }}
-
-Look for: Law firm name, client personal info, signatures. SSNs should be FULL 9-digit format.
 """
 
 def get_legal_plan_prompt() -> str:
@@ -176,12 +149,6 @@ def get_legal_plan_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from VLP Terms Agreement section. Based on contracts:
-- Page 30/23: VLP Terms (signature)  
-- Page 31/24: Member Acknowledgement (initials & signature)
-- Page 32/25: Member Information (signature)
-
-Return JSON:
 {{
   "legal_plan_provider": null,
   "member_name": null,
@@ -203,8 +170,6 @@ Return JSON:
   "member_info_client_signature": null,
   "member_info_signature_date": null
 }}
-
-Look for: VLP provider, member info, payment amounts, multiple signatures across pages.
 """
 
 def get_debt_schedule_prompt() -> str:
@@ -212,9 +177,6 @@ def get_debt_schedule_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from debt/creditor listing tables.
-
-Return JSON:
 {{
   "debt_schedule": [
     {{
@@ -226,8 +188,6 @@ Return JSON:
     }}
   ]
 }}
-
-Look for: Tables with creditor names, account numbers, balances.
 """
 
 def get_disclosure_prompt() -> str:
@@ -235,9 +195,6 @@ def get_disclosure_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from disclosure sections. Look for multiple disclosure sections like 11 USC § 527(a) and 11 USC § 527(b). Based on contracts, signatures on pages 18, 20, etc.
-
-Return JSON:
 {{
   "client_signature": null,
   "client_signature_date": null,
@@ -250,8 +207,6 @@ Return JSON:
   "client_initials": null,
   "coclient_initials": null
 }}
-
-Look for: Federal disclosures (11 USC § 527), multiple disclosure sections, signature blocks, client initials.
 """
 
 def get_program_disclosure_prompt() -> str:
@@ -259,9 +214,6 @@ def get_program_disclosure_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from Program Disclosure section. Based on contracts, initials on pages 23-24 or 18-22.
-
-Return JSON:
 {{
   "company_name": null,
   "settlement_fee_percent": null,
@@ -270,8 +222,6 @@ Return JSON:
   "client_initials_count": null,
   "is_all_initials_present": null
 }}
-
-Look for: Debt resolution company, settlement fee %, client initials throughout disclosure pages.
 """
 
 def get_fcra_prompt() -> str:
@@ -279,17 +229,12 @@ def get_fcra_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from FCRA Authorization section. Based on contracts, signatures on page 7 or 12.
-
-Return JSON:
 {{
   "company_name": null,
   "client_name": null,
   "client_signature": null,
   "client_signature_date": null
 }}
-
-Look for: FCRA authorization language, client signature.
 """
 
 def get_payment_service_fees_prompt() -> str:
@@ -297,35 +242,15 @@ def get_payment_service_fees_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from Service Fees table. Look for "Administrative"/"Administrativa" and "Disbursement"/"Desembolso" columns with fee amounts.
-
-Return JSON:
 {{
   "payment_service_fees": [
     {{
-      "service_type": "Administrative or Disbursement",
-      "service_name": "Fee name in English or Spanish",
-      "service_amount": "Amount without $ symbol (e.g., 10.95)"
+      "service_type": null,
+      "service_name": null,
+      "service_amount": null
     }}
   ]
 }}
-
-SPANISH/ENGLISH FEE MAPPING:
-- Tarifa de instalación / Setup Fee
-- Tarifa de servicio mensual / Monthly Service Fee  
-- Tarifa por suspensión de pago / Stop Payment Fee
-- Tarifa de depósito del Cliente / Client Deposit Fee
-- Tarifa de depósito de terceros / Third Party Deposit Fee
-- Tarifa por rechazo del depósito / Reject Deposit Fee
-- Tarifa por elemento devuelto / Returned Item Fee
-- Débito ACH/Cheque por teléfono / ACH Debit/Check by Phone
-- Transferencia bancaria / Bank Wire
-- Cheque / Check
-- Cheque al segundo día / Check 2nd Day
-- Cheque durante la noche / Check Overnight
-- Pago Directo / Direct Pay
-
-Look for: Service Fees table with Administrative/Disbursement or Administrativa/Desembolso columns, fee names and amounts in any language.
 """
 
 def get_payment_deposit_schedule_prompt() -> str:
@@ -333,28 +258,17 @@ def get_payment_deposit_schedule_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from Deposit Schedule table. Look for payment numbers, process dates, and amounts. CRITICAL: Extract ALL rows from the table, not just the first few.
+Extract complete deposit schedule table.
 
-Return JSON:
 {{
   "payment_deposit_schedule": [
     {{
-      "payment_no": "Payment number (e.g., 1, 2, 3)",
-      "process_date": "Process date (YYYY-MM-DD format)",
-      "amount": "Payment amount without $ symbol (e.g., 212.07)"
+      "payment_no": null,
+      "process_date": null,
+      "amount": null
     }}
   ]
 }}
-
-SPANISH/ENGLISH TABLE HEADERS:
-- Payment # / Pago #
-- Process Date / Fecha de Proceso  
-- Amount / Cantidad
-- Deposit Schedule / Calendario De Depósito
-
-CRITICAL: Scan the ENTIRE table from first row to last row. Extract EVERY payment entry, not just the first 3-5 rows. Tables may have 30-50+ payment entries.
-
-Look for: Complete deposit schedule table with ALL payment entries in English or Spanish.
 """
 
 def get_attorney_privileged_client_info_prompt() -> str:
@@ -362,9 +276,6 @@ def get_attorney_privileged_client_info_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from Attorney Client Privileged / Client Information form. Look for client details, employment info, and yes/no questions.
-
-Return JSON:
 {{
   "client_name": null,
   "client_ssn": null,
@@ -395,8 +306,6 @@ Return JSON:
   "coclient_signature": null,
   "coclient_signature_date": null
 }}
-
-Look for: Client Information section, Employment Information, Contact Information, yes/no questions, signature lines.
 """
 
 def get_clixsign_sender_prompt() -> str:
@@ -404,12 +313,6 @@ def get_clixsign_sender_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from "Clixsign Completion Certificate" document. Look for these specific sections:
-
-1. "Signature Package Details" table with columns: Final Status, Final Status Date, Package Title, Package ID, # of Signers
-2. "Sender Information" table with columns: Name, Email Address, IP Address, Sending Entity
-
-Return JSON with EXACT field names:
 {{
   "package_id": null,
   "package_title": null,
@@ -421,17 +324,6 @@ Return JSON with EXACT field names:
   "sender_ip_address": null,
   "signers_count": null
 }}
-
-SPECIFIC EXTRACTION GUIDANCE:
-- package_id: Look for "Package ID" value (numeric)
-- package_title: Look for "Package Title" text
-- final_status: Look for "Final Status" (e.g., "Completed")
-- final_status_date: Look for "Final Status Date" timestamp
-- sending_entity: Look for "Sending Entity" company name
-- sender_name: Look for sender "Name" 
-- sender_email_address: Look for sender "Email Address"
-- sender_ip_address: Look for sender "IP Address"
-- signers_count: Look for "# of Signers" number
 """
 
 def get_clixsign_signers_prompt() -> str:
@@ -439,9 +331,6 @@ def get_clixsign_signers_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from "Clixsign Completion Certificate" document. Look for "Signers" section with signer details.
-
-Return JSON with EXACT field names:
 {{
   "clixsign_signers": [
     {{
@@ -456,18 +345,6 @@ Return JSON with EXACT field names:
     }}
   ]
 }}
-
-SPECIFIC EXTRACTION GUIDANCE:
-- package_id: Same Package ID from package details
-- signer_name: Look for signer name 
-- signer_email_address: Look for "Email Address" under signer
-- signer_ip_address: Look for "IP Address" under signer  
-- signer_user_agent: Look for "User Agent" technical details
-- package_opened_at: Look for "Package Opened At" timestamp
-- signature_adopted_at: Look for "Signature Adopted At" timestamp
-- package_signed_at: Look for "Package Signed At" timestamp
-
-NOTE: Keep timestamps in original format (e.g., "2025-08-29T12:27:43-05:00")
 """
 
 def get_cancellation_notice_prompt() -> str:
@@ -475,19 +352,14 @@ def get_cancellation_notice_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-Extract from Notice of Right of Rescission / Cancellation Notice section.
-
-Return JSON:
 {{
   "cancellation_deadline": null,
   "cancellation_date": null,
-    "client_signature": null,
-    "client_signature_date": null,
-    "coclient_signature": null,
+  "client_signature": null,
+  "client_signature_date": null,
+  "coclient_signature": null,
   "coclient_signature_date": null
 }}
-
-Look for: Transaction dates, cancellation deadlines, signature blocks at bottom.
 """
 
 # Main prompt routing function
@@ -520,9 +392,7 @@ def get_comprehensive_prompt() -> str:
     return f"""
 {BASE_RULES}
 
-CRITICAL: Extract ALL table rows completely. For tables, scan entire table from top to bottom.
-
-Extract all sections present:
+Extract complete tables. All rows, actual data only.
 
 Return complete JSON with ALL entities found (use null for missing sections):
 {{
@@ -729,51 +599,16 @@ Return complete JSON with ALL entities found (use null for missing sections):
   }},
   "payment_service_fees": [
     {{
-      "service_type": "Administrative",
-      "service_name": "Setup Fee",
-      "service_amount": "10.95"
-    }},
-    {{
-      "service_type": "Administrative", 
-      "service_name": "Monthly Service Fee",
-      "service_amount": "10.95"
-    }},
-    {{
-      "service_type": "Administrative",
-      "service_name": "Stop Payment Fee", 
-      "service_amount": "20.00"
-    }},
-    {{
-      "service_type": "Disbursement",
-      "service_name": "ACH Debit / Check by Phone",
-      "service_amount": "6.00"
-    }},
-    {{
-      "service_type": "Disbursement",
-      "service_name": "Bank Wire",
-      "service_amount": "25.00"
-    }},
-    {{
-      "service_type": "Disbursement", 
-      "service_name": "Check",
-      "service_amount": "12.00"
+      "service_type": "Administrative or Disbursement",
+      "service_name": "actual_fee_name_from_document",
+      "service_amount": "actual_amount_from_document"
     }}
   ],
   "payment_deposit_schedule": [
     {{
-      "payment_no": "1",
-      "process_date": "2025-09-26", 
-      "amount": "212.07"
-    }},
-    {{
-      "payment_no": "2",
-      "process_date": "2025-10-10",
-      "amount": "212.07"
-    }},
-    {{
-      "payment_no": "3",
-      "process_date": "2025-10-24",
-      "amount": "212.07"
+      "payment_no": null,
+      "process_date": null, 
+      "amount": null
     }}
   ],
   "attorney_privileged_client_info": {{
@@ -842,20 +677,16 @@ Return complete JSON with ALL entities found (use null for missing sections):
 Extract only sections that are present. Use null for missing fields within each section.
     """
 
-# Validation prompt - simplified
+# Validation prompt
 def get_validation_prompt(extracted_data: Dict[str, Any]) -> str:
     """Simple validation prompt."""
     return f"""
-Review this extracted data for obvious errors:
 {extracted_data}
 
-Return JSON:
 {{
   "validation_passed": true,
   "confidence_score": 0.95,
   "flagged_fields": [],
   "corrected_data": {{}}
 }}
-
-Flag only clear errors like future dates, obvious test data, or impossible values.
     """
