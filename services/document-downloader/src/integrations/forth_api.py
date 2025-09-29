@@ -118,7 +118,8 @@ class ForthAPIClient:
         except DocumentNotFoundError:
             raise
         except Exception as e:
-            logger.error(f"forth.error contact={contact_id} doc={doc_id} error={type(e).__name__}")
+            if not isinstance(e, ForthAPIError):
+                logger.error(f"forth.error contact={contact_id} doc={doc_id} error={type(e).__name__}")
             raise
     
     async def get_contact(self, contact_id: str) -> Optional[Dict[str, Any]]:
