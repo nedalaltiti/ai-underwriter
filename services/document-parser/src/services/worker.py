@@ -177,7 +177,7 @@ class DocumentWorker:
                         # Add timeout to prevent hanging
                         await asyncio.wait_for(
                             self._process_message(message, queue_url, worker_id),
-                            timeout=900  # 15 minutes max per documen
+                            timeout=config.processing_timeout  # Enforce processing timeout
                         )
                     except asyncio.TimeoutError:
                         # Extract contact/doc info for better logging
@@ -196,10 +196,32 @@ class DocumentWorker:
                             worker_id=worker_id,
                             contact_id=contact_id,
                             doc_id=doc_id,
-                            timeout_minutes=15
+                            timeout_minutes=int(config.processing_timeout / 60)
                         ).error("worker.processing_timeout")
                         
-                        # Delete the timed-out message to prevent infinite reprocessing
+                        # Send timed-out message to DLQ, then delete from main queue
+                        try:
+                            from libs.forth_shared.models.queue import QueueMessage, MessageType
+                            failed_message = QueueMessage(
+                                message_type=MessageType.ERROR_NOTIFICATION,
+                                contact_id=contact_id or '0',
+                                data={
+                                    **(body if isinstance(body, dict) else {}),
+                                    "error": "Processing timeout",
+                                    "worker_id": worker_id,
+                                    "timeout_seconds": config.processing_timeout,
+                                },
+                                correlation_id=(body.get("correlation_id") if isinstance(body, dict) else None),
+                                retry_count=int(message.get('Attributes', {}).get('ApproximateReceiveCount', '1'))
+                            )
+                            await self.sqs_adapter.send_to_dlq(
+                                message=failed_message,
+                                error=f"Processing timed out after {config.processing_timeout} seconds"
+                            )
+                        except Exception as dlq_error:
+                            logger.error(f"Failed to send timed-out message to DLQ: {dlq_error}")
+
+                        # Always delete the message to prevent loops
                         try:
                             receipt_handle = message.get("ReceiptHandle")
                             if receipt_handle:
@@ -306,7 +328,7 @@ class DocumentWorker:
             
             # Extend message visibility for long processing (prevent redelivery)
             try:
-                await self._extend_message_visibility(queue_url, receipt_handle, 900)  # 15 minutes
+                await self._extend_message_visibility(queue_url, receipt_handle, config.sqs_visibility_timeout)
                 logger.bind(contact_id=task.contact_id, doc_id=task.doc_id).debug("parse.visibility_extended")
             except Exception as e:
                 logger.warning(f"Failed to extend message visibility: {e}")

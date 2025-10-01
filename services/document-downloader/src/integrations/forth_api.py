@@ -62,8 +62,37 @@ class ForthAPIClient:
             
             logger.debug(f"forth.request endpoint={endpoint}")
             
-            headers = await self._get_headers()
-            response = await self.client.get(endpoint, headers=headers)
+            # Retry on rate limits
+            max_attempts = 5
+            attempt = 0
+            last_exc: Optional[Exception] = None
+            while attempt < max_attempts:
+                attempt += 1
+                headers = await self._get_headers()
+                response = await self.client.get(endpoint, headers=headers)
+                status = response.status_code
+                if status == 401 or status == 403:
+                    # Auth errors are not retryable here
+                    break
+                if status == 429 or 500 <= status < 600:
+                    retry_after = 0
+                    try:
+                        ra = response.headers.get("Retry-After")
+                        if ra:
+                            retry_after = int(ra)
+                    except Exception:
+                        retry_after = 0
+                    if attempt < max_attempts:
+                        import asyncio, random
+                        base_delay = min(2 ** (attempt - 1), 30)
+                        delay = retry_after or base_delay + random.uniform(0, 0.5)
+                        logger.warning(
+                            f"forth.retry contact={contact_id} doc={doc_id} status={status} attempt={attempt}/{max_attempts} delay_s={delay:.2f}"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                # Either success or non-retryable
+                break
             
             if response.status_code == 200:
                 data = response.json()
