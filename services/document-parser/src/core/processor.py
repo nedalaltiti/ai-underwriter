@@ -26,6 +26,7 @@ class DocumentProcessor:
     def __init__(self, gemini_client: GeminiClient):
         """Initialize processor with Gemini client."""
         self.gemini_client = gemini_client
+        self.db_adapter = None  # Shared database adapter (injected by worker)
     
     async def process_document(self, task: ProcessingTask) -> ProcessingResult:
         """
@@ -85,14 +86,14 @@ class DocumentProcessor:
             )
                 
         except NonRetryableError as e:
-            logger.bind(doc_id=task.doc_id, error=str(e)).error("processing.non_retryable")
+            logger.bind(doc_id=task.doc_id, reason=str(e)).info("processing.skipped")
             task.status = ProcessingStatus.FAILED
             task.error_message = str(e)
             return ProcessingResult(
                 task_id=task.task_id,
                 status=ProcessingStatus.FAILED,
                 processing_time_ms=int((time.time() - start_time) * 1000),
-                error_details={'error_message': str(e), 'error_type': 'NonRetryableError'}
+                error_details={'error_message': str(e), 'error_type': 'NonRetryableError', 'retryable': False}
             )
         except Exception as e:
             logger.bind(doc_id=task.doc_id, error=str(e)).error("processing.failed")
@@ -151,16 +152,20 @@ class DocumentProcessor:
         except Exception as e:
             raise DocumentProcessingError(f"Failed to prepare document: {e}")
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=False
+    )
     async def _store_to_database(self, package, doc_id: str) -> bool:
-        """Store extracted package to database."""
+        """Store extracted package to database using shared adapter (singleton pattern)."""
         try:
-            from integrations.database.adapter import UnderwritingDatabaseAdapter
+            # Use shared database adapter (initialized once per worker)
+            if not self.db_adapter or not self.db_adapter.pool:
+                logger.bind(doc_id=doc_id).error("storage.no_adapter")
+                return False
             
-            db_adapter = UnderwritingDatabaseAdapter()
-            await db_adapter.initialize()
-            
-            success = await db_adapter.store_document_package(package)
-            await db_adapter.close()
+            success = await self.db_adapter.store_document_package(package)
             
             if success:
                 logger.bind(doc_id=doc_id).info("storage.success")
@@ -170,7 +175,8 @@ class DocumentProcessor:
             return success
             
         except Exception as db_error:
-            logger.bind(doc_id=doc_id, error=str(db_error)).error("storage.error")
+            error_detail = str(db_error)[:300]
+            logger.bind(doc_id=doc_id, error=type(db_error).__name__, detail=error_detail).error("storage.error")
             return False
     
     def _count_extracted_entities(self, package) -> int:

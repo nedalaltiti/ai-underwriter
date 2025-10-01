@@ -75,27 +75,39 @@ def get_payment_gateway_prompt() -> str:
     return f"""
 {BASE_RULES}
 
+Extract Account Agreement / Payment Gateway information.
+
+Return JSON (include ONLY if section exists in document):
 {{
-  "account_id": null,
-  "client_first_name": null,
-  "client_last_name": null,
-  "client_ssn": null,
-  "client_dob": null,
-  "client_address": null,
-  "client_city": null,
-  "client_state": null,
-  "client_zipcode": null,
-  "client_phone": null,
-  "client_email": null,
-  "coclient_first_name": null,
-  "coclient_last_name": null,
-  "coclient_ssn": null,
-  "client_initials": null,
-  "client_signature": null,
-  "client_signature_date": null,
-  "coclient_signature": null,
-  "coclient_signature_date": null
+  "payment_gateway_agreement": {{
+    "account_id": null,
+    "client_first_name": null,
+    "client_last_name": null,
+    "client_middle_initial": null,
+    "client_ssn": null,
+    "client_dob": null,
+    "client_address": null,
+    "client_city": null,
+    "client_state": null,
+    "client_zipcode": null,
+    "client_phone": null,
+    "client_email": null,
+    "coclient_first_name": null,
+    "coclient_last_name": null,
+    "coclient_middle_initial": null,
+    "coclient_ssn": null,
+    "coclient_dob": null,
+    "client_initials": null,
+    "coclient_initials": null,
+    "client_signature": null,
+    "client_signature_date": null,
+    "coclient_signature": null,
+    "coclient_signature_date": null,
+    "pages_count": null
+  }}
 }}
+
+If Account Agreement section not found, return: {{"payment_gateway_agreement": null}}
 """
 
 def get_payment_bank_info_prompt() -> str:

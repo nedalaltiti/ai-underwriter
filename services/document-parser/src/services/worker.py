@@ -31,6 +31,7 @@ class DocumentWorker:
         self.s3_client = None
         self.processor = None
         self.sqs_adapter = None  # Add SQS adapter for DLQ support
+        self.db_adapter = None  # Shared database adapter (singleton per worker)
         self._setup_aws_clients()
         self._setup_processors()
         
@@ -91,6 +92,23 @@ class DocumentWorker:
             logger.error(f"Failed to initialize processor: {e}")
             raise
     
+    async def _setup_database(self):
+        """Setup shared database adapter (singleton per worker process)."""
+        try:
+            from integrations.database.adapter import UnderwritingDatabaseAdapter
+            
+            self.db_adapter = UnderwritingDatabaseAdapter()
+            await self.db_adapter.initialize()
+            
+            # Inject the shared adapter into the processor
+            self.processor.db_adapter = self.db_adapter
+            
+            logger.info("db.worker_adapter_initialized")
+            
+        except Exception as e:
+            logger.bind(error=type(e).__name__, detail=str(e)[:200]).error("db.worker_adapter_failed")
+            raise
+    
     async def start(self):
         """Start the worker."""
         logger.bind(service="document-parser").info("worker.startup")
@@ -99,6 +117,9 @@ class DocumentWorker:
             queue=config.input_queue_name,
             concurrency=config.worker_concurrency
         ).info("worker.config")
+        
+        # Initialize shared database adapter (once per worker process)
+        await self._setup_database()
         
         self.running = True
         
@@ -324,14 +345,14 @@ class DocumentWorker:
             max_retries = 3  # Configure max retries
             
             # Check for permanent failures that shouldn't be retried
-            permanent_errors = ["no pages", "corrupted PDF", "NonRetryableError"]
-            is_permanent = any(error_phrase in str(e) for error_phrase in permanent_errors)
+            from core.exceptions import NonRetryableError
+            is_permanent = isinstance(e, NonRetryableError) or isinstance(e.__cause__, NonRetryableError)
             
             # Send to DLQ if max retries reached OR permanent error
             if receive_count >= max_retries or is_permanent:
                 # Send to DLQ
                 reason = "permanent_error" if is_permanent else "max_retries"
-                logger.warning(f"parse.dlq worker={worker_id} doc={doc_id or 'unknown'} attempts={receive_count} reason={reason}")
+                logger.info(f"parse.dlq worker={worker_id} doc={doc_id or 'unknown'} attempts={receive_count} reason={reason}")
                 
                 # Create QueueMessage for DLQ
                 from libs.forth_shared.models.queue import QueueMessage, MessageType
@@ -370,6 +391,7 @@ class DocumentWorker:
                 
                 # Delete from main queue to prevent blocking
                 await self._delete_message(queue_url, receipt_handle)
+                logger.info(f"parse.message_deleted worker={worker_id} doc={doc_id or 'unknown'} reason={reason}")
             else:
                 # Let message return to queue for retry (visibility timeout will expire)
                 logger.info(f"parse.retry worker={worker_id} doc={doc_id or 'unknown'} attempt={receive_count}/{max_retries}")
@@ -428,11 +450,27 @@ class DocumentWorker:
             graceful=True
         ).info("worker.shutdown_signal")
         self.running = False
+        
+        # Schedule async cleanup
+        if self.db_adapter:
+            asyncio.create_task(self._cleanup_database())
     
-    def stop(self):
-        """Stop the worker."""
+    async def _cleanup_database(self):
+        """Cleanup database resources."""
+        if self.db_adapter:
+            try:
+                await self.db_adapter.close()
+                logger.info("db.worker_adapter_closed")
+            except Exception as e:
+                logger.bind(error=str(e)).warning("db.worker_adapter_close_failed")
+    
+    async def stop(self):
+        """Stop the worker and cleanup resources."""
         logger.bind(service="document-parser").info("worker.stopping")
         self.running = False
+        
+        # Close shared database adapter
+        await self._cleanup_database()
 
 
 async def main():
@@ -457,7 +495,7 @@ async def main():
         logger.error(f"Worker failed: {e}")
         sys.exit(1)
     finally:
-        worker.stop()
+        await worker.stop()
 
 
 if __name__ == "__main__":

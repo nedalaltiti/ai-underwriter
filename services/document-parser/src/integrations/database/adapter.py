@@ -44,22 +44,31 @@ class UnderwritingDatabaseAdapter:
 
     
     async def initialize(self):
-        """Initialize database connection pool."""
+        """Initialize database connection pool with timeout."""
         try:
-            self.pool = await asyncpg.create_pool(
-                self.connection_string,
-                min_size=max(1, self.config.database_pool_size // 5),
-                max_size=self.config.database_pool_size,
-                max_inactive_connection_lifetime=300,
-                command_timeout=self.config.database_timeout,
-                server_settings={
-                    'application_name': f'{self.config.service_name}-{self.config.environment}',
-                    'timezone': 'UTC'
-                }
+            # Add timeout to pool creation (critical for production)
+            self.pool = await asyncio.wait_for(
+                asyncpg.create_pool(
+                    self.connection_string,
+                    min_size=max(1, self.config.database_pool_size // 5),
+                    max_size=self.config.database_pool_size,
+                    max_inactive_connection_lifetime=300,
+                    command_timeout=self.config.database_timeout,
+                    timeout=30,  # Connection timeout per connection attempt
+                    server_settings={
+                        'application_name': f'{self.config.service_name}-{self.config.environment}',
+                        'timezone': 'UTC'
+                    }
+                ),
+                timeout=60  # Total pool initialization timeout
             )
-            logger.bind(service="document-parser").info("db.pool_initialized")
+            logger.info("db.pool_initialized")
+        except asyncio.TimeoutError:
+            logger.error("db.pool_timeout timeout=60s")
+            raise
         except Exception as e:
-            logger.bind(service="document-parser", error=type(e).__name__).error("db.pool_failed")
+            error_detail = str(e)[:200]
+            logger.bind(error=type(e).__name__, detail=error_detail).error("db.pool_failed")
             raise
     
     async def close(self):
@@ -67,6 +76,48 @@ class UnderwritingDatabaseAdapter:
         if self.pool:
             await self.pool.close()
             logger.bind(service="document-parser").info("db.pool_closed")
+
+    def _enrich_payment_gateway_agreement(self, package: ExtractedDocumentPackage) -> None:
+        """Fill obvious missing PGA fields from other entities (best-effort)."""
+        pga = package.payment_gateway_agreement
+        if not pga:
+            return
+        # Prefer values from attorney_privileged_client_info then engagement_term
+        sources = [package.attorney_privileged_client_info, package.engagement_term]
+        for src in sources:
+            if not src:
+                continue
+            try:
+                if getattr(pga, 'client_address', None) is None:
+                    # Combine street/city/state/zip if available
+                    street = getattr(src, 'client_street', None) or getattr(src, 'client_address', None)
+                    city = getattr(src, 'client_city', None)
+                    state = getattr(src, 'client_state', None)
+                    zipcode = getattr(src, 'client_zipcode', None)
+                    if street and city and state and zipcode:
+                        pga.client_address = f"{street}, {city}, {state} {zipcode}"
+                    elif street:
+                        pga.client_address = street
+                if getattr(pga, 'client_city', None) is None and getattr(src, 'client_city', None):
+                    pga.client_city = src.client_city
+                if getattr(pga, 'client_state', None) is None and getattr(src, 'client_state', None):
+                    pga.client_state = src.client_state
+                if getattr(pga, 'client_zipcode', None) is None and getattr(src, 'client_zipcode', None):
+                    pga.client_zipcode = src.client_zipcode
+                if getattr(pga, 'client_phone', None) is None and getattr(src, 'client_home_phone', None):
+                    pga.client_phone = src.client_home_phone
+                if getattr(pga, 'client_email', None) is None and getattr(src, 'client_email', None):
+                    pga.client_email = src.client_email
+                if getattr(pga, 'client_first_name', None) is None and getattr(src, 'client_name', None):
+                    # Split name if possible
+                    parts = str(src.client_name).split()
+                    if len(parts) >= 1:
+                        pga.client_first_name = parts[0]
+                    if len(parts) >= 2:
+                        pga.client_last_name = parts[-1]
+            except Exception:
+                # Best-effort enrichment only
+                pass
     
     def _generate_composite_file_id(self, doc_id: str, contact_id: str) -> int:
         """Generate composite file_id from doc_id + contact_id hash for per-contact uniqueness."""
@@ -146,143 +197,243 @@ class UnderwritingDatabaseAdapter:
                     # Store core entities 
                     if package.engagement_term:
                         try:
+                            logger.bind(file_id=package.file_id).info("db.storing_engagement_term")
                             await self._store_engagement_term(connection, package.engagement_term)
                             stored_count += 1
+                            logger.bind(file_id=package.file_id).info("db.engagement_term_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="engagement_term", error=type(e).__name__).error("db.table_failed")
+                            error_msg = str(e)[:300]  # Get full error detail
+                            logger.bind(file_id=package.file_id, table="engagement_term", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                         
                     if package.power_of_attorney:
                         try:
+                            logger.bind(file_id=package.file_id).info("db.storing_power_of_attorney")
                             await self._store_power_of_attorney(connection, package.power_of_attorney)
                             stored_count += 1
+                            logger.bind(file_id=package.file_id).info("db.power_of_attorney_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="power_of_attorney", error=type(e).__name__).error("db.table_failed")
+                            error_msg = str(e)[:300]
+                            logger.bind(file_id=package.file_id, table="power_of_attorney", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                         
                     if package.payment_gateway_agreement:
                         try:
+                            # Enrich missing fields from other entities before storing
+                            try:
+                                self._enrich_payment_gateway_agreement(package)
+                            except Exception as enrich_error:
+                                logger.bind(file_id=package.file_id, error=str(enrich_error)[:200]).debug("db.payment_gateway_enrich_skipped")
+                            logger.bind(file_id=package.file_id).info("db.storing_payment_gateway_agreement")
                             await self._store_payment_gateway_agreement(connection, package.payment_gateway_agreement)
                             stored_count += 1
+                            logger.bind(file_id=package.file_id).info("db.payment_gateway_agreement_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="payment_gateway_agreement", error=type(e).__name__).error("db.table_failed")
+                            error_msg = str(e)[:300]
+                            logger.bind(file_id=package.file_id, table="payment_gateway_agreement", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                         
                     if package.financial_analysis:
                         try:
+                            logger.bind(file_id=package.file_id).info("db.storing_financial_analysis")
                             await self._store_financial_analysis(connection, package.financial_analysis)
                             stored_count += 1
+                            logger.bind(file_id=package.file_id).info("db.financial_analysis_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="financial_analysis", error=type(e).__name__).error("db.table_failed")
+                            error_msg = str(e)[:300]
+                            logger.bind(file_id=package.file_id, table="financial_analysis", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                     
                     if package.fcra_consent:
                         try:
+                            logger.bind(file_id=package.file_id).info("db.storing_fcra_consent")
                             await self._store_fcra_consent(connection, package.fcra_consent)
                             stored_count += 1
+                            logger.bind(file_id=package.file_id).info("db.fcra_consent_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="fcra_consent", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            error_msg = str(e)[:300]
+                            logger.bind(file_id=package.file_id, table="fcra_consent", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                         
                     if package.disclosure:
                         try:
+                            logger.bind(file_id=package.file_id).info("db.storing_disclosure")
                             await self._store_disclosure(connection, package.disclosure)
                             stored_count += 1
+                            logger.bind(file_id=package.file_id).info("db.disclosure_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="disclosure", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            error_msg = str(e)[:300]
+                            logger.bind(file_id=package.file_id, table="disclosure", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                         
                     if package.high_interest_disclosure:
                         try:
+                            logger.bind(file_id=package.file_id).info("db.storing_high_interest_disclosure")
                             await self._store_high_interest_disclosure(connection, package.high_interest_disclosure)
                             stored_count += 1
+                            logger.bind(file_id=package.file_id).info("db.high_interest_disclosure_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="high_interest_disclosure", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            error_msg = str(e)[:300]
+                            logger.bind(file_id=package.file_id, table="high_interest_disclosure", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                         
                     if package.program_disclosure:
                         try:
+                            logger.bind(file_id=package.file_id).info("db.storing_program_disclosure")
                             await self._store_program_disclosure(connection, package.program_disclosure)
                             stored_count += 1
+                            logger.bind(file_id=package.file_id).info("db.program_disclosure_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="program_disclosure", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            error_msg = str(e)[:300]
+                            logger.bind(file_id=package.file_id, table="program_disclosure", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                         
                     if package.cancellation_notice:
                         try:
+                            logger.bind(file_id=package.file_id).info("db.storing_cancellation_notice")
                             await self._store_cancellation_notice(connection, package.cancellation_notice)
                             stored_count += 1
+                            logger.bind(file_id=package.file_id).info("db.cancellation_notice_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="cancellation_notice", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            error_msg = str(e)[:300]
+                            logger.bind(file_id=package.file_id, table="cancellation_notice", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                         
                     if package.payment_bank_info:
                         try:
-                            logger.bind(file_id=package.file_id, bank_name=getattr(package.payment_bank_info, 'bank_name', 'unknown')).debug("db.storing_payment_bank_info")
+                            logger.bind(file_id=package.file_id).info("db.storing_payment_bank_info")
                             await self._store_payment_bank_info(connection, package.payment_bank_info)
                             stored_count += 1
-                            logger.bind(file_id=package.file_id).debug("db.payment_bank_info_stored")
+                            logger.bind(file_id=package.file_id).info("db.payment_bank_info_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="payment_bank_info", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            error_msg = str(e)[:300]
+                            logger.bind(file_id=package.file_id, table="payment_bank_info", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                             
                         
                     if package.legal_plan_agreement:
                         try:
+                            logger.bind(file_id=package.file_id).info("db.storing_legal_plan_agreement")
                             await self._store_legal_plan_agreement(connection, package.legal_plan_agreement)
                             stored_count += 1
+                            logger.bind(file_id=package.file_id).info("db.legal_plan_agreement_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="legal_plan_agreement", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            error_msg = str(e)[:300]
+                            logger.bind(file_id=package.file_id, table="legal_plan_agreement", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                         
                     if package.attorney_privileged_client_info:
                         try:
+                            logger.bind(file_id=package.file_id).info("db.storing_attorney_privileged_client_info")
                             await self._store_attorney_privileged_client_info(connection, package.attorney_privileged_client_info)
                             stored_count += 1
+                            logger.bind(file_id=package.file_id).info("db.attorney_privileged_client_info_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="attorney_privileged_client_info", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            error_msg = str(e)[:300]
+                            logger.bind(file_id=package.file_id, table="attorney_privileged_client_info", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                         
                     if package.clixsign_sender:
                         try:
+                            logger.bind(file_id=package.file_id).info("db.storing_clixsign_sender")
                             await self._store_clixsign_sender(connection, package.clixsign_sender)
                             stored_count += 1
+                            logger.bind(file_id=package.file_id).info("db.clixsign_sender_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="clixsign_sender", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            error_msg = str(e)[:300]
+                            logger.bind(file_id=package.file_id, table="clixsign_sender", error=type(e).__name__, detail=error_msg).error("db.table_failed")
                             raise
                     
                     # Store list entities with UUID-based IDs
                     if package.debt_schedule:
                         try:
-                            logger.bind(file_id=package.file_id, count=len(package.debt_schedule)).debug("db.storing_debt_schedule")
-                            for debt in package.debt_schedule:
+                            # Verify transaction health before starting
+                            await connection.fetchval("SELECT 1")
+                            logger.bind(file_id=package.file_id, count=len(package.debt_schedule)).info("db.storing_debt_schedule")
+                            for idx, debt in enumerate(package.debt_schedule, 1):
+                                logger.bind(file_id=package.file_id, item=idx).debug("db.debt_schedule_item")
                                 await self._store_debt_schedule(connection, debt)
                             stored_count += len(package.debt_schedule)
-                            logger.bind(file_id=package.file_id).debug("db.debt_schedule_complete")
+                            logger.bind(file_id=package.file_id).info("db.debt_schedule_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="debt_schedule", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            error_detail = str(e)[:500]
+                            logger.bind(file_id=package.file_id, table="debt_schedule", error=type(e).__name__, detail=error_detail).error("db.table_failed")
                             raise
+                    
+                    # Critical checkpoint: Verify transaction is still valid
+                    try:
+                        await connection.fetchval("SELECT 1")
+                        logger.bind(file_id=package.file_id).debug("db.checkpoint_after_debt_schedule")
+                    except Exception as checkpoint_error:
+                        logger.bind(
+                            file_id=package.file_id,
+                            location="after_debt_schedule",
+                            error=type(checkpoint_error).__name__,
+                            detail=str(checkpoint_error)[:300]
+                        ).error("db.transaction_aborted_checkpoint")
+                        raise
                         
                     if package.payment_service_fees:
                         try:
-                            logger.bind(file_id=package.file_id, count=len(package.payment_service_fees)).debug("db.storing_service_fees")
-                            for fee in package.payment_service_fees:
-                                await self._store_payment_service_fees(connection, fee)
+                            logger.bind(file_id=package.file_id, count=len(package.payment_service_fees)).info("db.storing_service_fees")
+                            for idx, fee in enumerate(package.payment_service_fees, 1):
+                                try:
+                                    logger.bind(file_id=package.file_id, item=idx, service_name=fee.service_name, service_type=fee.service_type).debug("db.service_fee_item")
+                                    await self._store_payment_service_fees(connection, fee)
+                                except Exception as item_error:
+                                    error_msg = str(item_error)[:500]
+                                    logger.bind(
+                                        file_id=package.file_id,
+                                        item=idx,
+                                        service_name=getattr(fee, 'service_name', None),
+                                        service_type=getattr(fee, 'service_type', None),
+                                        error=type(item_error).__name__,
+                                        detail=error_msg
+                                    ).error("db.service_fee_item_failed")
+                                    raise
                             stored_count += len(package.payment_service_fees)
-                            logger.bind(file_id=package.file_id).debug("db.service_fees_complete")
+                            logger.bind(file_id=package.file_id).info("db.service_fees_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="payment_service_fees", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            error_detail = str(e)[:500]
+                            logger.bind(file_id=package.file_id, table="payment_service_fees", error=type(e).__name__, detail=error_detail).error("db.table_failed")
                             raise
+
+                    # Checkpoint after service fees
+                    try:
+                        await connection.fetchval("SELECT 1")
+                        logger.bind(file_id=package.file_id).debug("db.checkpoint_after_service_fees")
+                    except Exception as checkpoint_error:
+                        logger.bind(
+                            file_id=package.file_id,
+                            location="after_service_fees",
+                            error=type(checkpoint_error).__name__,
+                            detail=str(checkpoint_error)[:300]
+                        ).error("db.transaction_aborted_checkpoint")
+                        raise
                         
                     if package.payment_deposit_schedule:
                         try:
-                            logger.bind(file_id=package.file_id, count=len(package.payment_deposit_schedule)).debug("db.storing_deposit_schedule")
-                            for deposit in package.payment_deposit_schedule:
-                                await self._store_payment_deposit_schedule(connection, deposit)
+                            logger.bind(file_id=package.file_id, count=len(package.payment_deposit_schedule)).info("db.storing_deposit_schedule")
+                            for idx, deposit in enumerate(package.payment_deposit_schedule, 1):
+                                try:
+                                    logger.bind(file_id=package.file_id, item=idx, payment_no=deposit.payment_no).debug("db.deposit_schedule_item")
+                                    await self._store_payment_deposit_schedule(connection, deposit)
+                                except Exception as item_error:
+                                    # Log which specific item failed
+                                    error_msg = str(item_error)[:500]
+                                    logger.bind(
+                                        file_id=package.file_id, 
+                                        item=idx,
+                                        payment_no=deposit.payment_no,
+                                        error=type(item_error).__name__,
+                                        detail=error_msg
+                                    ).error("db.deposit_item_failed")
+                                    raise
                             stored_count += len(package.payment_deposit_schedule)
-                            logger.bind(file_id=package.file_id).debug("db.deposit_schedule_complete")
+                            logger.bind(file_id=package.file_id).info("db.deposit_schedule_complete")
                         except Exception as e:
-                            logger.bind(file_id=package.file_id, table="payment_deposit_schedule", error=type(e).__name__, detail=str(e)).error("db.table_failed")
+                            error_detail = str(e)[:500]
+                            logger.bind(file_id=package.file_id, table="payment_deposit_schedule", error=type(e).__name__, detail=error_detail).error("db.table_failed")
                             raise
                         
                     if package.clixsign_signers:
@@ -513,11 +664,21 @@ class UnderwritingDatabaseAdapter:
     
     async def _store_debt_schedule(self, connection, entity: DebtSchedule):
         """Store debt schedule entry with duplicate prevention."""
-        # First, check if this exact debt already exists
-        existing_id = await connection.fetchval("""
-            SELECT id FROM underwriting.debt_schedule 
-            WHERE file_id = $1 AND creditor_name = $2 AND name_on_account = $3 AND account_number = $4
-        """, entity.file_id, entity.creditor_name, entity.name_on_account, entity.account_number)
+        try:
+            # First, check if this exact debt already exists
+            existing_id = await connection.fetchval("""
+                SELECT id FROM underwriting.debt_schedule 
+                WHERE file_id = $1 AND creditor_name = $2 AND name_on_account = $3 AND account_number = $4
+            """, entity.file_id, entity.creditor_name, entity.name_on_account, entity.account_number)
+        except Exception as select_error:
+            # SELECT query failed - log and re-raise
+            logger.bind(
+                file_id=entity.file_id,
+                creditor=entity.creditor_name,
+                error=type(select_error).__name__,
+                detail=str(select_error)[:300]
+            ).error("db.debt_select_failed")
+            raise
         
         if existing_id:
             # Update existing record with latest data
@@ -559,12 +720,21 @@ class UnderwritingDatabaseAdapter:
                 creditor=entity.creditor_name
             ).debug("db.debt_inserted")
             
-        except asyncpg.UniqueViolationError:
+        except asyncpg.UniqueViolationError as e:
             # Race condition - another process inserted the same debt
             logger.bind(
                 file_id=entity.file_id,
                 creditor=entity.creditor_name
             ).debug("db.debt_race_condition")
+        except Exception as insert_error:
+            # Any other database error during INSERT - log and re-raise
+            logger.bind(
+                file_id=entity.file_id,
+                creditor=entity.creditor_name,
+                error=type(insert_error).__name__,
+                detail=str(insert_error)[:300]
+            ).error("db.debt_insert_failed")
+            raise
     
     async def _store_payment_gateway_agreement(self, connection, entity: PaymentGatewayAgreement):
         """Store payment gateway agreement data."""
@@ -743,22 +913,30 @@ class UnderwritingDatabaseAdapter:
     
     async def _store_payment_service_fees(self, connection, entity: PaymentGatewayServiceFees):
         """Store payment gateway service fees."""
-        # Use INSERT with error handling since constraint may not exist
+        # Use per-item savepoint so a conflict doesn't abort the outer transaction
         try:
-            await connection.execute("""
-                INSERT INTO underwriting.payment_gateway_service_fees 
-                (file_id, service_type, service_name, service_amount, updated_at)
-                VALUES ($1, $2, $3, $4, $5)
-            """, entity.file_id, entity.service_type, entity.service_name,
-                entity.service_amount, datetime.now())
+            async with connection.transaction():
+                await connection.execute("""
+                    INSERT INTO underwriting.payment_gateway_service_fees 
+                    (file_id, service_type, service_name, service_amount, updated_at)
+                    VALUES ($1, $2, $3, $4, $5)
+                """, entity.file_id, entity.service_type, entity.service_name,
+                    entity.service_amount, datetime.now())
+                return
         except asyncpg.UniqueViolationError:
-            # If duplicate, update the existing record
-            await connection.execute("""
-                UPDATE underwriting.payment_gateway_service_fees 
-                SET service_amount = $4, updated_at = $5
-                WHERE file_id = $1 AND service_type = $2 AND service_name = $3
-            """, entity.file_id, entity.service_type, entity.service_name,
-                entity.service_amount, datetime.now())
+            # Savepoint rolled back; fall through to update in outer tx
+            pass
+        except Exception as e:
+            # Bubble up other errors
+            raise
+
+        # Conflict path: perform UPDATE in the outer transaction
+        await connection.execute("""
+            UPDATE underwriting.payment_gateway_service_fees 
+            SET service_amount = $4, updated_at = $5
+            WHERE file_id = $1 AND service_type = $2 AND service_name = $3
+        """, entity.file_id, entity.service_type, entity.service_name,
+            entity.service_amount, datetime.now())
     
     async def _store_payment_bank_info(self, connection, entity: PaymentGatewayBankInfo):
         """Store payment gateway bank info."""
@@ -813,22 +991,27 @@ class UnderwritingDatabaseAdapter:
     
     async def _store_payment_deposit_schedule(self, connection, entity: PaymentGatewayDepositSchedule):
         """Store payment gateway deposit schedule."""
-        # Use INSERT with error handling since constraint may not exist
+        # Use per-item savepoint for safe upsert without aborting outer transaction
         try:
-            await connection.execute("""
-                INSERT INTO underwriting.payment_gateway_deposit_schedule 
-                (file_id, payment_no, process_date, amount, updated_at)
-                VALUES ($1, $2, $3, $4, $5)
-            """, entity.file_id, entity.payment_no, entity.process_date,
-                entity.amount, datetime.now())
+            async with connection.transaction():
+                await connection.execute("""
+                    INSERT INTO underwriting.payment_gateway_deposit_schedule 
+                    (file_id, payment_no, process_date, amount, updated_at)
+                    VALUES ($1, $2, $3, $4, $5)
+                """, entity.file_id, entity.payment_no, entity.process_date,
+                    entity.amount, datetime.now())
+                return
         except asyncpg.UniqueViolationError:
-            # If duplicate, update the existing record
-            await connection.execute("""
-                UPDATE underwriting.payment_gateway_deposit_schedule 
-                SET process_date = $3, amount = $4, updated_at = $5
-                WHERE file_id = $1 AND payment_no = $2
-            """, entity.file_id, entity.payment_no, entity.process_date,
-                entity.amount, datetime.now())
+            pass
+        except Exception as e:
+            raise
+
+        await connection.execute("""
+            UPDATE underwriting.payment_gateway_deposit_schedule 
+            SET process_date = $3, amount = $4, updated_at = $5
+            WHERE file_id = $1 AND payment_no = $2
+        """, entity.file_id, entity.payment_no, entity.process_date,
+            entity.amount, datetime.now())
     
     async def _store_legal_plan_agreement(self, connection, entity: LegalPlanAgreement):
         """Store legal plan agreement data."""

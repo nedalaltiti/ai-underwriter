@@ -42,6 +42,11 @@ class GeminiRateLimitError(GeminiAPIError):
     pass
 
 
+class GeminiMaxTokensError(GeminiAPIError):
+    """Gemini API max tokens exceeded error."""
+    pass
+
+
 class DocumentDownloadError(DocumentProcessingError):
     """Document download errors."""
     pass

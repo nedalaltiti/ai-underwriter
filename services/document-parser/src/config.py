@@ -11,11 +11,13 @@ class GeminiConfig(BaseModel):
     project_id: str = Field(default="gemini-deployment", env="PARSER_GEMINI_PROJECT_ID")
     region: str = Field(default="us-central1", env="PARSER_GEMINI_REGION")
     model_name: str = Field(default="gemini-2.0-flash", env="PARSER_GEMINI_MODEL")
+    fallback_model_name: str = Field(default="gemini-2.0-flash-exp", env="PARSER_GEMINI_FALLBACK_MODEL")
     temperature: float = Field(default=0.1, ge=0.0, le=2.0, env="PARSER_GEMINI_TEMPERATURE")
     top_k: int = Field(default=40, ge=1, le=100, env="PARSER_GEMINI_TOP_K")
     top_p: float = Field(default=0.95, ge=0.0, le=1.0, env="PARSER_GEMINI_TOP_P")
     max_output_tokens: int = Field(default=8192, ge=1, env="PARSER_GEMINI_MAX_TOKENS")
     timeout: int = Field(default=300, gt=0, env="PARSER_GEMINI_TIMEOUT")
+    enable_fallback_for_large_docs: bool = Field(default=True, env="PARSER_GEMINI_ENABLE_FALLBACK")
 
 
 class ServiceConfig(BaseSettings):
