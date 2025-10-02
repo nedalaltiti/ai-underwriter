@@ -177,9 +177,22 @@ class SQSAdapter(QueueAdapter):
 
             params['MessageGroupId'] = message_group_id
 
-            # Deduplication: prefer correlation_id to avoid duplicates within a batch; fallback to group id
-            base = str(correlation_id or message_group_id)
-            params['MessageDeduplicationId'] = base[:128]  # AWS limit is 128 chars
+            # Deduplication: must be unique per document to avoid dropping docs in the same batch
+            # Use correlation_id + doc_id (or generate UUID fallback)
+            doc_id = None
+            try:
+                doc_id = str(message.data.get('doc_id')) if isinstance(message.data, dict) else None
+            except Exception:
+                doc_id = None
+            
+            if doc_id:
+                dedup_id = f"{message_group_id}-{doc_id}"
+            else:
+                # Fallback to unique UUID to ensure no collision
+                import uuid
+                dedup_id = f"{message_group_id}-{uuid.uuid4()}"
+            
+            params['MessageDeduplicationId'] = dedup_id[:128]  # AWS limit is 128 chars
 
             # Enrich attributes for observability
             params['MessageAttributes'].update({
@@ -187,7 +200,7 @@ class SQSAdapter(QueueAdapter):
                 'message_dedup_id': {'StringValue': params['MessageDeduplicationId'], 'DataType': 'String'},
             })
 
-            logger.debug(f"📤 SQS FIFO group={message_group_id} → {self.queue_name}")
+            logger.debug(f"📤 SQS FIFO group={message_group_id} dedup={doc_id or 'uuid'} → {self.queue_name}")
             
         response = await self._client.send_message(**params)
         return response['MessageId']
