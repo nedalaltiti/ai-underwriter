@@ -170,35 +170,16 @@ class SQSAdapter(QueueAdapter):
         
         # Add FIFO queue parameters if the queue name ends with .fifo
         if self.queue_name.endswith('.fifo'):
-            # Extract doc_id for grouping
-            doc_id = None
-            try:
-                doc_id = str(message.data.get('doc_id')) if isinstance(message.data, dict) else None
-            except Exception:
-                doc_id = None
-            
-            # Group by document ID to allow parallel processing of different documents
-            # Fall back to contact_id if no doc_id available
-            if doc_id:
-                message_group_id = f"{message.contact_id}-{doc_id}"
-            else:
-                message_group_id = str(message.contact_id)
-            
+            # Serialize all documents from the same webhook submission/contact
+            # Use correlation_id (webhook batch) if present; otherwise fallback to contact_id
+            correlation_id = getattr(message, 'correlation_id', None)
+            message_group_id = str(correlation_id or message.contact_id)
+
             params['MessageGroupId'] = message_group_id
 
-            # Prefer contact_id-doc_id-correlation_id when available
-            correlation_id = getattr(message, 'correlation_id', None)
-            if doc_id:
-                base = f"{message.contact_id}-{doc_id}"
-                if correlation_id:
-                    dedup_id = f"{base}-{correlation_id}"
-                else:
-                    dedup_id = base
-            else:
-                base = correlation_id or message_group_id
-                dedup_id = f"{base}"
-            
-            params['MessageDeduplicationId'] = dedup_id[:128]  # AWS limit is 128 chars
+            # Deduplication: prefer correlation_id to avoid duplicates within a batch; fallback to group id
+            base = str(correlation_id or message_group_id)
+            params['MessageDeduplicationId'] = base[:128]  # AWS limit is 128 chars
 
             # Enrich attributes for observability
             params['MessageAttributes'].update({
@@ -206,7 +187,7 @@ class SQSAdapter(QueueAdapter):
                 'message_dedup_id': {'StringValue': params['MessageDeduplicationId'], 'DataType': 'String'},
             })
 
-            logger.debug(f"📤 SQS: {doc_id} → {self.queue_name}")
+            logger.debug(f"📤 SQS FIFO group={message_group_id} → {self.queue_name}")
             
         response = await self._client.send_message(**params)
         return response['MessageId']

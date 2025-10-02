@@ -497,7 +497,9 @@ class DownloadWorker:
         """Queue document for parsing."""
         # Skip queuing if output queue is not configured
         if not self.output_queue:
-            logger.debug("No output queue configured, skipping parsing queue")
+            logger.warning(
+                f"No output queue configured (DOCUMENT_UW_DOWNLOADED_DOCS_QUEUE). Skipping parse enqueue for contact={task.contact_id} doc={task.doc_id}"
+            )
             return
             
         try:
