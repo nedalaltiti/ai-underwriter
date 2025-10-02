@@ -47,11 +47,13 @@ class WebhookProcessor:
         
         try:
             # Initialize queue adapter
+            logger.info(f"Initializing SQS adapter for queue: {self.config.uw_uploaded_docs_queue}")
             self.queue_adapter = SQSAdapter(
                 queue_name=self.config.uw_uploaded_docs_queue,
                 region=self.config.aws_region,
                 endpoint_url=self.config.get_aws_endpoint_url()
             )
+            logger.info(f"✅ SQS adapter initialized successfully for queue: {self.config.uw_uploaded_docs_queue}")
             
             # Initialize security components
             if self.config.rate_limit_enabled:
@@ -315,8 +317,13 @@ class WebhookProcessor:
                     }
                 )
                 
-                message_id = await self.queue_adapter.send_message(message)
-                message_ids.append(message_id)
+                try:
+                    message_id = await self.queue_adapter.send_message(message)
+                    message_ids.append(message_id)
+                    webhook_logger.info(f"queue.message_sent doc={doc_id} message_id={message_id} queue={self.config.uw_uploaded_docs_queue}")
+                except Exception as send_error:
+                    webhook_logger.error(f"queue.send_failed doc={doc_id} error={str(send_error)} queue={self.config.uw_uploaded_docs_queue}")
+                    raise
                         
         else:
             # For DOCUMENT_UPLOADED: process single document (existing behavior)
@@ -336,8 +343,13 @@ class WebhookProcessor:
                 }
             )
             
-            message_id = await self.queue_adapter.send_message(message)
-            message_ids.append(message_id)
+            try:
+                message_id = await self.queue_adapter.send_message(message)
+                message_ids.append(message_id)
+                webhook_logger.info(f"queue.message_sent doc={payload.doc_id} message_id={message_id} queue={self.config.uw_uploaded_docs_queue}")
+            except Exception as send_error:
+                webhook_logger.error(f"queue.send_failed doc={payload.doc_id} error={str(send_error)} queue={self.config.uw_uploaded_docs_queue}")
+                raise
             
             webhook_logger.bind(
                 webhook_type=payload.webhook_type.value,

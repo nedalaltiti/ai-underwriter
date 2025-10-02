@@ -209,15 +209,15 @@ class DocumentWorker:
                         )
                         processed_count += 1
                         
-                        # After processing, aggressively check for more messages
-                        # This is critical for FIFO queues with MessageGroupId
+                        # After processing, immediately check for more messages
+                        # With contact_id as MessageGroupId, we should get all docs for the same contact
                         if not messages:  # If we've processed all current messages
-                            # Small delay to let SQS release next message in group
-                            await asyncio.sleep(0.5)
+                            # Very short delay to ensure message deletion is processed
+                            await asyncio.sleep(0.1)
                             
-                            # Try to get more messages with a short wait time
-                            # This helps catch messages from the same FIFO group
-                            more_messages = await self._receive_messages(queue_url, wait_time=2)
+                            # Try to get more messages immediately
+                            # Since we use contact_id as MessageGroupId, all docs for same contact should be available
+                            more_messages = await self._receive_messages(queue_url, wait_time=1)
                             if more_messages:
                                 messages.extend(more_messages)
                                 logger.bind(
@@ -225,19 +225,7 @@ class DocumentWorker:
                                     worker_id=worker_id,
                                     additional_count=len(more_messages),
                                     total_processed=processed_count
-                                ).info("worker.continuing_group_processing")
-                            else:
-                                # One more quick check with no wait
-                                await asyncio.sleep(0.2)
-                                final_check = await self._receive_messages(queue_url, wait_time=0)
-                                if final_check:
-                                    messages.extend(final_check)
-                                    logger.bind(
-                                        service="document-parser",
-                                        worker_id=worker_id,
-                                        additional_count=len(final_check),
-                                        total_processed=processed_count
-                                    ).info("worker.final_check_found_messages")
+                                ).info("worker.continuing_contact_processing")
                     except asyncio.TimeoutError:
                         # Extract contact/doc info for better logging
                         contact_id = "unknown"

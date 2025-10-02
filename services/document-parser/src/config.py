@@ -47,7 +47,7 @@ class ServiceConfig(BaseSettings):
     output_queue_name: Optional[str] = Field(None, env="PARSER_OUTPUT_QUEUE_NAME")
     sqs_wait_time: int = Field(default=20, ge=0, le=20, env="PARSER_SQS_WAIT_TIME")
     sqs_max_messages: int = Field(default=10, ge=1, le=10, env="PARSER_SQS_MAX_MESSAGES")
-    sqs_visibility_timeout: int = Field(default=600, ge=60, le=43200, env="PARSER_SQS_VISIBILITY_TIMEOUT")  # 10 minutes 
+    sqs_visibility_timeout: int = Field(default=1200, ge=60, le=43200, env="PARSER_SQS_VISIBILITY_TIMEOUT")  # 20 minutes 
     
     # S3 Configuration
     s3_bucket_name: str = Field(default="uw-contact-files-dev-s3-us-west-1", env="PARSER_S3_BUCKET_NAME")
@@ -67,7 +67,7 @@ class ServiceConfig(BaseSettings):
     # Processing Configuration
     max_retries: int = Field(default=3, ge=1, le=10, env="PARSER_MAX_RETRIES")
     retry_delay: int = Field(default=60, ge=1, le=300, env="PARSER_RETRY_DELAY")
-    processing_timeout: int = Field(default=600, gt=0, le=1800, env="PARSER_PROCESSING_TIMEOUT")
+    processing_timeout: int = Field(default=1200, gt=0, le=1800, env="PARSER_PROCESSING_TIMEOUT")  # 20 minutes
     max_file_size_mb: int = Field(default=100, ge=1, le=500, env="PARSER_MAX_FILE_SIZE_MB")
     
     # Security Configuration
@@ -146,7 +146,7 @@ def create_config() -> ServiceConfig:
     database_url = os.getenv('PARSER_DATABASE_URL')
     gemini_service_account = os.getenv('PARSER_GEMINI_SERVICE_ACCOUNT')
     worker_concurrency = int(os.getenv('PARSER_WORKER_CONCURRENCY', '1'))
-    processing_timeout = int(os.getenv('PARSER_PROCESSING_TIMEOUT', '600'))
+    processing_timeout = int(os.getenv('PARSER_PROCESSING_TIMEOUT', '1200'))
     
     if not database_url:
         raise ValueError("PARSER_DATABASE_URL environment variable is required")
