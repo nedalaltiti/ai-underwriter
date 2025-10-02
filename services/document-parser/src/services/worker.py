@@ -150,6 +150,8 @@ class DocumentWorker:
             queue=config.input_queue_name
         ).info("worker.ready")
         
+        consecutive_empty_receives = 0
+        
         while self.running:
             try:
                 # CRITICAL: Yield control to event loop (allows health checks to run)
@@ -165,8 +167,32 @@ class DocumentWorker:
                 messages = await self._receive_messages(queue_url)
                 
                 if not messages:
-                    await asyncio.sleep(5)  # Use longer sleep when no messages (was 1)
+                    consecutive_empty_receives += 1
+                    # Log when no messages received (helps debug FIFO issues)
+                    if consecutive_empty_receives <= 3:
+                        logger.bind(
+                            service="document-parser",
+                            worker_id=worker_id,
+                            attempt=consecutive_empty_receives
+                        ).debug("worker.no_messages_retry")
+                        # Short sleep for first few attempts (in case more messages in same group)
+                        await asyncio.sleep(0.5)
+                    else:
+                        logger.bind(
+                            service="document-parser",
+                            worker_id=worker_id
+                        ).debug("worker.no_messages")
+                        await asyncio.sleep(5)  # Longer sleep when truly no messages
                     continue
+                
+                # Reset counter when messages are received
+                consecutive_empty_receives = 0
+                
+                logger.bind(
+                    service="document-parser",
+                    worker_id=worker_id,
+                    message_count=len(messages)
+                ).info("worker.messages_received")
                 
                 # Process each message
                 for message in messages:
@@ -353,6 +379,9 @@ class DocumentWorker:
                 doc_id=task.doc_id,
                 status=result.status.value,
             ).info("parse.completed")
+            
+            # Small delay after processing to ensure FIFO queue releases next message in group
+            await asyncio.sleep(0.1)
             
         except json.JSONDecodeError as e:
             logger.error(f"parse.invalid_json worker={worker_id} error={str(e)}")

@@ -414,12 +414,19 @@ class UnderwritingDatabaseAdapter:
                     if package.payment_deposit_schedule:
                         try:
                             logger.bind(file_id=package.file_id, count=len(package.payment_deposit_schedule)).info("db.storing_deposit_schedule")
+                            stored_deposits = 0
                             for idx, deposit in enumerate(package.payment_deposit_schedule, 1):
                                 try:
+                                    # Skip items with null payment_no to avoid NOT NULL constraint violations
+                                    if deposit.payment_no is None:
+                                        logger.bind(file_id=package.file_id, item=idx).warning("db.deposit_item_skipped reason=null_payment_no")
+                                        continue
+                                    
                                     logger.bind(file_id=package.file_id, item=idx, payment_no=deposit.payment_no).debug("db.deposit_schedule_item")
                                     await self._store_payment_deposit_schedule(connection, deposit)
+                                    stored_deposits += 1
                                 except Exception as item_error:
-                                    # Log which specific item failed
+                                    # Log which specific item failed but don't abort entire transaction
                                     error_msg = str(item_error)[:500]
                                     logger.bind(
                                         file_id=package.file_id, 
@@ -428,9 +435,9 @@ class UnderwritingDatabaseAdapter:
                                         error=type(item_error).__name__,
                                         detail=error_msg
                                     ).error("db.deposit_item_failed")
-                                    raise
-                            stored_count += len(package.payment_deposit_schedule)
-                            logger.bind(file_id=package.file_id).info("db.deposit_schedule_complete")
+                                    # Continue processing other items instead of raising
+                            stored_count += stored_deposits
+                            logger.bind(file_id=package.file_id, stored=stored_deposits, total=len(package.payment_deposit_schedule)).info("db.deposit_schedule_complete")
                         except Exception as e:
                             error_detail = str(e)[:500]
                             logger.bind(file_id=package.file_id, table="payment_deposit_schedule", error=type(e).__name__, detail=error_detail).error("db.table_failed")
