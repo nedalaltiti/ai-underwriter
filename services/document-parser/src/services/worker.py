@@ -194,8 +194,10 @@ class DocumentWorker:
                     message_count=len(messages)
                 ).info("worker.messages_received")
                 
-                # Process each message
-                for message in messages:
+                # Process all messages and keep checking for more from the same group
+                processed_count = 0
+                while messages:
+                    message = messages.pop(0)  # Take first message
                     try:
                         # CRITICAL: Yield control between messages
                         await asyncio.sleep(0)
@@ -205,6 +207,37 @@ class DocumentWorker:
                             self._process_message(message, queue_url, worker_id),
                             timeout=config.processing_timeout  # Enforce processing timeout
                         )
+                        processed_count += 1
+                        
+                        # After processing, aggressively check for more messages
+                        # This is critical for FIFO queues with MessageGroupId
+                        if not messages:  # If we've processed all current messages
+                            # Small delay to let SQS release next message in group
+                            await asyncio.sleep(0.5)
+                            
+                            # Try to get more messages with a short wait time
+                            # This helps catch messages from the same FIFO group
+                            more_messages = await self._receive_messages(queue_url, wait_time=2)
+                            if more_messages:
+                                messages.extend(more_messages)
+                                logger.bind(
+                                    service="document-parser",
+                                    worker_id=worker_id,
+                                    additional_count=len(more_messages),
+                                    total_processed=processed_count
+                                ).info("worker.continuing_group_processing")
+                            else:
+                                # One more quick check with no wait
+                                await asyncio.sleep(0.2)
+                                final_check = await self._receive_messages(queue_url, wait_time=0)
+                                if final_check:
+                                    messages.extend(final_check)
+                                    logger.bind(
+                                        service="document-parser",
+                                        worker_id=worker_id,
+                                        additional_count=len(final_check),
+                                        total_processed=processed_count
+                                    ).info("worker.final_check_found_messages")
                     except asyncio.TimeoutError:
                         # Extract contact/doc info for better logging
                         contact_id = "unknown"
@@ -289,15 +322,20 @@ class DocumentWorker:
                 logger.error(f"Failed to get queue URL ({error_code}): {e}")
             return None
     
-    async def _receive_messages(self, queue_url: str) -> list:
-        """Receive messages from SQS queue."""
+    async def _receive_messages(self, queue_url: str, wait_time: int = None) -> list:
+        """Receive messages from SQS queue.
+        
+        Args:
+            queue_url: The SQS queue URL
+            wait_time: Override wait time (useful for quick checks after processing)
+        """
         try:
             # Use asyncio.to_thread to prevent blocking event loop
             response = await asyncio.to_thread(
                 self.sqs_client.receive_message,
                 QueueUrl=queue_url,
                 MaxNumberOfMessages=config.sqs_max_messages,
-                WaitTimeSeconds=config.sqs_wait_time,
+                WaitTimeSeconds=wait_time if wait_time is not None else config.sqs_wait_time,
                 VisibilityTimeout=config.sqs_visibility_timeout,
                 AttributeNames=['All']  # Include message attributes for retry count
             )
@@ -309,6 +347,20 @@ class DocumentWorker:
     async def _process_message(self, message: Dict[str, Any], queue_url: str, worker_id: str):
         """Process a single SQS message."""
         receipt_handle = message['ReceiptHandle']
+        
+        # Log FIFO message attributes for debugging
+        attributes = message.get('Attributes', {})
+        message_group_id = attributes.get('MessageGroupId', 'unknown')
+        message_dedup_id = attributes.get('MessageDeduplicationId', 'unknown')
+        sequence_number = attributes.get('SequenceNumber', 'unknown')
+        
+        logger.bind(
+            service="document-parser",
+            worker_id=worker_id,
+            message_group_id=message_group_id,
+            message_dedup_id=message_dedup_id,
+            sequence_number=sequence_number
+        ).debug("worker.processing_fifo_message")
         
         try:
             # Parse message body

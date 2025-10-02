@@ -46,7 +46,7 @@ class ServiceConfig(BaseSettings):
     input_queue_name: str = Field(default="uw-downloaded-docs-dev-sqs.fifo", env="PARSER_INPUT_QUEUE_NAME")
     output_queue_name: Optional[str] = Field(None, env="PARSER_OUTPUT_QUEUE_NAME")
     sqs_wait_time: int = Field(default=20, ge=0, le=20, env="PARSER_SQS_WAIT_TIME")
-    sqs_max_messages: int = Field(default=10, ge=1, le=10, env="PARSER_SQS_MAX_MESSAGES")  # Allow multiple messages per receive
+    sqs_max_messages: int = Field(default=10, ge=1, le=10, env="PARSER_SQS_MAX_MESSAGES")
     sqs_visibility_timeout: int = Field(default=600, ge=60, le=43200, env="PARSER_SQS_VISIBILITY_TIMEOUT")  # 10 minutes 
     
     # S3 Configuration
