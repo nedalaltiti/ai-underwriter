@@ -417,9 +417,9 @@ class UnderwritingDatabaseAdapter:
                             stored_deposits = 0
                             for idx, deposit in enumerate(package.payment_deposit_schedule, 1):
                                 try:
-                                    # Skip items with null payment_no to avoid NOT NULL constraint violations
-                                    if deposit.payment_no is None:
-                                        logger.bind(file_id=package.file_id, item=idx).warning("db.deposit_item_skipped reason=null_payment_no")
+                                    # Skip items with null or empty payment_no to avoid NOT NULL constraint violations
+                                    if deposit.payment_no is None or (isinstance(deposit.payment_no, str) and not deposit.payment_no.strip()):
+                                        logger.bind(file_id=package.file_id, item=idx, payment_no=deposit.payment_no).warning("db.deposit_item_skipped reason=null_or_empty_payment_no")
                                         continue
                                     
                                     logger.bind(file_id=package.file_id, item=idx, payment_no=deposit.payment_no).debug("db.deposit_schedule_item")
@@ -998,25 +998,19 @@ class UnderwritingDatabaseAdapter:
     
     async def _store_payment_deposit_schedule(self, connection, entity: PaymentGatewayDepositSchedule):
         """Store payment gateway deposit schedule."""
-        # Use per-item savepoint for safe upsert without aborting outer transaction
-        try:
-            async with connection.transaction():
-                await connection.execute("""
-                    INSERT INTO underwriting.payment_gateway_deposit_schedule 
-                    (file_id, payment_no, process_date, amount, updated_at)
-                    VALUES ($1, $2, $3, $4, $5)
-                """, entity.file_id, entity.payment_no, entity.process_date,
-                    entity.amount, datetime.now())
-                return
-        except asyncpg.UniqueViolationError:
-            pass
-        except Exception as e:
-            raise
-
+        # Validate payment_no is not null before attempting insert
+        if entity.payment_no is None:
+            raise ValueError("payment_no cannot be null for payment_gateway_deposit_schedule")
+            
+        # Use UPSERT pattern without nested transaction
         await connection.execute("""
-            UPDATE underwriting.payment_gateway_deposit_schedule 
-            SET process_date = $3, amount = $4, updated_at = $5
-            WHERE file_id = $1 AND payment_no = $2
+            INSERT INTO underwriting.payment_gateway_deposit_schedule 
+            (file_id, payment_no, process_date, amount, updated_at)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (file_id, payment_no) DO UPDATE
+            SET process_date = EXCLUDED.process_date,
+                amount = EXCLUDED.amount,
+                updated_at = EXCLUDED.updated_at
         """, entity.file_id, entity.payment_no, entity.process_date,
             entity.amount, datetime.now())
     
