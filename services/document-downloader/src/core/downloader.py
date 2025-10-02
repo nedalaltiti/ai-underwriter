@@ -117,15 +117,25 @@ class DocumentDownloader:
                     if await self.s3_adapter.file_exists(s3_key):
                         processing_time_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
                         self._update_metrics(True, 0, processing_time_ms)
+                        
+                        # Get file size from S3 metadata
+                        file_size = 0
+                        try:
+                            metadata = await self.s3_adapter.get_file_metadata(s3_key)
+                            file_size = metadata.get('ContentLength', 0)
+                        except Exception:
+                            pass
+                        
                         logger.info(
-                            f"download.duplicate_skipped contact={task.contact_id} doc={task.doc_id} s3_key=\"{s3_key}\""
+                            f"download.duplicate_skipped contact={task.contact_id} doc={task.doc_id} s3_key=\"{s3_key}\" will_enqueue_for_parsing=true"
                         )
                         return DownloadResult(
                             success=True,
                             status=DownloadStatus.COMPLETED,
                             s3_key=s3_key,
                             s3_url=f"s3://{getattr(self.s3_adapter, 'bucket_name', '')}/{s3_key}",
-                            file_size=0,
+                            file_size=file_size,
+                            content_type="application/pdf",
                             processing_time_ms=processing_time_ms,
                         )
                 except Exception:

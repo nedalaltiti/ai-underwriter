@@ -520,7 +520,7 @@ class DownloadWorker:
             )
             
             await self.output_queue.send_message(parse_message)
-            logger.debug(f"parse.queued s3_key={result.s3_key}")
+            logger.info(f"parse.queued contact={task.contact_id} doc={task.doc_id} s3_key={result.s3_key}")
             
         except Exception as e:
             logger.warning(f"Failed to queue for parsing (queue may not exist): {e}")
