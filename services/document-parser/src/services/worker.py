@@ -196,92 +196,126 @@ class DocumentWorker:
                 
                 # Process all messages and keep checking for more from the same group
                 processed_count = 0
-                while messages:
-                    message = messages.pop(0)  # Take first message
-                    try:
-                        # CRITICAL: Yield control between messages
-                        await asyncio.sleep(0)
+                max_attempts_for_group = 5  # Try up to 5 times to get all messages from same group
+                attempts_without_messages = 0
+                
+                while messages or attempts_without_messages < max_attempts_for_group:
+                    if messages:
+                        message = messages.pop(0)  # Take first message
+                        attempts_without_messages = 0  # Reset counter when we have messages
                         
-                        # Add timeout to prevent hanging
-                        await asyncio.wait_for(
-                            self._process_message(message, queue_url, worker_id),
-                            timeout=config.processing_timeout  # Enforce processing timeout
-                        )
-                        processed_count += 1
-                        
-                        # After processing, immediately check for more messages
-                        # With contact_id as MessageGroupId, we should get all docs for the same contact
-                        if not messages:  # If we've processed all current messages
-                            # Very short delay to ensure message deletion is processed
-                            await asyncio.sleep(0.1)
+                        try:
+                            # CRITICAL: Yield control between messages
+                            await asyncio.sleep(0)
                             
-                            # Try to get more messages immediately
-                            # Since we use contact_id as MessageGroupId, all docs for same contact should be available
-                            more_messages = await self._receive_messages(queue_url, wait_time=1)
-                            if more_messages:
-                                messages.extend(more_messages)
-                                logger.bind(
-                                    service="document-parser",
-                                    worker_id=worker_id,
-                                    additional_count=len(more_messages),
-                                    total_processed=processed_count
-                                ).info("worker.continuing_contact_processing")
-                    except asyncio.TimeoutError:
-                        # Extract contact/doc info for better logging
-                        contact_id = "unknown"
-                        doc_id = "unknown"
-                        try:
-                            body = json.loads(message.get("Body", "{}"))
-                            contact_id = body.get("contact_id", "unknown")
-                            doc_data = body.get("data", {})
-                            doc_id = doc_data.get("doc_id", "unknown")
-                        except:
-                            pass
-                        
-                        logger.bind(
-                            service="document-parser",
-                            worker_id=worker_id,
-                            contact_id=contact_id,
-                            doc_id=doc_id,
-                            timeout_minutes=int(config.processing_timeout / 60)
-                        ).error("worker.processing_timeout")
-                        
-                        # Send timed-out message to DLQ, then delete from main queue
-                        try:
-                            from libs.forth_shared.models.queue import QueueMessage, MessageType
-                            failed_message = QueueMessage(
-                                message_type=MessageType.ERROR_NOTIFICATION,
-                                contact_id=contact_id or '0',
-                                data={
-                                    **(body if isinstance(body, dict) else {}),
-                                    "error": "Processing timeout",
-                                    "worker_id": worker_id,
-                                    "timeout_seconds": config.processing_timeout,
-                                },
-                                correlation_id=(body.get("correlation_id") if isinstance(body, dict) else None),
-                                retry_count=int(message.get('Attributes', {}).get('ApproximateReceiveCount', '1'))
+                            # Add timeout to prevent hanging
+                            await asyncio.wait_for(
+                                self._process_message(message, queue_url, worker_id),
+                                timeout=config.processing_timeout  # Enforce processing timeout
                             )
-                            await self.sqs_adapter.send_to_dlq(
-                                message=failed_message,
-                                error=f"Processing timed out after {config.processing_timeout} seconds"
-                            )
-                        except Exception as dlq_error:
-                            logger.error(f"Failed to send timed-out message to DLQ: {dlq_error}")
+                            processed_count += 1
+                            
+                            logger.bind(
+                                service="document-parser",
+                                worker_id=worker_id,
+                                processed=processed_count,
+                                remaining=len(messages)
+                            ).debug("worker.message_processed")
+                            
+                        except asyncio.TimeoutError:
+                            # Extract contact/doc info for better logging
+                            contact_id = "unknown"
+                            doc_id = "unknown"
+                            try:
+                                body = json.loads(message.get("Body", "{}"))
+                                contact_id = body.get("contact_id", "unknown")
+                                doc_data = body.get("data", {})
+                                doc_id = doc_data.get("doc_id", "unknown")
+                            except:
+                                pass
+                            
+                            logger.bind(
+                                service="document-parser",
+                                worker_id=worker_id,
+                                contact_id=contact_id,
+                                doc_id=doc_id,
+                                timeout_minutes=int(config.processing_timeout / 60)
+                            ).error("worker.processing_timeout")
+                            
+                            # Send timed-out message to DLQ, then delete from main queue
+                            try:
+                                from libs.forth_shared.models.queue import QueueMessage, MessageType
+                                failed_message = QueueMessage(
+                                    message_type=MessageType.ERROR_NOTIFICATION,
+                                    contact_id=contact_id or '0',
+                                    data={
+                                        **(body if isinstance(body, dict) else {}),
+                                        "error": "Processing timeout",
+                                        "worker_id": worker_id,
+                                        "timeout_seconds": config.processing_timeout,
+                                    },
+                                    correlation_id=(body.get("correlation_id") if isinstance(body, dict) else None),
+                                    retry_count=int(message.get('Attributes', {}).get('ApproximateReceiveCount', '1'))
+                                )
+                                await self.sqs_adapter.send_to_dlq(
+                                    message=failed_message,
+                                    error=f"Processing timed out after {config.processing_timeout} seconds"
+                                )
+                            except Exception as dlq_error:
+                                logger.error(f"Failed to send timed-out message to DLQ: {dlq_error}")
 
-                        # Always delete the message to prevent loops
-                        try:
-                            receipt_handle = message.get("ReceiptHandle")
-                            if receipt_handle:
-                                await self._delete_message(queue_url, receipt_handle)
-                                logger.bind(contact_id=contact_id, doc_id=doc_id).info("worker.timeout_deleted")
-                        except Exception as delete_error:
-                            logger.error(f"Failed to delete timed-out message: {delete_error}")
-                    except Exception as e:
-                        logger.bind(
-                            service="document-parser",
-                            worker_id=worker_id,
-                            error=type(e).__name__
-                        ).error("worker.message_failed")
+                            # Always delete the message to prevent loops
+                            try:
+                                receipt_handle = message.get("ReceiptHandle")
+                                if receipt_handle:
+                                    await self._delete_message(queue_url, receipt_handle)
+                                    logger.bind(contact_id=contact_id, doc_id=doc_id).info("worker.timeout_deleted")
+                            except Exception as delete_error:
+                                logger.error(f"Failed to delete timed-out message: {delete_error}")
+                        except Exception as e:
+                            logger.bind(
+                                service="document-parser",
+                                worker_id=worker_id,
+                                error=type(e).__name__
+                            ).error("worker.message_failed")
+                    
+                    # Always check for more messages after processing or when no messages
+                    if not messages:
+                        attempts_without_messages += 1
+                        
+                        # Progressive delay: shorter for first attempts, longer for later ones
+                        delay = min(0.5 * attempts_without_messages, 2.0)
+                        await asyncio.sleep(delay)
+                        
+                        # Try to get more messages
+                        # Use longer wait time for first attempt, shorter for subsequent
+                        wait_time = 3 if attempts_without_messages == 1 else 1
+                        more_messages = await self._receive_messages(queue_url, wait_time=wait_time)
+                        
+                        if more_messages:
+                            messages.extend(more_messages)
+                            attempts_without_messages = 0  # Reset counter
+                            logger.bind(
+                                service="document-parser",
+                                worker_id=worker_id,
+                                additional_count=len(more_messages),
+                                total_processed=processed_count,
+                                attempt=attempts_without_messages
+                            ).info("worker.more_messages_found")
+                        else:
+                            logger.bind(
+                                service="document-parser",
+                                worker_id=worker_id,
+                                attempt=attempts_without_messages,
+                                total_processed=processed_count
+                            ).debug("worker.no_more_messages_attempt")
+                
+                if processed_count > 0:
+                    logger.bind(
+                        service="document-parser",
+                        worker_id=worker_id,
+                        total_processed=processed_count
+                    ).info("worker.batch_complete")
                         
             except Exception as e:
                 logger.error(f"Worker {worker_id} loop error: {e}")
